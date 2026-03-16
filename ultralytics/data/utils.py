@@ -37,23 +37,8 @@ from ultralytics.utils.downloads import download, safe_download, unzip_file
 from ultralytics.utils.ops import segments2boxes
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
-IMG_FORMATS = {
-    "avif",
-    "bmp",
-    "dng",
-    "heic",
-    "heif",
-    "jp2",
-    "jpeg",
-    "jpeg2000",
-    "jpg",
-    "mpo",
-    "png",
-    "tif",
-    "tiff",
-    "webp",
-}
-VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # videos
+IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm", "heic"}  # image suffixes
+VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # video suffixes
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
 
 
@@ -69,7 +54,7 @@ def check_file_speeds(
     """Check dataset file access speed and provide performance feedback.
 
     This function tests the access speed of dataset files by measuring ping (stat call) time and read speed. It samples
-    up to `max_files` files from the provided list and warns if access times exceed the threshold.
+    up to 5 files from the provided list and warns if access times exceed the threshold.
 
     Args:
         files (list[str]): List of file paths to check for access speed.
@@ -314,8 +299,8 @@ def polygon2mask(
 
     Args:
         imgsz (tuple[int, int]): The size of the image as (height, width).
-        polygons (list[np.ndarray]): A list of polygons. Each polygon is a 1D array of coordinates with length M, where
-            M % 2 = 0 (alternating x, y values).
+        polygons (list[np.ndarray]): A list of polygons. Each polygon is an array with shape (N, M), where N is the
+            number of polygons, and M is the number of points such that M % 2 = 0.
         color (int, optional): The color value to fill in the polygons on the mask.
         downsample_ratio (int, optional): Factor by which to downsample the mask.
 
@@ -338,8 +323,8 @@ def polygons2masks(
 
     Args:
         imgsz (tuple[int, int]): The size of the image as (height, width).
-        polygons (list[np.ndarray]): A list of polygons. Each polygon is an array of coordinates that can be reshaped to
-            (-1, 2) as (x, y) point pairs.
+        polygons (list[np.ndarray]): A list of polygons. Each polygon is an array with shape (N, M), where N is the
+            number of polygons, and M is the number of points such that M % 2 = 0.
         color (int): The color value to fill in the polygons on the masks.
         downsample_ratio (int, optional): Factor by which to downsample each mask.
 
@@ -352,7 +337,7 @@ def polygons2masks(
 def polygons2masks_overlap(
     imgsz: tuple[int, int], segments: list[np.ndarray], downsample_ratio: int = 1
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return a downsampled overlap mask and sorted area indices."""
+    """Return a (640, 640) overlap mask."""
     masks = np.zeros(
         (imgsz[0] // downsample_ratio, imgsz[1] // downsample_ratio),
         dtype=np.int32 if len(segments) > 255 else np.uint8,
@@ -593,7 +578,7 @@ class HUBDatasetStats:
 
     Args:
         path (str): Path to data.yaml or data.zip (with data.yaml inside data.zip).
-        task (str): Dataset task. Options are 'detect', 'segment', 'pose', 'classify', 'obb'.
+        task (str): Dataset task. Options are 'detect', 'segment', 'pose', 'classify'.
         autodownload (bool): Attempt to download dataset if not found locally.
 
     Attributes:
@@ -806,12 +791,8 @@ def save_dataset_cache_file(prefix: str, path: Path, x: dict, version: str):
     if is_dir_writeable(path.parent):
         if path.exists():
             path.unlink()  # remove *.cache file if exists
-        try:
-            with open(str(path), "wb") as file:  # context manager here fixes windows async np.save bug
-                np.save(file, x)
-            LOGGER.info(f"{prefix}New cache created: {path}")
-        except Exception as e:
-            Path(path).unlink(missing_ok=True)  # remove partially written file
-            LOGGER.warning(f"{prefix}WARNING ⚠️ Failed to save cache to {path}: {e}")
+        with open(str(path), "wb") as file:  # context manager here fixes windows async np.save bug
+            np.save(file, x)
+        LOGGER.info(f"{prefix}New cache created: {path}")
     else:
         LOGGER.warning(f"{prefix}Cache directory {path.parent} is not writable, cache not saved.")

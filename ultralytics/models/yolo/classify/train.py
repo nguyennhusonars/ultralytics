@@ -11,7 +11,7 @@ from ultralytics.data import ClassificationDataset, build_dataloader
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
 from ultralytics.nn.tasks import ClassificationModel
-from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
+from ultralytics.utils import DEFAULT_CFG, RANK
 from ultralytics.utils.plotting import plot_images
 from ultralytics.utils.torch_utils import is_parallel, torch_distributed_zero_first
 
@@ -138,19 +138,6 @@ class ClassificationTrainer(BaseTrainer):
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode)
 
-        # Filter out samples with class indices >= nc (prevents CUDA assertion errors)
-        nc = self.data.get("nc", 0)
-        dataset_nc = len(dataset.base.classes)
-        if nc and dataset_nc > nc:
-            extra_classes = dataset.base.classes[nc:]
-            original_count = len(dataset.samples)
-            dataset.samples = [s for s in dataset.samples if s[1] < nc]
-            skipped = original_count - len(dataset.samples)
-            LOGGER.warning(
-                f"{mode} split has {dataset_nc} classes but model expects {nc}. "
-                f"Skipping {skipped} samples from extra classes: {extra_classes}"
-            )
-
         loader = build_dataloader(dataset, batch_size, self.args.workers, rank=rank, drop_last=self.args.compile)
         # Attach inference transforms
         if mode != "train":
@@ -191,7 +178,8 @@ class ClassificationTrainer(BaseTrainer):
             prefix (str, optional): Prefix to prepend to loss names.
 
         Returns:
-            (dict | list): Dictionary of labeled loss items if loss_items is provided, otherwise list of keys.
+            keys (list[str]): List of loss keys if loss_items is None.
+            loss_dict (dict[str, float]): Dictionary of loss items if loss_items is provided.
         """
         keys = [f"{prefix}/{x}" for x in self.loss_names]
         if loss_items is None:
@@ -204,7 +192,7 @@ class ClassificationTrainer(BaseTrainer):
 
         Args:
             batch (dict[str, torch.Tensor]): Batch containing images and class labels.
-            ni (int): Batch index used for naming the output file.
+            ni (int): Number of iterations.
         """
         batch["batch_idx"] = torch.arange(batch["img"].shape[0])  # add batch index for plotting
         plot_images(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from typing import Any
 
 from ultralytics.utils import LOGGER
@@ -149,7 +148,7 @@ class GPUInfo:
 
         Notes:
              Returns fewer than 'count' if not enough qualify or exist.
-             Returns empty list if NVML stats are unavailable or no GPUs meet the criteria.
+             Returns basic CUDA indices if NVML fails. Empty list if no GPUs found.
         """
         assert min_memory_fraction <= 1.0, f"min_memory_fraction must be <= 1.0, got {min_memory_fraction}"
         assert min_util_fraction <= 1.0, f"min_util_fraction must be <= 1.0, got {min_util_fraction}"
@@ -173,9 +172,7 @@ class GPUInfo:
             if gpu.get("memory_free", 0) / gpu.get("memory_total", 1) >= min_memory_fraction
             and (100 - gpu.get("utilization", 100)) >= min_util_fraction * 100
         ]
-        # Random tiebreaker prevents race conditions when multiple processes start simultaneously
-        # and all GPUs appear equally idle (same utilization and free memory)
-        eligible_gpus.sort(key=lambda x: (x.get("utilization", 101), -x.get("memory_free", 0), random.random()))
+        eligible_gpus.sort(key=lambda x: (x.get("utilization", 101), -x.get("memory_free", 0)))
 
         # Select top 'count' indices
         selected = [gpu["index"] for gpu in eligible_gpus[:count]]
