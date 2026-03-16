@@ -3,10 +3,10 @@ from ultralytics import YOLO
 
 # Load the main vehicle detector + tracker model
 # vehicle_model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11custom_scratch_vehicleonly_480/train4/weights/best.pt")
-vehicle_model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11n_scratch_vehicleonly_480/train/weights/best.pt")
+vehicle_model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11custom_scratch_vehicleonly_640/train2/weights/best.pt")
 
 # Load the secondary model (e.g., license plate, fine-grained detection)
-license_plate_model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11custom_scratch_lponly_128/train/weights/best.pt")
+license_plate_model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11custom_scratch_lponly_160/train4/weights/best.pt")
 
 # Open RTSP stream
 rtsp_url = "rtsp://192.169.1.251/stream1"
@@ -23,7 +23,7 @@ while True:
         break
 
     # Step 1: Vehicle detection + tracking
-    results = vehicle_model.track(source=frame, persist=True, conf=0.25, imgsz=480)
+    results = vehicle_model.track(source=frame, persist=True, conf=0.25, imgsz=512)
 
     annotated_frame = frame.copy()
 
@@ -46,7 +46,7 @@ while True:
                 continue
 
             # Step 2: License plate detection on vehicle crop
-            secondary_results = license_plate_model.predict(source=cropped_vehicle, conf=0.7, imgsz=128, verbose=False)
+            secondary_results = license_plate_model.predict(source=cropped_vehicle, conf=0.25, imgsz=160, verbose=False)
 
             if secondary_results and secondary_results[0].boxes is not None:
                 lp_boxes = secondary_results[0].boxes

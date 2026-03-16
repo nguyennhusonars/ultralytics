@@ -2,7 +2,8 @@ import cv2
 from ultralytics import YOLO
 
 # Load the YOLOv8 model
-model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11custom_scratch_vehicleonly_480/train3/weights/best.pt")
+#model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolov8n_street_270625/weights/best.pt")
+model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/yolo11n_street_020725/train/weights/best.pt")
 
 # Open RTSP stream
 rtsp_url = "rtsp://192.169.1.251/stream1"
@@ -25,10 +26,10 @@ while True:
         break
     
     # Perform tracking
-    results = model.track(source=frame, persist=True, conf=0.05, imgsz=480)
+    results = model.track(source=frame, persist=True, conf=0.05, imgsz=640)
 
     # Annotate frame with results (boxes, labels, tracking IDs)
-    frame_with_annotations = results[0].plot()
+    frame_with_annotations = results[0].plot(line_width=1, font_size=0.2)
 
     # Resize the frame to 720p
     frame_with_annotations = cv2.resize(frame_with_annotations, (1280, 720))
