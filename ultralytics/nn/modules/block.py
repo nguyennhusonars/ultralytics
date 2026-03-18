@@ -913,6 +913,8 @@ class MaxSigmoidAttnBlock(nn.Module):
         """
         bs, _, h, w = x.shape
 
+        if guide is None:
+            guide = torch.zeros(bs, 1, self.gl.in_features, device=x.device, dtype=x.dtype)
         guide = self.gl(guide)
         guide = guide.view(bs, guide.shape[1], self.nh, self.hc)
         embed = self.ec(x) if self.ec is not None else x
@@ -965,7 +967,7 @@ class C2fAttn(nn.Module):
         self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
         self.attn = MaxSigmoidAttnBlock(self.c, self.c, gc=gc, ec=ec, nh=nh)
 
-    def forward(self, x: torch.Tensor, guide: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, guide: torch.Tensor = None) -> torch.Tensor:
         """Forward pass through C2f layer with attention.
 
         Args:
@@ -980,7 +982,7 @@ class C2fAttn(nn.Module):
         y.append(self.attn(y[-1], guide))
         return self.cv2(torch.cat(y, 1))
 
-    def forward_split(self, x: torch.Tensor, guide: torch.Tensor) -> torch.Tensor:
+    def forward_split(self, x: torch.Tensor, guide: torch.Tensor = None) -> torch.Tensor:
         """Forward pass using split() instead of chunk().
 
         Args:
@@ -1028,7 +1030,7 @@ class ImagePoolingAttn(nn.Module):
         self.hc = ec // nh
         self.k = k
 
-    def forward(self, x: list[torch.Tensor], text: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: list[torch.Tensor], text: torch.Tensor = None) -> torch.Tensor:
         """Forward pass of ImagePoolingAttn.
 
         Args:
@@ -1043,6 +1045,8 @@ class ImagePoolingAttn(nn.Module):
         num_patches = self.k**2
         x = [pool(proj(x)).view(bs, -1, num_patches) for (x, proj, pool) in zip(x, self.projections, self.im_pools)]
         x = torch.cat(x, dim=-1).transpose(1, 2)
+        if text is None:
+            text = torch.zeros(bs, 1, self.query[0].normalized_shape[0], device=x.device, dtype=x.dtype)
         q = self.query(text)
         k = self.key(x)
         v = self.value(x)
@@ -6877,9 +6881,9 @@ class RepNCSP_AKConv(RepNCSP):
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)  # hidden channels
-        self.cv1 = AKConv(c1, c_)
-        self.cv2 = AKConv(c1, c_)
-        self.cv3 = AKConv(2 * c_, c2)  # optional act=FReLU(c2)
+        self.cv1 = AKConv(c1, c_, 1)
+        self.cv2 = AKConv(c1, c_, 1)
+        self.cv3 = AKConv(2 * c_, c2, 1)  # optional act=FReLU(c2)
         self.m = nn.Sequential(*(RepNBottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
  
  
@@ -7888,7 +7892,7 @@ class Light_HGBlock(nn.Module):
     
     
 class LSKA(nn.Module):
-    def __init__(self, dim, k_size):
+    def __init__(self, dim, k_size=7):
         super().__init__()
  
         self.k_size = k_size

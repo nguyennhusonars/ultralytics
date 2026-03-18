@@ -13,10 +13,10 @@ from torch.cuda.amp import custom_bwd, custom_fwd
 # 嘗試導入 DSCN，如果失敗則忽略，以便在沒有自訂 CUDA 核心的環境中運行
 try:
     import DSCN
-    from torch.nn.init import xavier_uniform_, constant_
 except ImportError:
     DSCN = None
     print("Warning: Failed to import DSCN. DSCN custom ops will not be available.")
+from torch.nn.init import xavier_uniform_, constant_
 
 
 from functools import partial

@@ -4,7 +4,7 @@ from ultralytics import YOLO
 import mss
 
 # Load the YOLOv8 model (replace with your model path)
-model = YOLO("/home/sonnn/Documents/ultralytics_sonnn/best_swalk_5.3GF.pt")
+model = YOLO("/home/sonnn/Documents/ultralytics/runs/detect/military_airplane/weights/best.pt")
 
 # Define the monitor for "Display 1" (change this based on your system setup)
 # You can list all displays using mss and selecting the correct one

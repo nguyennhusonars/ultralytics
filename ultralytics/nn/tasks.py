@@ -282,8 +282,10 @@ from ultralytics.nn.modules import (
     EMA,
     C2f_FasterBlock,
     C2f_FasterBlock_EMA,
+    C2f_Faster_EMA,
     C3_Faster_CGLU, 
     C2f_Faster_CGLU,
+
     C3k2_FasterBlock,
     C2f_SENetV1, 
     SELayerV1,
@@ -382,6 +384,7 @@ from ultralytics.nn.modules import (
     LocalWindowAttention,
     C3k2_MLLABlock1, 
     C3k2_MLLABlock2,
+    C2fMLLABlock,
     C2PSAMLLA,
     DiTBlock,
     C2PSA_DiTBlock,
@@ -437,6 +440,7 @@ from ultralytics.nn.modules import (
     efficientnet_v2,
     Ghostnetv1,
     GhostNetV2,
+    Ghostnetv2,
     GhostNet_1_0,
     convnextv2_atto, 
     convnextv2_femto, 
@@ -947,6 +951,9 @@ from ultralytics.nn.modules import (
     dsan_t,
     dsan_s, 
     dsan_b,
+    gspn_tiny,
+    gspn_small,
+    gspn_base,
     VanillaNet,
     UniRepLKNet,
     OverLoCK,
@@ -1031,6 +1038,12 @@ from ultralytics.nn.modules import (
     vHeatStage, 
     vHeatDownsample
 )
+
+try:
+    from ultralytics.nn.modules.mamba_yolo import XSSBlock
+except ImportError:
+    XSSBlock = None
+
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (
@@ -1142,7 +1155,7 @@ class BaseModel(torch.nn.Module):
                 self._profile_one_layer(m, x, dt)
             
             # 1. 處理自定義主幹網絡 (如 MambaVision)
-            if hasattr(m, 'backbone'):
+            if getattr(m, 'backbone', False) is True:
                 x = m(x)
                 if len(x) != 5:  # 0 - 5
                     x.insert(0, None)
@@ -2598,8 +2611,10 @@ def parse_model(d, ch, verbose=True):
         if not scale:
             scale = next(iter(scales.keys()))
             LOGGER.warning(f"no model scale passed. Assuming scale='{scale}'.")
-        depth, width, max_channels, threshold = scales[scale]
-        # depth, width, max_channels = scales[scale]
+        _sv = list(scales[scale])
+        while len(_sv) < 4:
+            _sv.append(0)
+        depth, width, max_channels, threshold = _sv
 
     if act:
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = torch.nn.SiLU()
@@ -2676,6 +2691,7 @@ def parse_model(d, ch, verbose=True):
             PSA,
             SCDown,
             C2fCIB,
+            RepConv,
             RepConv_v7,
             SPPCSP, 
             SPPCSPC,
@@ -2777,6 +2793,7 @@ def parse_model(d, ch, verbose=True):
             SPDConv,
             C2f_FasterBlock,
             C2f_FasterBlock_EMA,
+            C2f_Faster_EMA,
             C3_Faster_CGLU, 
             C2f_Faster_CGLU,
             C3k2_FasterBlock,
@@ -2858,6 +2875,7 @@ def parse_model(d, ch, verbose=True):
             LocalWindowAttention,
             C3k2_MLLABlock1, 
             C3k2_MLLABlock2,
+            C2fMLLABlock,
             C2PSAMLLA,
             C2PSA_DiTBlock,
             C3k2_DiTBlock,
@@ -2979,6 +2997,7 @@ def parse_model(d, ch, verbose=True):
             C2f_DynamicConv, 
             C2f_FasterBlock, 
             C2f_FasterBlock_EMA, 
+            C2f_Faster_EMA,
             C3_Faster_CGLU, 
             C2f_Faster_CGLU, 
             C3k2_FasterBlock, 
@@ -3035,6 +3054,7 @@ def parse_model(d, ch, verbose=True):
             C2PSA_CGA, 
             C3k2_MLLABlock1, 
             C3k2_MLLABlock2, 
+            C2fMLLABlock,
             C2PSAMLLA, 
             C2PSA_DiTBlock, 
             C3k2_DiTBlock, 
@@ -3077,7 +3097,14 @@ def parse_model(d, ch, verbose=True):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
-        if m in base_modules:
+        if m is PST and isinstance(f, list):
+            c1 = ch[f[0]]
+            c_up = ch[f[1]]
+            c2 = args[0]
+            if c2 != nc:
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c_up, c2, *args[1:]]
+        elif m in base_modules:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 != nc (e.g., Classify() output)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
@@ -3093,7 +3120,10 @@ def parse_model(d, ch, verbose=True):
                      C3k2_MLLABlock1, C3k2_MLLABlock2, C3k2_DiTBlock, C3k2_UIB, C3k2_DSConv, DSC3k2}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
-                    args[3] = True
+                    if len(args) > 3:
+                        args[3] = True
+                    else:
+                        args.append(True)
             if m is A2C2f:
                 legacy = False
                 if scale in "lx":  # for L/X sizes
@@ -3160,6 +3190,11 @@ def parse_model(d, ch, verbose=True):
         elif m is IFM:
             c1 = ch[f]
             c2 = sum(args[0])
+            args = [c1, *args]
+        elif m is DySample:
+            c1 = ch[f]
+            c2 = c1
+            args = [c1, *args]
         elif m is InjectionMultiSum_Auto_pool:
             c1 = ch[f[0]]
             c2 = args[0]
@@ -3356,7 +3391,7 @@ def parse_model(d, ch, verbose=True):
                    parcnetv2_small, parcnetv2_base, MALA_T, MALA_S, MALA_B, MALA_L, mpvit_tiny, mpvit_xsmall, mpvit_small, mpvit_base, uninext_t, uninext_s, uninext_b, stvit_small, stvit_base, 
                    stvit_large, fat_b0, fat_b1, fat_b2, fat_b3, debi_tiny, debi_small, debi_base, maxvit_tiny, maxvit_small, maxvit_base, maxvit_large, scalable_vit_s, scalable_vit_b, scalable_vit_l, 
                    rest_lite, rest_small, rest_base, rest_large, restv2_tiny, restv2_small, restv2_base, restv2_large, medformer_tiny, medformer_small, medformer_base, 
-                   flash_intern_image_t, flash_intern_image_s, flash_intern_image_b, dsan_t, dsan_s, dsan_b,
+                   flash_intern_image_t, flash_intern_image_s, flash_intern_image_b, dsan_t, dsan_s, dsan_b, gspn_tiny, gspn_small, gspn_base, Ghostnetv2,
                    tiny_vit_5m, tiny_vit_11m, tiny_vit_21m, transnext_micro, transnext_tiny, transnext_small, transnext_base, 
                    partialnet_s, partialnet_m, partialnet_l, waveformer_tiny, 
                    waveformer_small, waveformer_base}:

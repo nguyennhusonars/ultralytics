@@ -1919,8 +1919,11 @@ class WorldDetect(Detect):
         self.cv3 = nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, embed, 1)) for x in ch)
         self.cv4 = nn.ModuleList(BNContrastiveHead(embed) if with_bn else ContrastiveHead() for _ in ch)
 
-    def forward(self, x: list[torch.Tensor], text: torch.Tensor) -> dict[str, torch.Tensor] | tuple:
+    def forward(self, x: list[torch.Tensor], text: torch.Tensor = None) -> dict[str, torch.Tensor] | tuple:
         """Concatenate and return predicted bounding boxes and class probabilities."""
+        if text is None:
+            embed_dim = self.cv3[0][-1].out_channels
+            text = torch.zeros(x[0].shape[0], self.nc, embed_dim, device=x[0].device, dtype=x[0].dtype)
         feats = [xi.clone() for xi in x]  # save original features for anchor generation
         for i in range(self.nl):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv4[i](self.cv3[i](x[i]), text)), 1)
@@ -2197,6 +2200,11 @@ class YOLOEDetect(Detect):
 
     def forward_head(self, x, box_head, cls_head, contrastive_head):
         """Concatenates and returns predicted bounding boxes, class probabilities, and text embeddings."""
+        if len(x) == 3:
+            # No text embeddings provided (e.g. during profiling) — create dummy
+            embed_dim = cls_head[0][-1].out_channels
+            dummy_text = torch.zeros(x[0].shape[0], self.nc, embed_dim, device=x[0].device, dtype=x[0].dtype)
+            x = list(x) + [dummy_text]
         assert len(x) == 4, f"Expected 4 features including 3 feature maps and 1 text embeddings, but got {len(x)}."
         if box_head is None or cls_head is None:  # for fused inference
             return dict()

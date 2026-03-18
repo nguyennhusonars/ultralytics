@@ -315,6 +315,7 @@ from .Haar import Down_wt
 from .HAttention import HAT
 from .Retinexformer import RetinexFormer
 from .SCConv import C2f_SCConv, ScConv
+SCConv = ScConv  # alias for YAML compatibility
 from .C2fGhostModuleDynamicConv import C2f_GhostModule_DynamicConv, DynamicConv, C2f_DynamicConv
 from .ODConv import C2f_ODConv, ODConv2d
 from .DWR import C2f_DWRSeg
@@ -324,6 +325,7 @@ from .OREPA import OREPA, C3_OREPA, C2f_OREPA
 from .OREPA_2 import OREPA_2, C3k2_OREPA_backbone, C3k2_OREPA_neck
 from .IAT import IAT
 from .FasterBlock import C2f_FasterBlock, C2f_FasterBlock_EMA, C3_Faster_CGLU, C2f_Faster_CGLU, C3k2_FasterBlock
+C2f_Faster_EMA = C2f_FasterBlock_EMA  # alias for YAML compatibility
 from .SENetV1 import C2f_SENetV1, SELayerV1
 from .SENetV2 import C2f_SENetV2, SELayerV2, PSASENetV2, C2PSA_SENetV2, SPPFSENetV2
 from .Slimneck import VoVGSCSP, GSConv
@@ -342,13 +344,14 @@ from .DSConv_module import C2f_DSConv, DSConv2D
 from .VanillaNet import VanillaStem, VanillaBlock
 from .StarNet import C3_Star, C3_Star_CAA, C2f_Star, C2f_Star_CAA
 from .EffectiveSE import C3_EMBC, C2f_EMBC
+from .block import EffectiveSE  # re-import after submodule import
 from .EMSC import C3_EMSC, C2f_EMSC, C3_EMSCP, C2f_EMSCP
 from .DilatedReparam import C3_UniRepLKNetBlock, C2f_UniRepLKNetBlock, C3_DRB, C2f_DRB, DilatedReparamBlock, UniRepLKNetBlock
 from .DA import C2f_DAttention, C2PSA_DAT, DAttentionBaseline
 from .mobileone import MobileOnev5, MobileOneBlockv5
 from .RetNet import C3_RetBlock, C2f_RetBlock
 from .REPVGGOREPA import C3_REPVGGOREPA, C2f_REPVGGOREPA
-from .RFAConv import C3_RFAConv, C2f_RFAConv, C3_RFCBAMConv, C2f_RFCBAMConv, C3_RFCAConv, C2f_RFCAConv
+from .RFAConv import RFAConv, C3_RFAConv, C2f_RFAConv, C3_RFCBAMConv, C2f_RFCBAMConv, C3_RFCAConv, C2f_RFCAConv
 from .RVB import C3_RVB, C2f_RVB, C3_RVB_EMA, C2f_RVB_EMA
 from .UIB import C2f_UIB, C3k2_UIB
 from .SwinTransformer import PatchMerging, PatchEmbed, SwinStage
@@ -360,6 +363,7 @@ from .KAN import RBFKANConv2d, ReLUKANConv2d, KANConv2d, FasterKANConv2d, WavKAN
 from .EfficientNet import stem, MBConvBlock
 from .CGA import C2PSA_CGA, LocalWindowAttention
 from .MLLABLock import C3k2_MLLABlock1, C3k2_MLLABlock2
+from .MLLA import C2fMLLABlock
 from .MLLA_2 import C2PSAMLLA
 from .DiT import DiTBlock, C2PSA_DiTBlock, C3k2_DiTBlock
 from .mafyolo import RepHDW, AVG, RepHMS, ConvMS, UniRepLKNetBlock_pro
@@ -377,7 +381,7 @@ from .MobileViTv2 import mobile_vit2_xx_small
 from .EfficientNetV1_backbone import efficient
 from .EfficientNetV2 import efficientnet_v2
 from .GhostNetv1 import Ghostnetv1
-from .GhostNetv2 import GhostNetV2
+from .GhostNetv2 import GhostNetV2, Ghostnetv2
 from .GhostNetv3 import GhostNet_1_0
 from .ConvNeXtV2_backbone import convnextv2_atto, convnextv2_femto, convnext_pico, convnextv2_nano, convnextv2_tiny, convnextv2_base, convnextv2_large, convnextv2_huge
 from .ConvNeXtV1 import convnext_tiny, convnext_small, convnext_base, convnext_large, convnext_xlarge
@@ -493,6 +497,7 @@ from .vHeat_modular import vHeatStem, vHeatStage, vHeatDownsample
 # Deformable ----------------------------------------------
 from .FlashInternImage import flash_intern_image_t, flash_intern_image_s, flash_intern_image_b
 from .DSAN import dsan_t, dsan_s, dsan_b
+from .GSPN import gspn_tiny, gspn_small, gspn_base
 # Deformable ----------------------------------------------
 from .HVI_CIDNet import C2PSA_HV_LCA, C2PSA_HV_LCA_DynamicTanh, LCA_Concat, LCA_DynamicTanh_Concat
 from .MogaNet import C2f_MultiOGA, ChannelAggregationFFN, MultiOrderGatedAggregation
@@ -921,6 +926,7 @@ __all__ = (
     "LocalWindowAttention",
     "C3k2_MLLABlock1", 
     "C3k2_MLLABlock2",
+    "C2fMLLABlock",
     "C2PSAMLLA",
     "DiTBlock",
     "C2PSA_DiTBlock",
