@@ -4437,38 +4437,97 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training)
 
 
-class Attention(torch.nn.Module):
-    def __init__(self, dim, key_dim, num_heads, attn_ratio=4):
+# class Attention(torch.nn.Module):
+#     def __init__(self, dim, key_dim, num_heads, attn_ratio=4):
+#         super().__init__()
+#         self.num_heads = num_heads
+#         self.scale = key_dim ** -0.5
+#         self.key_dim = key_dim
+#         self.nh_kd = nh_kd = key_dim * num_heads  # num_head key_dim
+#         self.d = int(attn_ratio * key_dim)
+#         self.dh = int(attn_ratio * key_dim) * num_heads
+#         self.attn_ratio = attn_ratio
+        
+#         self.to_q = Conv(dim, nh_kd, 1, act=False)
+#         self.to_k = Conv(dim, nh_kd, 1, act=False)
+#         self.to_v = Conv(dim, self.dh, 1, act=False)
+        
+#         self.proj = torch.nn.Sequential(nn.ReLU6(), Conv(self.dh, dim, act=False))
+    
+#     def forward(self, x):  # x (B,N,C)
+#         B, C, H, W = get_shape(x)
+        
+#         qq = self.to_q(x).reshape(B, self.num_heads, self.key_dim, H * W).permute(0, 1, 3, 2)
+#         kk = self.to_k(x).reshape(B, self.num_heads, self.key_dim, H * W)
+#         vv = self.to_v(x).reshape(B, self.num_heads, self.d, H * W).permute(0, 1, 3, 2)
+        
+#         attn = torch.matmul(qq, kk)
+#         attn = attn.softmax(dim=-1)  # dim = k
+        
+#         xx = torch.matmul(attn, vv)
+        
+#         xx = xx.permute(0, 1, 3, 2).reshape(B, self.dh, H, W)
+#         xx = self.proj(xx)
+#         return xx
+
+class Attention(nn.Module):
+    """Attention module that performs self-attention on the input tensor.
+
+    Args:
+        dim (int): The input tensor dimension.
+        num_heads (int): The number of attention heads.
+        attn_ratio (float): The ratio of the attention key dimension to the head dimension.
+
+    Attributes:
+        num_heads (int): The number of attention heads.
+        head_dim (int): The dimension of each attention head.
+        key_dim (int): The dimension of the attention key.
+        scale (float): The scaling factor for the attention scores.
+        qkv (Conv): Convolutional layer for computing the query, key, and value.
+        proj (Conv): Convolutional layer for projecting the attended values.
+        pe (Conv): Convolutional layer for positional encoding.
+    """
+
+    def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5):
+        """Initialize multi-head attention module.
+
+        Args:
+            dim (int): Input dimension.
+            num_heads (int): Number of attention heads.
+            attn_ratio (float): Attention ratio for key dimension.
+        """
         super().__init__()
         self.num_heads = num_heads
-        self.scale = key_dim ** -0.5
-        self.key_dim = key_dim
-        self.nh_kd = nh_kd = key_dim * num_heads  # num_head key_dim
-        self.d = int(attn_ratio * key_dim)
-        self.dh = int(attn_ratio * key_dim) * num_heads
-        self.attn_ratio = attn_ratio
-        
-        self.to_q = Conv(dim, nh_kd, 1, act=False)
-        self.to_k = Conv(dim, nh_kd, 1, act=False)
-        self.to_v = Conv(dim, self.dh, 1, act=False)
-        
-        self.proj = torch.nn.Sequential(nn.ReLU6(), Conv(self.dh, dim, act=False))
-    
-    def forward(self, x):  # x (B,N,C)
-        B, C, H, W = get_shape(x)
-        
-        qq = self.to_q(x).reshape(B, self.num_heads, self.key_dim, H * W).permute(0, 1, 3, 2)
-        kk = self.to_k(x).reshape(B, self.num_heads, self.key_dim, H * W)
-        vv = self.to_v(x).reshape(B, self.num_heads, self.d, H * W).permute(0, 1, 3, 2)
-        
-        attn = torch.matmul(qq, kk)
-        attn = attn.softmax(dim=-1)  # dim = k
-        
-        xx = torch.matmul(attn, vv)
-        
-        xx = xx.permute(0, 1, 3, 2).reshape(B, self.dh, H, W)
-        xx = self.proj(xx)
-        return xx
+        self.head_dim = dim // num_heads
+        self.key_dim = int(self.head_dim * attn_ratio)
+        self.scale = self.key_dim**-0.5
+        nh_kd = self.key_dim * num_heads
+        h = dim + nh_kd * 2
+        self.qkv = Conv(dim, h, 1, act=False)
+        self.proj = Conv(dim, dim, 1, act=False)
+        self.pe = Conv(dim, dim, 3, 1, g=dim, act=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the Attention module.
+
+        Args:
+            x (torch.Tensor): The input tensor.
+
+        Returns:
+            (torch.Tensor): The output tensor after self-attention.
+        """
+        B, C, H, W = x.shape
+        N = H * W
+        qkv = self.qkv(x)
+        q, k, v = qkv.view(B, self.num_heads, self.key_dim * 2 + self.head_dim, N).split(
+            [self.key_dim, self.key_dim, self.head_dim], dim=2
+        )
+
+        attn = (q.transpose(-2, -1) @ k) * self.scale
+        attn = attn.softmax(dim=-1)
+        x = (v @ attn.transpose(-2, -1)).view(B, C, H, W) + self.pe(v.reshape(B, C, H, W))
+        x = self.proj(x)
+        return x
 
 
 class top_Block(nn.Module):
