@@ -65,6 +65,58 @@ from ultralytics.utils.torch_utils import (
 )
 
 
+def _apply_groups_override(data: dict, groups) -> dict:
+    """Merge several original classes into named groups in-memory.
+
+    `groups` is a dict {group_name: [original_class_id | original_class_name, ...]}.
+    Labels with class ids not appearing in any group are dropped at load time.
+    Original data.yaml and label files are untouched — the resolved remap is
+    stashed on the data dict under 'groups_remap' for the dataset to apply.
+
+    Returns the updated data dict (also mutated in place).
+    """
+    if not isinstance(groups, dict) or not groups:
+        return data
+    orig_names = data.get("names") or {}
+    # Build name -> id lookup so users can refer to classes by name.
+    name_to_id = {str(n): int(i) for i, n in orig_names.items()}
+    remap: dict[int, int] = {}
+    new_names: dict[int, str] = {}
+    for new_id, (group_name, members) in enumerate(groups.items()):
+        new_names[new_id] = str(group_name)
+        if not isinstance(members, (list, tuple)):
+            members = [members]
+        for m in members:
+            if isinstance(m, str):
+                if m not in name_to_id:
+                    raise ValueError(
+                        f"groups: class name '{m}' (in group '{group_name}') "
+                        f"not found in data['names']={orig_names}"
+                    )
+                orig_id = name_to_id[m]
+            else:
+                orig_id = int(m)
+            if orig_id in remap and remap[orig_id] != new_id:
+                raise ValueError(
+                    f"groups: original class id {orig_id} assigned to multiple "
+                    f"groups ('{new_names[remap[orig_id]]}' and '{group_name}')"
+                )
+            remap[orig_id] = new_id
+    # Preserve original class count for the on-disk label verifier (which
+    # still sees original class ids until the in-memory remap is applied).
+    data["groups_original_nc"] = len(orig_names)
+    data["groups_remap"] = remap
+    data["names"] = new_names
+    data["nc"] = len(new_names)
+    dropped = sorted(set(int(i) for i in orig_names.keys()) - set(remap.keys()))
+    LOGGER.info(
+        f"groups: collapsed {len(remap)} original classes into {len(new_names)} groups "
+        f"({', '.join(new_names.values())}). "
+        f"Dropped {len(dropped)} ungrouped class id(s): {dropped if dropped else 'none'}"
+    )
+    return data
+
+
 class BaseTrainer:
     """A base class for creating trainers.
 
@@ -704,6 +756,18 @@ class BaseTrainer:
             LOGGER.info("Overriding class names with single class.")
             data["names"] = {0: "item"}
             data["nc"] = 1
+        # Apply groups override: merge several original classes into one named
+        # group at train/val time. Original data.yaml and label files are not
+        # modified — the remap is applied in-memory by the dataset.
+        # Resolve groups: training arg wins; otherwise read from data.yaml.
+        groups = getattr(self.args, "groups", None) or data.get("groups")
+        if groups:
+            if self.args.single_cls:
+                raise ValueError(
+                    "Arguments 'groups' and 'single_cls' are mutually exclusive — "
+                    "single_cls already collapses every class to id 0."
+                )
+            data = _apply_groups_override(data, groups)
         return data
 
     def setup_model(self):

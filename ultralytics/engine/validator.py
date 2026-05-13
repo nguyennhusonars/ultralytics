@@ -177,6 +177,15 @@ class BaseValidator:
                 self.data = check_cls_dataset(self.args.data, split=self.args.split)
             else:
                 raise FileNotFoundError(emojis(f"Dataset '{self.args.data}' for task={self.args.task} not found ❌"))
+            # Allow standalone `model.val(groups=...)` to reuse the same in-memory
+            # class-remap logic as training. Training arg wins; otherwise fall
+            # back to the `groups:` key in data.yaml.
+            groups = getattr(self.args, "groups", None) or (
+                self.data.get("groups") if isinstance(self.data, dict) else None
+            )
+            if groups and isinstance(self.data, dict):
+                from ultralytics.engine.trainer import _apply_groups_override
+                self.data = _apply_groups_override(self.data, groups)
 
             if self.device.type in {"cpu", "mps"}:
                 self.args.workers = 0  # faster CPU val as time dominated by inference, not dataloading

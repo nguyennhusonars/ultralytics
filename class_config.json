@@ -3,58 +3,176 @@
         "0": {
             "name": "BSD",
             "color": [
-                0,
-                0,
-                255
+                40,
+                40,
+                204
             ]
         },
         "1": {
             "name": "BSV",
             "color": [
-                0,
                 255,
-                0
+                92,
+                25
             ]
         },
         "2": {
-            "name": "Bus",
+            "name": "bus",
             "color": [
-                255,
                 0,
-                0
+                204,
+                119
             ]
         },
         "3": {
-            "name": "Car",
+            "name": "car",
             "color": [
-                0,
-                255,
+                229,
+                50,
                 255
             ]
         },
         "4": {
-            "name": "Human",
+            "name": "human",
             "color": [
-                255,
-                0,
-                255
+                173,
+                204,
+                20
             ]
         },
         "5": {
-            "name": "Motor",
+            "name": "motorbike",
             "color": [
-                255,
-                255,
-                0
+                0,
+                137,
+                255
             ]
         },
         "6": {
-            "name": "Truck",
+            "name": "truck",
             "color": [
+                204,
+                40,
+                81
+            ]
+        },
+        "7": {
+            "name": "suv",
+            "color": [
+                25,
+                255,
+                35
+            ]
+        },
+        "8": {
+            "name": "truck_m",
+            "color": [
+                68,
                 0,
+                204
+            ]
+        },
+        "9": {
+            "name": "bus_l",
+            "color": [
+                255,
+                178,
+                50
+            ]
+        },
+        "10": {
+            "name": "truck_l",
+            "color": [
+                20,
+                204,
+                188
+            ]
+        },
+        "11": {
+            "name": "truck_xl",
+            "color": [
+                255,
                 0,
-                128
+                201
+            ]
+        },
+        "12": {
+            "name": "bus_m",
+            "color": [
+                122,
+                204,
+                40
+            ]
+        },
+        "13": {
+            "name": "sedan",
+            "color": [
+                25,
+                72,
+                255
+            ]
+        },
+        "14": {
+            "name": "hatchback",
+            "color": [
+                204,
+                17,
+                0
+            ]
+        },
+        "15": {
+            "name": "pickup",
+            "color": [
+                50,
+                255,
+                127
+            ]
+        },
+        "16": {
+            "name": "bike",
+            "color": [
+                143,
+                20,
+                204
+            ]
+        },
+        "17": {
+            "name": "bus_xl",
+            "color": [
+                255,
+                244,
+                0
+            ]
+        },
+        "18": {
+            "name": "twowheels_standalone",
+            "color": [
+                40,
+                162,
+                204
+            ]
+        },
+        "19": {
+            "name": "motorbike_with_driver",
+            "color": [
+                255,
+                25,
+                130
+            ]
+        },
+        "20": {
+            "name": "bike_with_driver",
+            "color": [
+                33,
+                204,
+                0
             ]
         }
+    },
+    "hotkeys": {
+        "0": 13,
+        "1": 7,
+        "2": 8,
+        "3": 10
     }
 }

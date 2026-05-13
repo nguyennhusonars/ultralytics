@@ -114,7 +114,10 @@ class YOLODataset(BaseDataset):
                     self.label_files,
                     repeat(self.prefix),
                     repeat(self.use_keypoints),
-                    repeat(len(self.data["names"])),
+                    # Use the original class count when a groups override is
+                    # active, so on-disk labels (still with original ids) pass
+                    # the class-bounds check.
+                    repeat(self.data.get("groups_original_nc", len(self.data["names"]))),
                     repeat(nkpt),
                     repeat(ndim),
                     repeat(self.single_cls),
@@ -202,6 +205,43 @@ class YOLODataset(BaseDataset):
         if len_cls == 0:
             LOGGER.warning(f"Labels are missing or empty in {cache_path}, training may not work correctly. {HELP_URL}")
         return labels
+
+    def update_labels(self, include_class):
+        """Extend BaseDataset.update_labels with an in-memory class remap from
+        the ``groups`` training argument. Labels with original class ids not
+        in the remap are dropped; ids in the remap are replaced with the new
+        (grouped) id. Runs after the existing ``include_class`` filter and
+        before ``single_cls`` collapse."""
+        super().update_labels(include_class=include_class)
+        remap = (self.data or {}).get("groups_remap")
+        if not remap:
+            return
+        # Build a vectorized lookup: keep_mask[i] tells whether original cls
+        # appears in the remap; new_cls[i] is its target id.
+        keep_keys = np.array(sorted(remap.keys()), dtype=np.float32)
+        new_vals = np.array([remap[int(k)] for k in keep_keys], dtype=np.float32)
+        for i in range(len(self.labels)):
+            cls = self.labels[i]["cls"]
+            if cls.size == 0:
+                continue
+            cls_flat = cls.reshape(-1)
+            # Match each cls against keep_keys; -1 means "drop"
+            idx_in_keep = np.searchsorted(keep_keys, cls_flat)
+            idx_in_keep = np.where(idx_in_keep < len(keep_keys), idx_in_keep, 0)
+            matched = keep_keys[idx_in_keep] == cls_flat
+            j = matched
+            new_cls_flat = np.where(matched, new_vals[idx_in_keep], -1.0)
+            # Filter labels by mask
+            self.labels[i]["cls"] = new_cls_flat[j].reshape(-1, 1)
+            self.labels[i]["bboxes"] = self.labels[i]["bboxes"][j]
+            segments = self.labels[i].get("segments")
+            if segments:
+                self.labels[i]["segments"] = [
+                    segments[si] for si, keep in enumerate(j) if keep
+                ]
+            keypoints = self.labels[i].get("keypoints")
+            if keypoints is not None:
+                self.labels[i]["keypoints"] = keypoints[j]
 
     def build_transforms(self, hyp: dict | None = None) -> Compose:
         """Build and append transforms to the list.

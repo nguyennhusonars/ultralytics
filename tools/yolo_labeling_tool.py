@@ -129,7 +129,56 @@ class YOLOLabelingTool:
         self.selected_box_index = None
         self.selected_box_rect = None
         self.editing_box = False  # Flag for editing mode
-        
+
+        # Edge-drag (resize-by-edge) state
+        self._resize_active = False
+        self._resize_source = None        # 'user' or 'label'
+        self._resize_index = None
+        self._resize_handle = None        # 'tl','tr','bl','br','top','bottom','left','right'
+        self._last_cursor = 'crosshair'
+        self._edge_hover_pixels = 7       # tolerance in canvas pixels
+
+        # Click-to-select state: a press inside a box stays in this "tentative"
+        # state until the release (→ select) or significant motion (→ switch to
+        # drawing a new box from the press location).
+        self._click_select_candidate = None  # (source, index) or None
+
+        # User-editable mapping of digit-key → class id. Persisted in JSON
+        # config alongside the class list. Defaults are filled in by
+        # _init_default_hotkeys() once class_info is known.
+        self.class_hotkeys = {}            # {'1': 0, '2': 3, ...}
+
+        # Crop-review window state (lazy; set when window is opened)
+        self._crop_review_window = None
+        self._crop_review_entries = []          # [{img_path, line_idx, cls_id, bbox}, ...]
+        self._crop_review_target = None         # class id under review
+        self._crop_review_page = 0
+        self._crop_review_selected = None       # entry index, or None
+        self._crop_review_canvases = []         # [(cell_frame, canvas, caption_lbl, entry), ...]
+        self._crop_review_dirty_paths = set()   # which image paths got modified
+        # Persistent caches so re-renders are near-instant:
+        self._crop_review_thumb_cache = {}      # id(entry) -> PhotoImage
+        self._crop_review_img_cache = {}        # path-str -> cv2 image (insertion-order LRU)
+        self._crop_review_img_cache_max = 32
+
+        # Undo / redo (per-image)
+        self.history_undo = []
+        self.history_redo = []
+        self.max_history = 100
+
+        # Auto-fit on new image load
+        self.auto_fit_on_load = True
+        self._initial_fit_pending = False
+
+        # Scroll-triggered re-render id (for debounced redraw via after_idle)
+        self._scroll_redraw_id = None
+
+        # Path-display variables (populated in setup_gui)
+        self.image_path_display_var = None
+        self.label_path_display_var = None
+        self.model_path_display_var = None
+        self.yaml_path_display_var = None
+
         # Load class configuration
         self.config_file = "class_config.json"
         # Store yaml_path for later loading after GUI is set up
@@ -149,6 +198,8 @@ class YOLOLabelingTool:
         
         # Now load YAML after GUI is set up
         if self.yaml_path_to_load:
+            if self.yaml_path_display_var is not None:
+                self.yaml_path_display_var.set(self._shorten_path(self.yaml_path_to_load))
             self.load_classes_from_yaml(self.yaml_path_to_load)
             # Refresh class buttons after loading YAML
             self.setup_class_buttons()
@@ -176,6 +227,347 @@ class YOLOLabelingTool:
         """Convert BGR color tuple to RGB hex string for Tkinter"""
         b, g, r = bgr_color
         return f'#{r:02x}{g:02x}{b:02x}'
+
+    def _shorten_path(self, path, max_len=42):
+        """Return a path string trimmed for display (keeps tail)."""
+        if not path:
+            return "(not set)"
+        s = str(path)
+        if len(s) <= max_len:
+            return s
+        return "…" + s[-(max_len - 1):]
+
+    def _update_path_displays(self):
+        """Refresh all path-display labels from current state."""
+        if self.image_path_display_var is not None:
+            self.image_path_display_var.set(self._shorten_path(self.image_folder) if self.image_folder else "(not set)")
+        if self.label_path_display_var is not None:
+            self.label_path_display_var.set(self._shorten_path(self.label_folder) if self.label_folder else "(not set)")
+
+    def _is_entry_focused(self):
+        """True when keyboard focus is on a text entry widget."""
+        try:
+            w = self.root.focus_get()
+        except KeyError:
+            return False
+        if w is None:
+            return False
+        # Match common text-input widget classes
+        return isinstance(w, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text, tk.Spinbox))
+
+    # --- Fit-to-window / zoom helpers ---
+    def fit_to_window(self, event=None):
+        """Scale the current image so it fits inside the canvas viewport."""
+        if self.current_image is None or self.batch_mode:
+            return
+        h, w = self.current_image.shape[:2]
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            # Canvas isn't drawn yet — try again shortly
+            self.root.after(80, self.fit_to_window)
+            return
+        scale = min(cw / w, ch / h)
+        self.zoom_scale = max(self.min_zoom, min(scale, self.max_zoom))
+        self.display_image()
+        self.canvas.xview_moveto(0)
+        self.canvas.yview_moveto(0)
+        self.update_status(f"Zoom: {self.zoom_scale:.2f}x (fit)")
+
+    def _zoom_at_viewport_center(self, zoom_in=True):
+        """Zoom in or out keeping the viewport center stable. Used by +/- keys."""
+        if self.current_image is None or self.batch_mode:
+            return
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        # Image-space anchor at viewport center
+        cx_canvas = self.canvas.canvasx(cw // 2)
+        cy_canvas = self.canvas.canvasy(ch // 2)
+        anchor_img_x = cx_canvas / self.zoom_scale
+        anchor_img_y = cy_canvas / self.zoom_scale
+
+        if zoom_in:
+            self.zoom_scale = min(self.max_zoom, self.zoom_scale * self.zoom_factor)
+        else:
+            self.zoom_scale = max(self.min_zoom, self.zoom_scale / self.zoom_factor)
+
+        new_w = max(1, int(self.current_image.shape[1] * self.zoom_scale))
+        new_h = max(1, int(self.current_image.shape[0] * self.zoom_scale))
+        self.canvas.configure(scrollregion=(0, 0, new_w, new_h))
+
+        new_cx = anchor_img_x * self.zoom_scale
+        new_cy = anchor_img_y * self.zoom_scale
+        if new_w > 0:
+            self.canvas.xview_moveto(max(0.0, min(1.0, (new_cx - cw // 2) / new_w)))
+        if new_h > 0:
+            self.canvas.yview_moveto(max(0.0, min(1.0, (new_cy - ch // 2) / new_h)))
+
+        self.display_image()
+        self.update_status(f"Zoom: {self.zoom_scale:.2f}x")
+
+    # --- Scroll-triggered re-render (needed because display_image only renders
+    # the visible crop) ---
+    def _on_canvas_xview(self, *args):
+        self.canvas.xview(*args)
+        self._schedule_scroll_redraw()
+
+    def _on_canvas_yview(self, *args):
+        self.canvas.yview(*args)
+        self._schedule_scroll_redraw()
+
+    def _schedule_scroll_redraw(self):
+        """Coalesce multiple scroll events into a single redraw."""
+        if self._scroll_redraw_id is not None:
+            try:
+                self.root.after_cancel(self._scroll_redraw_id)
+            except Exception:
+                pass
+        # after_idle runs as soon as no more events are pending — gives smooth
+        # rendering at the end of a scrollbar drag instead of one redraw per tick.
+        self._scroll_redraw_id = self.root.after_idle(self._do_scroll_redraw)
+
+    def _do_scroll_redraw(self):
+        self._scroll_redraw_id = None
+        if self.current_image is None or self.batch_mode:
+            return
+        self.display_image()
+
+    # --- Undo / redo helpers ---
+    def _snapshot_boxes(self):
+        """Return a deep-ish snapshot of user_boxes and label_boxes for history."""
+        return (
+            [tuple(b) for b in self.user_boxes],
+            [tuple(b) for b in self.label_boxes],
+        )
+
+    def _push_history(self):
+        """Save current box state to undo stack and clear redo stack."""
+        self.history_undo.append(self._snapshot_boxes())
+        if len(self.history_undo) > self.max_history:
+            self.history_undo.pop(0)
+        self.history_redo.clear()
+
+    def _restore_snapshot(self, snap):
+        user_boxes, label_boxes = snap
+        self.user_boxes = list(user_boxes)
+        self.label_boxes = list(label_boxes)
+        self.clear_selections()
+        if self.highlight_overlaps:
+            self.detect_current_overlaps()
+        self.save_labels()
+        self.display_image()
+
+    def undo(self, event=None):
+        if self._is_entry_focused():
+            return
+        if not self.history_undo:
+            self.update_status("Nothing to undo")
+            return
+        self.history_redo.append(self._snapshot_boxes())
+        self._restore_snapshot(self.history_undo.pop())
+        self.update_status(f"Undo ({len(self.history_undo)} left)")
+
+    def redo(self, event=None):
+        if self._is_entry_focused():
+            return
+        if not self.history_redo:
+            self.update_status("Nothing to redo")
+            return
+        self.history_undo.append(self._snapshot_boxes())
+        self._restore_snapshot(self.history_redo.pop())
+        self.update_status(f"Redo ({len(self.history_redo)} left)")
+
+    # --- Edge-drag (hover-to-resize) helpers ---
+    _HANDLE_CURSORS = {
+        'tl': 'top_left_corner', 'br': 'bottom_right_corner',
+        'tr': 'top_right_corner', 'bl': 'bottom_left_corner',
+        'top': 'sb_v_double_arrow', 'bottom': 'sb_v_double_arrow',
+        'left': 'sb_h_double_arrow', 'right': 'sb_h_double_arrow',
+    }
+
+    def _detect_edge_hover(self, img_x, img_y):
+        """Return (source, index, handle) if (img_x, img_y) is near a box edge/corner, else None.
+        Searches visible user + label boxes, prefers the box with the smallest area."""
+        if self.zoom_scale <= 0:
+            return None
+        # Convert canvas-space tolerance to image-space pixels
+        tol = max(2.0, self._edge_hover_pixels / self.zoom_scale)
+        candidates = []
+        sources = []
+        if self.show_user_boxes:
+            sources.append(('user', self.user_boxes))
+        if self.show_label_boxes:
+            sources.append(('label', self.label_boxes))
+        for source, boxes in sources:
+            for i, box in enumerate(boxes):
+                if len(box) < 5:
+                    continue
+                cls_id, x1, y1, x2, y2 = box[:5]
+                cls_int = int(cls_id.item()) if hasattr(cls_id, 'item') else int(cls_id)
+                if not self.class_visibility.get(cls_int, True):
+                    continue
+                # Bounding probe with tolerance — skip far-away boxes fast
+                if img_x < min(x1, x2) - tol or img_x > max(x1, x2) + tol:
+                    continue
+                if img_y < min(y1, y2) - tol or img_y > max(y1, y2) + tol:
+                    continue
+                near_left = abs(img_x - x1) <= tol and min(y1, y2) - tol <= img_y <= max(y1, y2) + tol
+                near_right = abs(img_x - x2) <= tol and min(y1, y2) - tol <= img_y <= max(y1, y2) + tol
+                near_top = abs(img_y - y1) <= tol and min(x1, x2) - tol <= img_x <= max(x1, x2) + tol
+                near_bottom = abs(img_y - y2) <= tol and min(x1, x2) - tol <= img_x <= max(x1, x2) + tol
+                handle = None
+                if near_top and near_left:
+                    handle = 'tl'
+                elif near_top and near_right:
+                    handle = 'tr'
+                elif near_bottom and near_left:
+                    handle = 'bl'
+                elif near_bottom and near_right:
+                    handle = 'br'
+                elif near_top:
+                    handle = 'top'
+                elif near_bottom:
+                    handle = 'bottom'
+                elif near_left:
+                    handle = 'left'
+                elif near_right:
+                    handle = 'right'
+                if handle is not None:
+                    area = max(1, abs((x2 - x1) * (y2 - y1)))
+                    candidates.append((source, i, handle, area))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[3])
+        s, idx, h, _ = candidates[0]
+        return s, idx, h
+
+    def _detect_box_at(self, img_x, img_y):
+        """Return (source, index) for the smallest visible box containing
+        (img_x, img_y), or None. Used by left-click selection."""
+        candidates = []
+        sources = []
+        if self.show_user_boxes:
+            sources.append(('user', self.user_boxes))
+        if self.show_label_boxes:
+            sources.append(('label', self.label_boxes))
+        for source, boxes in sources:
+            for i, box in enumerate(boxes):
+                if len(box) < 5:
+                    continue
+                cls_id, x1, y1, x2, y2 = box[:5]
+                cls_int = int(cls_id.item()) if hasattr(cls_id, 'item') else int(cls_id)
+                if not self.class_visibility.get(cls_int, True):
+                    continue
+                if min(x1, x2) <= img_x <= max(x1, x2) and min(y1, y2) <= img_y <= max(y1, y2):
+                    area = max(1, abs((x2 - x1) * (y2 - y1)))
+                    candidates.append((source, i, area))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[2])
+        return (candidates[0][0], candidates[0][1])
+
+    def _set_canvas_cursor(self, cursor):
+        if cursor != self._last_cursor:
+            try:
+                self.canvas.configure(cursor=cursor)
+            except tk.TclError:
+                # Unknown cursor name on this platform — fall back silently
+                self.canvas.configure(cursor='crosshair')
+                cursor = 'crosshair'
+            self._last_cursor = cursor
+
+    def _start_edge_resize(self, source, index, handle):
+        """Begin resizing the given box by the given handle. Pushes history."""
+        boxes = self.user_boxes if source == 'user' else self.label_boxes
+        if not (0 <= index < len(boxes)):
+            return
+        self._push_history()
+        cls_id, x1, y1, x2, y2 = boxes[index][:5]
+        # Normalize so x1 <= x2 and y1 <= y2
+        nx1, nx2 = min(x1, x2), max(x1, x2)
+        ny1, ny2 = min(y1, y2), max(y1, y2)
+        boxes[index] = (cls_id, nx1, ny1, nx2, ny2)
+        self._resize_active = True
+        self._resize_source = source
+        self._resize_index = index
+        self._resize_handle = handle
+        # Create the live preview rectangle
+        color = self.class_info[int(cls_id.item()) if hasattr(cls_id, 'item') else int(cls_id)]["color"]
+        rgb_color = self.bgr_to_rgb_hex(color)
+        zx1, zy1 = self.image_to_canvas_coords(nx1, ny1)
+        zx2, zy2 = self.image_to_canvas_coords(nx2, ny2)
+        if self.current_rect:
+            self.canvas.delete(self.current_rect)
+        self.current_rect = self.canvas.create_rectangle(
+            zx1, zy1, zx2, zy2, outline=rgb_color, width=2, dash=(6, 4)
+        )
+
+    def _update_edge_resize(self, img_x, img_y):
+        """Update the box being resized based on the current pointer position."""
+        if not self._resize_active or self._resize_index is None:
+            return
+        boxes = self.user_boxes if self._resize_source == 'user' else self.label_boxes
+        if not (0 <= self._resize_index < len(boxes)):
+            self._resize_active = False
+            return
+        cls_id, x1, y1, x2, y2 = boxes[self._resize_index][:5]
+        img_height, img_width = self.current_image.shape[:2]
+        img_x = max(0, min(img_x, img_width))
+        img_y = max(0, min(img_y, img_height))
+        h = self._resize_handle
+        if h in ('tl', 'left', 'bl'):
+            x1 = img_x
+        if h in ('tr', 'right', 'br'):
+            x2 = img_x
+        if h in ('tl', 'top', 'tr'):
+            y1 = img_y
+        if h in ('bl', 'bottom', 'br'):
+            y2 = img_y
+        boxes[self._resize_index] = (cls_id, x1, y1, x2, y2)
+        # Update preview rectangle
+        nx1, nx2 = min(x1, x2), max(x1, x2)
+        ny1, ny2 = min(y1, y2), max(y1, y2)
+        if self.current_rect:
+            zx1, zy1 = self.image_to_canvas_coords(nx1, ny1)
+            zx2, zy2 = self.image_to_canvas_coords(nx2, ny2)
+            self.canvas.coords(self.current_rect, zx1, zy1, zx2, zy2)
+        self.update_status(f"Resize: {int(nx2-nx1)}x{int(ny2-ny1)} px")
+
+    def _finish_edge_resize(self):
+        """Finalize the in-progress edge resize."""
+        if not self._resize_active or self._resize_index is None:
+            self._resize_active = False
+            return
+        boxes = self.user_boxes if self._resize_source == 'user' else self.label_boxes
+        if 0 <= self._resize_index < len(boxes):
+            cls_id, x1, y1, x2, y2 = boxes[self._resize_index][:5]
+            # Normalize ordering
+            nx1, nx2 = min(x1, x2), max(x1, x2)
+            ny1, ny2 = min(y1, y2), max(y1, y2)
+            img_height, img_width = self.current_image.shape[:2]
+            nx1 = max(0, min(nx1, img_width))
+            nx2 = max(0, min(nx2, img_width))
+            ny1 = max(0, min(ny1, img_height))
+            ny2 = max(0, min(ny2, img_height))
+            # Enforce 10px minimum — revert if too tiny
+            if (nx2 - nx1) < 10 or (ny2 - ny1) < 10:
+                if self.history_undo:
+                    snap = self.history_undo.pop()
+                    self.user_boxes, self.label_boxes = list(snap[0]), list(snap[1])
+                self.update_status("Resize too small — reverted")
+            else:
+                boxes[self._resize_index] = (cls_id, nx1, ny1, nx2, ny2)
+        if self.current_rect:
+            self.canvas.delete(self.current_rect)
+            self.current_rect = None
+        self._resize_active = False
+        self._resize_source = None
+        self._resize_index = None
+        self._resize_handle = None
+        if self.highlight_overlaps:
+            self.detect_current_overlaps()
+        self.save_labels()
+        self.display_image()
         
     def setup_gui(self):
         # Main frame
@@ -206,30 +598,33 @@ class YOLOLabelingTool:
         # Setup tab - Folder selection in a more compact layout
         path_frame = ttk.LabelFrame(self.setup_tab, text="Data Paths")
         path_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Image folder row
-        img_frame = ttk.Frame(path_frame)
-        img_frame.pack(fill=tk.X, padx=5, pady=2)
-        ttk.Label(img_frame, text="Images:").pack(side=tk.LEFT)
-        ttk.Button(img_frame, text="Browse", width=8, command=self.select_image_folder).pack(side=tk.RIGHT)
-        
-        # Label folder row
-        lbl_frame = ttk.Frame(path_frame)
-        lbl_frame.pack(fill=tk.X, padx=5, pady=2)
-        ttk.Label(lbl_frame, text="Labels:").pack(side=tk.LEFT)
-        ttk.Button(lbl_frame, text="Browse", width=8, command=self.select_label_folder).pack(side=tk.RIGHT)
-        
-        # Model path row
-        mdl_frame = ttk.Frame(path_frame)
-        mdl_frame.pack(fill=tk.X, padx=5, pady=2)
-        ttk.Label(mdl_frame, text="Model:").pack(side=tk.LEFT)
-        ttk.Button(mdl_frame, text="Browse", width=8, command=self.select_model).pack(side=tk.RIGHT)
-        
-        # YAML path row
-        yaml_frame = ttk.Frame(path_frame)
-        yaml_frame.pack(fill=tk.X, padx=5, pady=2)
-        ttk.Label(yaml_frame, text="YAML:").pack(side=tk.LEFT)
-        ttk.Button(yaml_frame, text="Browse", width=8, command=self.select_yaml).pack(side=tk.RIGHT)
+
+        self.image_path_display_var = tk.StringVar(value="(not set)")
+        self.label_path_display_var = tk.StringVar(value="(not set)")
+        self.model_path_display_var = tk.StringVar(value="(not set)")
+        self.yaml_path_display_var = tk.StringVar(value="(not set)")
+
+        def _path_row(parent, label_text, browse_cmd, var):
+            row = ttk.Frame(parent)
+            row.pack(fill=tk.X, padx=5, pady=2)
+            top = ttk.Frame(row)
+            top.pack(fill=tk.X)
+            ttk.Label(top, text=label_text).pack(side=tk.LEFT)
+            ttk.Button(top, text="Browse", width=8, command=browse_cmd).pack(side=tk.RIGHT)
+            ttk.Label(row, textvariable=var, foreground="#555",
+                      wraplength=240, justify=tk.LEFT, font=('TkDefaultFont', 8)
+                      ).pack(fill=tk.X, padx=(8, 0))
+
+        _path_row(path_frame, "Images:", self.select_image_folder, self.image_path_display_var)
+        _path_row(path_frame, "Labels:", self.select_label_folder, self.label_path_display_var)
+        _path_row(path_frame, "Model:",  self.select_model,         self.model_path_display_var)
+        _path_row(path_frame, "YAML:",   self.select_yaml,          self.yaml_path_display_var)
+
+        # Update displays for paths supplied via CLI / constructor (set before setup_gui ran)
+        if self.image_folder:
+            self.image_path_display_var.set(self._shorten_path(self.image_folder))
+        if self.label_folder:
+            self.label_path_display_var.set(self._shorten_path(self.label_folder))
         
         # Navigation frame
         nav_frame = ttk.LabelFrame(self.setup_tab, text="Navigation")
@@ -300,6 +695,11 @@ class YOLOLabelingTool:
         self.filter_class_combo = ttk.Combobox(filter_class_select, width=15, state="disabled")
         self.filter_class_combo.pack(side=tk.LEFT, padx=5)
         self.filter_class_combo.bind("<<ComboboxSelected>>", self.update_filter)
+
+        # Open separate Crop Review window for this class across the filtered set
+        ttk.Button(filter_class_frame, text="🔍 Review crops in separate window…",
+                   command=self.open_class_crop_review
+                   ).pack(fill=tk.X, padx=5, pady=(4, 6))
         
         # Size filter
         filter_size_frame = ttk.LabelFrame(self.filters_tab, text="Filter by Size")
@@ -462,9 +862,14 @@ class YOLOLabelingTool:
         self.class_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Add class button
-        ttk.Button(self.classes_tab, text="Add New Class", 
-                  command=self.add_new_class).pack(pady=5)
-        
+        ttk.Button(self.classes_tab, text="Add New Class",
+                  command=self.add_new_class).pack(pady=(5, 2), fill=tk.X, padx=10)
+
+        # Bulk-reassign: rewrite every label of class A as class B (across current
+        # image / filtered set / whole dataset).
+        ttk.Button(self.classes_tab, text="🔀 Reassign Class…",
+                  command=self.show_reassign_class_dialog).pack(pady=2, fill=tk.X, padx=10)
+
         # Selected class indicator
         self.selected_class_var = tk.StringVar(value="Selected Class: 0")
         ttk.Label(self.classes_tab, textvariable=self.selected_class_var).pack(pady=5)
@@ -502,20 +907,36 @@ class YOLOLabelingTool:
                        variable=self.show_drawings_var,
                        command=self.toggle_user_boxes).pack(anchor=tk.W, padx=5, pady=2)
         
-        # Add instructions label
+        # Auto-fit toggle
+        self.auto_fit_var = tk.BooleanVar(value=self.auto_fit_on_load)
+        ttk.Checkbutton(visibility_frame, text="Auto-fit on image load",
+                       variable=self.auto_fit_var,
+                       command=self._toggle_auto_fit).pack(anchor=tk.W, padx=5, pady=2)
+
+        # Help button + short hint
+        ttk.Button(self.display_tab, text="⌨ Show All Shortcuts (?)",
+                  command=self.show_shortcuts_help).pack(pady=(10, 5), fill=tk.X, padx=5)
+
         instructions = (
-            "Instructions:\n"
-            "- Left click + drag: Draw box\n"
-            "- Right click: Select box & show menu\n"
-            "- Double click: Edit selected box\n"
-            "- S key: Save labels\n"
-            "- Left/Right arrows: Navigate images\n"
-            "- A key: Accept all predictions\n"
-            "- Right-click box → Add to Clipboard\n"
-            "- Ctrl+V: Paste labels from clipboard"
+            "Quick reference:\n"
+            "  Draw box: drag on empty area\n"
+            "  Select box: left-click inside it\n"
+            "  Change class of selected box: keys 1-9, 0\n"
+            "  (Click [n] next to a class to rebind its hotkey)\n"
+            "  Resize box: drag any edge or corner\n"
+            "  Right-click box: open menu\n"
+            "  Switch draw class (no selection): keys 1-9, 0\n"
+            "  Undo / Redo: Ctrl+Z / Ctrl+Y\n"
+            "  Zoom: mouse wheel or +/-\n"
+            "  Fit to window: F\n"
+            "  Navigate: ← →\n"
+            "  Accept all predictions: A\n"
+            "  Toggle layers: Shift+P / L / U\n"
+            "  Delete image: D     |  Help: ?"
         )
-        ttk.Label(self.display_tab, text=instructions, justify=tk.LEFT).pack(pady=10)
-        
+        ttk.Label(self.display_tab, text=instructions, justify=tk.LEFT,
+                  font=('TkDefaultFont', 9)).pack(pady=5, padx=5, anchor=tk.W)
+
         # Analyze tab - Dataset insights and visualizations
         ttk.Label(self.analyze_tab, text="Dataset Analysis", font=('Arial', 12, 'bold')).pack(pady=(5, 10))
         
@@ -571,9 +992,11 @@ class YOLOLabelingTool:
                                xscrollcommand=self.canvas_hscroll.set,
                                yscrollcommand=self.canvas_vscroll.set)
         
-        # Configure scrollbars
-        self.canvas_vscroll.config(command=self.canvas.yview)
-        self.canvas_hscroll.config(command=self.canvas.xview)
+        # Configure scrollbars — wrap so a scroll triggers a re-render
+        # (display_image only renders the visible crop, so the viewport must
+        # be re-rendered when scrolled to reveal a different region).
+        self.canvas_vscroll.config(command=self._on_canvas_yview)
+        self.canvas_hscroll.config(command=self._on_canvas_xview)
         
         # Pack scrollbars and canvas
         self.canvas_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -615,7 +1038,71 @@ class YOLOLabelingTool:
             iou_thresh_entry.config(state='disabled')
         else:
             iou_thresh_entry.config(state='normal')
-        
+
+    def _toggle_auto_fit(self):
+        self.auto_fit_on_load = self.auto_fit_var.get()
+
+    def show_shortcuts_help(self, event=None):
+        """Show a popup window listing every shortcut."""
+        win = tk.Toplevel(self.root)
+        win.title("Keyboard Shortcuts")
+        win.geometry("520x560")
+        win.transient(self.root)
+
+        ttk.Label(win, text="Keyboard & Mouse Shortcuts",
+                  font=('Arial', 13, 'bold')).pack(pady=(12, 6))
+
+        rows = [
+            ("Mouse", ""),
+            ("Click inside box",          "Select that box (then 1-9/0 changes its class)"),
+            ("Drag on empty area",        "Draw new box (current class)"),
+            ("Drag a box edge / corner",  "Resize that side/corner"),
+            ("Double-click inside box",   "Edit user box from corner"),
+            ("Right-click",               "Select box → context menu"),
+            ("Wheel up / down",           "Zoom in / out at cursor"),
+            ("", ""),
+            ("Navigation", ""),
+            ("← / →",                     "Previous / Next image"),
+            ("D",                         "Delete current image (confirm)"),
+            ("", ""),
+            ("Labels", ""),
+            ("1-9, 0",                    "Reassign selected box (mapping is editable in Classes tab)"),
+            ("",                          "or set current draw class when nothing is selected"),
+            ("S",                         "Save labels"),
+            ("A",                         "Accept all model predictions"),
+            ("Enter",                     "Accept selected prediction"),
+            ("Delete",                    "Delete selected box"),
+            ("Ctrl+V",                    "Paste labels from clipboard"),
+            ("Ctrl+Z / Ctrl+Y",           "Undo / Redo box changes"),
+            ("Esc",                       "Cancel selection"),
+            ("", ""),
+            ("View", ""),
+            ("F",                         "Fit image to window"),
+            ("+ / -",                     "Zoom in / out (viewport center)"),
+            ("Shift+P / L / U",           "Toggle Predictions / Labels / User layers"),
+            ("? or H",                    "Show this help"),
+        ]
+
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+
+        for left, right in rows:
+            row = ttk.Frame(body)
+            row.pack(fill=tk.X, pady=1)
+            if not left and not right:
+                ttk.Separator(body, orient='horizontal').pack(fill=tk.X, pady=4)
+                continue
+            if not right:
+                ttk.Label(row, text=left, font=('TkDefaultFont', 10, 'bold'),
+                          foreground='#0066cc').pack(anchor=tk.W)
+            else:
+                ttk.Label(row, text=left, width=22, anchor=tk.W,
+                          font=('Courier', 10)).pack(side=tk.LEFT)
+                ttk.Label(row, text=right, anchor=tk.W).pack(side=tk.LEFT)
+
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
+        win.bind("<Escape>", lambda e: win.destroy())
+
     def create_context_menus(self):
         """Create context menus for right-click actions"""
         # Context menu for prediction boxes
@@ -638,36 +1125,138 @@ class YOLOLabelingTool:
         self.canvas.bind("<B1-Motion>", self.draw)
         self.canvas.bind("<ButtonRelease-1>", self.end_draw)
         self.canvas.bind("<Motion>", self.draw_crosshair)  # Track mouse movement for crosshair
-        self.root.bind("<s>", self.save_labels)
-        self.root.bind("<Left>", lambda e: self.prev_image())
-        self.root.bind("<Right>", lambda e: self.next_image())
-        self.canvas.bind("<ButtonPress-3>", self.select_box_or_prediction)  # Right click to select box or prediction
-        self.root.bind("<Delete>", self.delete_selected_box)  # Delete key to remove selected box
-        self.canvas.bind("<Double-Button-1>", self.start_edit_box)  # Double click to edit box
-        self.canvas.bind("<MouseWheel>", self.handle_zoom)  # Windows and MacOS
-        self.canvas.bind("<Button-4>", self.handle_zoom)  # Linux scroll up
-        self.canvas.bind("<Button-5>", self.handle_zoom)  # Linux scroll down
-        self.root.bind("<Return>", lambda e: self.accept_selected_prediction())  # Enter key to accept selected prediction
-        self.root.bind("<a>", lambda e: self.accept_all_predictions())  # 'a' key to accept all predictions
-        self.root.bind("<Control-v>", lambda e: self.paste_labels())  # Ctrl+V to paste labels
-        self.canvas.bind("<ButtonPress-1>", self.on_canvas_click, add="+")  # Handle clicks to cancel selection
+        self.canvas.bind("<ButtonPress-3>", self.select_box_or_prediction)
+        self.canvas.bind("<Double-Button-1>", self.start_edit_box)
+        self.canvas.bind("<MouseWheel>", self.handle_zoom)
+        self.canvas.bind("<Button-4>", self.handle_zoom)
+        self.canvas.bind("<Button-5>", self.handle_zoom)
+        self.canvas.bind("<ButtonPress-1>", self.on_canvas_click, add="+")
+
+        # Helper that suppresses key handlers while the user is typing in an entry
+        def kb(handler):
+            def wrapped(event):
+                if self._is_entry_focused():
+                    return
+                return handler(event)
+            return wrapped
+
+        self.root.bind("<s>",            kb(lambda e: self.save_labels()))
+        self.root.bind("<Left>",         kb(lambda e: self.prev_image()))
+        self.root.bind("<Right>",        kb(lambda e: self.next_image()))
+        self.root.bind("<Delete>",       kb(self.delete_selected_box))
+        self.root.bind("<Return>",       kb(lambda e: self.accept_selected_prediction()))
+        self.root.bind("<a>",            kb(lambda e: self.accept_all_predictions()))
+        self.root.bind("<Control-v>",    kb(lambda e: self.paste_labels()))
+
+        # Undo / redo
+        self.root.bind("<Control-z>",        self.undo)
+        self.root.bind("<Control-Z>",        self.undo)
+        self.root.bind("<Control-y>",        self.redo)
+        self.root.bind("<Control-Y>",        self.redo)
+        self.root.bind("<Control-Shift-z>",  self.redo)
+        self.root.bind("<Control-Shift-Z>",  self.redo)
+
+        # View shortcuts
+        self.root.bind("<f>",            kb(lambda e: self.fit_to_window()))
+        self.root.bind("<plus>",         kb(lambda e: self._zoom_at_viewport_center(True)))
+        self.root.bind("<equal>",        kb(lambda e: self._zoom_at_viewport_center(True)))
+        self.root.bind("<KP_Add>",       kb(lambda e: self._zoom_at_viewport_center(True)))
+        self.root.bind("<minus>",        kb(lambda e: self._zoom_at_viewport_center(False)))
+        self.root.bind("<KP_Subtract>",  kb(lambda e: self._zoom_at_viewport_center(False)))
+
+        # Layer toggles (Shift+P/L/U) — synchronises both the BooleanVar and visibility state
+        self.root.bind("<P>", kb(lambda e: self._toggle_layer('predictions')))
+        self.root.bind("<L>", kb(lambda e: self._toggle_layer('labels')))
+        self.root.bind("<U>", kb(lambda e: self._toggle_layer('user')))
+
+        # Selection / image actions
+        self.root.bind("<Escape>",       kb(lambda e: self.clear_selections()))
+        self.root.bind("<d>",            kb(lambda e: self.delete_current_image()))
+
+        # Help overlay
+        self.root.bind("<question>",     kb(lambda e: self.show_shortcuts_help()))
+        self.root.bind("<h>",            kb(lambda e: self.show_shortcuts_help()))
+
+        # Class selection via number keys — both top-row digits and the
+        # num-pad equivalents (KP_0..KP_9) when NumLock is on.
+        for digit in '0123456789':
+            self.root.bind(f"<Key-{digit}>",
+                           kb(lambda e, d=digit: self._kb_select_class(d)))
+            self.root.bind(f"<KP_{digit}>",
+                           kb(lambda e, d=digit: self._kb_select_class(d)))
+
+    def _toggle_layer(self, which):
+        """Flip a Boolean layer toggle (predictions/labels/user) and refresh."""
+        if which == 'predictions':
+            self.show_predictions_var.set(not self.show_predictions_var.get())
+            self.toggle_predictions()
+            state = "ON" if self.show_model_predictions else "OFF"
+            self.update_status(f"Predictions: {state}")
+        elif which == 'labels':
+            self.show_labels_var.set(not self.show_labels_var.get())
+            self.toggle_label_boxes()
+            state = "ON" if self.show_label_boxes else "OFF"
+            self.update_status(f"Label boxes: {state}")
+        elif which == 'user':
+            self.show_drawings_var.set(not self.show_drawings_var.get())
+            self.toggle_user_boxes()
+            state = "ON" if self.show_user_boxes else "OFF"
+            self.update_status(f"User boxes: {state}")
+
+    def _kb_select_class(self, digit):
+        """Number-key handler.
+
+        The digit→class mapping is user-editable via the Classes tab (each
+        class has a clickable hotkey button). Defaults follow the convention
+        '1'..'9' → classes 0..8 and '0' → class 9, but can be remapped.
+
+        - If a user/label box is currently selected → reassign its class to
+          the mapped target. Selection persists so a follow-up keystroke can
+          reassign again.
+        - Otherwise → set the current draw class.
+        """
+        target = self.class_hotkeys.get(digit)
+        if target is None or target not in self.class_info:
+            self.update_status(f"No class bound to key '{digit}' (set one in the Classes tab)")
+            return
+
+        if self.selected_box_index is not None and self.selected_box_source in ('user', 'label'):
+            self.reassign_box_class(target, keep_selection=True)
+            self.select_class(target)
+            self.update_status(f"Box class → {target}: {self.class_info[target]['name']}")
+        else:
+            self.select_class(target)
+            self.update_status(f"Class → {target}: {self.class_info[target]['name']}")
         
     def on_canvas_click(self, event):
         """Handle clicks on canvas to cancel selection"""
+        # If a click-select on a box is pending, let end_draw handle the
+        # selection swap — clearing here would only cause a brief flicker.
+        if self._click_select_candidate is not None:
+            return
         # Clear selections when clicking elsewhere on canvas
         if self.selected_box_index is not None or self.selected_prediction is not None:
             self.clear_selections()
     
     def draw_crosshair(self, event):
-        """Draw crosshair cursor lines following the mouse"""
+        """Draw crosshair cursor lines following the mouse and update cursor on box edges."""
         # Only show crosshair when an image is loaded and not in batch mode
         if not hasattr(self, 'current_image') or self.current_image is None or self.batch_mode:
             return
-        
+
         # Get canvas coordinates (accounts for scrolling)
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
-        
+
+        # Update cursor when hovering near a box edge (only when idle — not drawing/editing/resizing)
+        if not self.drawing and not self.editing_box and not self._resize_active:
+            img_x, img_y = self.canvas_to_image_coords(canvas_x, canvas_y)
+            hover = self._detect_edge_hover(img_x, img_y)
+            if hover is not None:
+                self._set_canvas_cursor(self._HANDLE_CURSORS[hover[2]])
+            else:
+                self._set_canvas_cursor('crosshair')
+
         # Get canvas dimensions and scroll region
         scroll_region = self.canvas.cget("scrollregion")
         if scroll_region:
@@ -678,24 +1267,22 @@ class YOLOLabelingTool:
         else:
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
-        
+
         # Remove old crosshair lines
         if self.crosshair_h:
             self.canvas.delete(self.crosshair_h)
         if self.crosshair_v:
             self.canvas.delete(self.crosshair_v)
-        
+
         # Get color of currently selected class
         current_class_color = self.class_info[self.current_class]["color"]
         crosshair_color = self.bgr_to_rgb_hex(current_class_color)
-        
+
         # Draw new crosshair lines at cursor position (in canvas coordinates)
-        # Horizontal line (full width of scrollregion)
         self.crosshair_h = self.canvas.create_line(
             0, canvas_y, canvas_width, canvas_y,
             fill=crosshair_color, width=1, dash=(4, 4), tags='crosshair'
         )
-        # Vertical line (full height of scrollregion)
         self.crosshair_v = self.canvas.create_line(
             canvas_x, 0, canvas_x, canvas_height,
             fill=crosshair_color, width=1, dash=(4, 4), tags='crosshair'
@@ -709,6 +1296,8 @@ class YOLOLabelingTool:
     def load_images_from_folder(self, folder):
         """Load images from the specified folder"""
         self.image_folder = folder
+        if self.image_path_display_var is not None:
+            self.image_path_display_var.set(self._shorten_path(folder))
         self.image_paths = []
         for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
             self.image_paths.extend(list(Path(folder).glob(f'*{ext}')))
@@ -755,6 +1344,8 @@ class YOLOLabelingTool:
         folder = filedialog.askdirectory()
         if folder:
             self.label_folder = folder
+            if self.label_path_display_var is not None:
+                self.label_path_display_var.set(self._shorten_path(folder))
             if self.current_image_path:
                 self.load_labels()
                 if self.highlight_overlaps:
@@ -765,12 +1356,16 @@ class YOLOLabelingTool:
     def select_model(self):
         model_path = filedialog.askopenfilename(filetypes=[("PT files", "*.pt")])
         if model_path:
+            if self.model_path_display_var is not None:
+                self.model_path_display_var.set(self._shorten_path(model_path))
             self.load_model(model_path)
-    
+
     def select_yaml(self):
         """Select and load YAML configuration file"""
         yaml_path = filedialog.askopenfilename(filetypes=[("YAML files", "*.yaml *.yml")])
         if yaml_path:
+            if self.yaml_path_display_var is not None:
+                self.yaml_path_display_var.set(self._shorten_path(yaml_path))
             self.load_classes_from_yaml(yaml_path)
             # Refresh class buttons to show new classes
             self.setup_class_buttons()
@@ -784,6 +1379,8 @@ class YOLOLabelingTool:
     def load_model(self, model_path):
         """Load YOLO model from the specified path"""
         try:
+            if self.model_path_display_var is not None:
+                self.model_path_display_var.set(self._shorten_path(model_path))
             self.pretrained_model = YOLO(model_path)
             
             # Update class_info with model's class names if available
@@ -807,12 +1404,19 @@ class YOLOLabelingTool:
                             print(f"Updating class {cls_id} name from '{self.class_info[cls_id]['name']}' to '{cls_name}'")
                             self.class_info[cls_id]["name"] = cls_name
                 
+                # Re-validate hotkey map for the updated class list
+                self._cleanup_hotkeys()
+                self._init_default_hotkeys()
+                self.save_class_config()
+
                 # Refresh UI components after updating class_info
                 if hasattr(self, 'setup_class_buttons'):
                     self.setup_class_buttons()
                 if hasattr(self, 'update_class_filter_dropdown'):
                     self.update_class_filter_dropdown()
-            
+                # Sync any open crop-review window
+                self._crop_review_refresh_class_info()
+
             if self.current_image_path:
                 self.load_model_predictions()
                 self.display_image()
@@ -823,185 +1427,222 @@ class YOLOLabelingTool:
     def load_image(self):
         if 0 <= self.current_image_index < len(self.filtered_image_paths):
             self.current_image_path = self.filtered_image_paths[self.current_image_index]
-            
+
             # Load image
             self.current_image = cv2.imread(str(self.current_image_path))
-            
+
             # Update cache for this image if not already cached
             if str(self.current_image_path) not in self.image_dimensions_cache and self.current_image is not None:
                 img_height, img_width = self.current_image.shape[:2]
                 self.image_dimensions_cache[str(self.current_image_path)] = (img_width, img_height)
-            
+
+            # Reset per-image history — undo never crosses image boundaries
+            self.history_undo.clear()
+            self.history_redo.clear()
+
             # Load labels and predictions first
             self.load_labels()
             self.load_model_predictions()
-            
+
             # Detect overlaps if highlight mode is on (must be after load_labels)
             if self.highlight_overlaps:
                 self.detect_current_overlaps()
-            
-            # Display image after all data is loaded
-            self.display_image()
-            
+
+            # Auto-fit to viewport so we always see the full image first
+            if self.auto_fit_on_load and self.current_image is not None and not self.batch_mode:
+                self.fit_to_window()
+            else:
+                self.display_image()
+
             self.update_status()
             self.update_counter()
             
     def display_image(self):
+        """Render the image into the canvas.
+
+        Performance: instead of resizing the whole image to the zoomed size and
+        creating one giant PhotoImage every frame, we crop the visible viewport
+        (plus a padding ring) out of the original image and only resize that
+        slice. The rendering cost becomes bounded by canvas pixels, not by
+        zoom², which makes high-zoom interactions fast.
+        """
         if self.current_image is None:
             return
-        
-        # Clear canvas to prevent memory leaks
+
         self.canvas.delete("all")
-        
-        # Get original dimensions
-        height, width = self.current_image.shape[:2]
-        
-        # Calculate new dimensions
-        new_width = int(width * self.zoom_scale)
-        new_height = int(height * self.zoom_scale)
-        
-        # Limit maximum dimensions to prevent excessive memory usage (50 megapixels)
+
+        img_h, img_w = self.current_image.shape[:2]
+        zoom = self.zoom_scale
+
+        # Full size of the zoomed scrollregion (capped at 50M pixels)
+        full_w = int(img_w * zoom)
+        full_h = int(img_h * zoom)
         max_pixels = 50_000_000
-        if new_width * new_height > max_pixels:
-            scale_factor = (max_pixels / (new_width * new_height)) ** 0.5
-            new_width = int(new_width * scale_factor)
-            new_height = int(new_height * scale_factor)
-        
-        # Use INTER_NEAREST for faster zooming at high scales (>2x), INTER_LINEAR for better quality at lower scales
-        interpolation = cv2.INTER_NEAREST if self.zoom_scale > 2.0 else cv2.INTER_LINEAR
-        
-        # Resize image - convert BGR to RGB in one step to avoid extra copy
-        image_resized = cv2.cvtColor(
-            cv2.resize(self.current_image, (new_width, new_height), interpolation=interpolation),
-            cv2.COLOR_BGR2RGB
-        )
-        
-        # Optimize: Only draw boxes if zoom is reasonable (avoid drawing tiny boxes at very low zoom)
-        should_draw_boxes = self.zoom_scale >= 0.1
-        
-        # Draw model predictions (thin lines) if enabled
+        if full_w * full_h > max_pixels:
+            scale_factor = (max_pixels / (full_w * full_h)) ** 0.5
+            full_w = max(1, int(full_w * scale_factor))
+            full_h = max(1, int(full_h * scale_factor))
+            effective_zoom = full_w / img_w
+        else:
+            effective_zoom = zoom
+
+        cw = max(1, self.canvas.winfo_width())
+        ch = max(1, self.canvas.winfo_height())
+        view_x = self.canvas.canvasx(0)
+        view_y = self.canvas.canvasy(0)
+
+        # When the zoomed image is significantly larger than the viewport,
+        # crop-then-resize only the visible region (+ padding ring).
+        use_crop = full_w > cw * 1.3 or full_h > ch * 1.3
+
+        if use_crop:
+            pad_canvas = 120  # canvas-pixel padding so small scrolls don't expose gray
+            ix1 = max(0, int(view_x / effective_zoom - pad_canvas / effective_zoom))
+            iy1 = max(0, int(view_y / effective_zoom - pad_canvas / effective_zoom))
+            ix2 = min(img_w, int((view_x + cw) / effective_zoom + pad_canvas / effective_zoom) + 1)
+            iy2 = min(img_h, int((view_y + ch) / effective_zoom + pad_canvas / effective_zoom) + 1)
+            if ix2 <= ix1 or iy2 <= iy1:
+                ix1, iy1 = 0, 0
+                ix2, iy2 = max(1, img_w), max(1, img_h)
+            crop = self.current_image[iy1:iy2, ix1:ix2]
+            buf_w = max(1, int(round((ix2 - ix1) * effective_zoom)))
+            buf_h = max(1, int(round((iy2 - iy1) * effective_zoom)))
+            interp = cv2.INTER_NEAREST if effective_zoom > 2.0 else cv2.INTER_LINEAR
+            image_resized = cv2.cvtColor(
+                cv2.resize(crop, (buf_w, buf_h), interpolation=interp),
+                cv2.COLOR_BGR2RGB
+            )
+            crop_canvas_x = ix1 * effective_zoom
+            crop_canvas_y = iy1 * effective_zoom
+        else:
+            # Image fits in viewport — render once at full size
+            if abs(effective_zoom - 1.0) > 1e-6:
+                interp = cv2.INTER_NEAREST if effective_zoom > 2.0 else cv2.INTER_LINEAR
+                image_resized = cv2.cvtColor(
+                    cv2.resize(self.current_image, (full_w, full_h), interpolation=interp),
+                    cv2.COLOR_BGR2RGB
+                )
+            else:
+                image_resized = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+            ix1 = iy1 = 0
+            ix2, iy2 = img_w, img_h
+            crop_canvas_x = 0
+            crop_canvas_y = 0
+
+        # Convert image-space coords → buffer-space pixel coords
+        def to_buf(x, y):
+            return int(round((x - ix1) * effective_zoom)), int(round((y - iy1) * effective_zoom))
+
+        # Skip boxes entirely outside the rendered crop
+        def outside(x1, y1, x2, y2):
+            return x2 < ix1 or x1 > ix2 or y2 < iy1 or y1 > iy2
+
+        should_draw_boxes = effective_zoom >= 0.1
+        # Cap font/line scaling so it doesn't explode at high zoom
+        text_zoom = min(effective_zoom, 1.5)
+
+        # Draw model predictions (thin lines)
         if should_draw_boxes and self.show_model_predictions:
             for i, (cls_id, x1, y1, x2, y2) in enumerate(self.model_boxes):
-                # Convert numpy values to native Python types if needed
                 if hasattr(cls_id, 'item'):
                     cls_id = int(cls_id.item())
-                
-                # Skip if class not in class_info
-                if cls_id not in self.class_info:
+                else:
+                    cls_id = int(cls_id)
+                if cls_id not in self.class_info or not self.class_visibility.get(cls_id, True):
                     continue
-                    
-                if not self.class_visibility.get(cls_id, True):
+                if outside(x1, y1, x2, y2):
                     continue
-                # Convert coordinates to zoomed space
-                zx1, zy1 = self.image_to_canvas_coords(x1, y1)
-                zx2, zy2 = self.image_to_canvas_coords(x2, y2)
+                zx1, zy1 = to_buf(x1, y1)
+                zx2, zy2 = to_buf(x2, y2)
                 color = self.class_info[cls_id]["color"]
-                
-                # Draw box with thinner lines for predictions
-                cv2.rectangle(image_resized, (int(zx1), int(zy1)), (int(zx2), int(zy2)), 
-                            color[::-1], 1)  # Reverse color for RGB image
-                
-                # Add small label showing prediction number and class name
-                class_name = self.class_info[cls_id]["name"]
-                label_text = f"{class_name}"
-                font_scale = 0.5 * self.zoom_scale  # Scale font size with zoom
-                thickness = max(1, int(1 * self.zoom_scale))  # Scale thickness with zoom
-                cv2.putText(image_resized, label_text, 
-                          (int(zx1), int(zy1)-5),
-                          cv2.FONT_HERSHEY_SIMPLEX, font_scale, 
-                          color[::-1], thickness)
-            
+                cv2.rectangle(image_resized, (zx1, zy1), (zx2, zy2), color[::-1], 1)
+                cv2.putText(image_resized, self.class_info[cls_id]["name"],
+                            (zx1, zy1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5 * text_zoom,
+                            color[::-1], max(1, int(text_zoom)))
+
         # Draw label file boxes (thick lines)
         if should_draw_boxes and self.show_label_boxes:
             for i, (cls_id, x1, y1, x2, y2) in enumerate(self.label_boxes):
-                # Convert numpy values to native Python types if needed
                 if hasattr(cls_id, 'item'):
                     cls_id = int(cls_id.item())
-                    
-                if not self.class_visibility.get(cls_id, True):
+                else:
+                    cls_id = int(cls_id)
+                if cls_id not in self.class_info or not self.class_visibility.get(cls_id, True):
                     continue
-                # Convert coordinates to zoomed space
-                zx1, zy1 = self.image_to_canvas_coords(x1, y1)
-                zx2, zy2 = self.image_to_canvas_coords(x2, y2)
-                
-                # Check if this box is overlapping and highlight mode is on
+                if outside(x1, y1, x2, y2):
+                    continue
+                zx1, zy1 = to_buf(x1, y1)
+                zx2, zy2 = to_buf(x2, y2)
                 if self.highlight_overlaps and i in self.overlapping_boxes:
-                    color = (0, 0, 255)  # Red for overlapping boxes (BGR)
-                    thickness = max(4, int(4 * self.zoom_scale))  # Thicker for overlap
+                    color = (0, 0, 255)
+                    thickness = max(4, int(4 * text_zoom))
+                    label_text = f"L • {self.class_info[cls_id]['name']} ⚠"
                 else:
                     color = self.class_info[cls_id]["color"]
-                    thickness = max(2, int(2 * self.zoom_scale))  # Normal thickness
-                
-                cv2.rectangle(image_resized, (int(zx1), int(zy1)), (int(zx2), int(zy2)), 
-                            color[::-1], thickness)  # Reverse color for RGB image
-                
-                # Add label showing box source and number
-                if self.highlight_overlaps and i in self.overlapping_boxes:
-                    label_text = f"L{i+1} ⚠"  # Warning icon for overlapping
-                else:
-                    label_text = f"L{i+1}"
-                font_scale = 0.5 * self.zoom_scale  # Scale font size with zoom
-                thickness_text = max(1, int(1 * self.zoom_scale))  # Scale thickness with zoom
-                cv2.putText(image_resized, label_text, 
-                          (int(zx1), int(zy1)-5),
-                          cv2.FONT_HERSHEY_SIMPLEX, font_scale, 
-                          color[::-1], thickness_text)
-            
+                    thickness = max(2, int(2 * text_zoom))
+                    label_text = f"L • {self.class_info[cls_id]['name']}"
+                cv2.rectangle(image_resized, (zx1, zy1), (zx2, zy2), color[::-1], thickness)
+                cv2.putText(image_resized, label_text,
+                            (zx1, zy1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5 * text_zoom,
+                            color[::-1], max(1, int(text_zoom)))
+
         # Draw user boxes (thick lines)
         if should_draw_boxes and self.show_user_boxes:
             for i, (cls_id, x1, y1, x2, y2) in enumerate(self.user_boxes):
-                # Convert numpy values to native Python types if needed
                 if hasattr(cls_id, 'item'):
                     cls_id = int(cls_id.item())
-                    
-                if not self.class_visibility.get(cls_id, True):
+                else:
+                    cls_id = int(cls_id)
+                if cls_id not in self.class_info or not self.class_visibility.get(cls_id, True):
                     continue
-                # Convert coordinates to zoomed space
-                zx1, zy1 = self.image_to_canvas_coords(x1, y1)
-                zx2, zy2 = self.image_to_canvas_coords(x2, y2)
+                if outside(x1, y1, x2, y2):
+                    continue
+                zx1, zy1 = to_buf(x1, y1)
+                zx2, zy2 = to_buf(x2, y2)
                 color = self.class_info[cls_id]["color"]
-                thickness = max(2, int(2 * self.zoom_scale))  # Scale thickness with zoom
-                cv2.rectangle(image_resized, (int(zx1), int(zy1)), (int(zx2), int(zy2)), 
-                            color[::-1], thickness)  # Reverse color for RGB image
-                
-                # Add label showing box source and number
-                label_text = f"U{i+1}"
-                font_scale = 0.5 * self.zoom_scale  # Scale font size with zoom
-                thickness = max(1, int(1 * self.zoom_scale))  # Scale thickness with zoom
-                cv2.putText(image_resized, label_text, 
-                          (int(zx1), int(zy1)-5),
-                          cv2.FONT_HERSHEY_SIMPLEX, font_scale, 
-                          color[::-1], thickness)
-            
-        # Convert to PhotoImage
+                cv2.rectangle(image_resized, (zx1, zy1), (zx2, zy2),
+                              color[::-1], max(2, int(2 * text_zoom)))
+                cv2.putText(image_resized, f"U • {self.class_info[cls_id]['name']}",
+                            (zx1, zy1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5 * text_zoom,
+                            color[::-1], max(1, int(text_zoom)))
+
+        # Place the rendered buffer at its crop offset in canvas coords
         image_pil = Image.fromarray(image_resized)
         self.photo = ImageTk.PhotoImage(image=image_pil)
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-        
-        # Add filename overlay at the top
+        self.canvas.create_image(crop_canvas_x, crop_canvas_y, anchor=tk.NW, image=self.photo)
+
+        # Filename + box-count overlay — stick it to the viewport top-left
         if self.current_image_path:
             filename = self.current_image_path.name
-            # Add background rectangle for better readability
-            font_size = max(12, int(14 * self.zoom_scale))
-            text_bg_color = '#000000'
-            text_fg_color = '#FFFFFF'
-            
-            self.canvas.create_rectangle(0, 0, new_width, font_size + 10, 
-                                        fill=text_bg_color, stipple='gray75', 
-                                        outline='', tags='filename_overlay')
-            self.canvas.create_text(10, 5, anchor=tk.NW, 
-                                   text=f"File: {filename}", 
-                                   fill=text_fg_color, 
-                                   font=('Arial', font_size, 'bold'),
-                                   tags='filename_overlay')
-        
-        # Update canvas scroll region to match the zoomed image size
-        self.canvas.configure(scrollregion=(0, 0, new_width, new_height))
-        
-        # Re-highlight selected box if any
+            font_size = 14
+            bar_height = font_size + 10
+            self.canvas.create_rectangle(view_x, view_y, view_x + cw, view_y + bar_height,
+                                         fill='#000000', stipple='gray75',
+                                         outline='', tags='filename_overlay')
+            self.canvas.create_text(view_x + 10, view_y + 5, anchor=tk.NW,
+                                    text=f"File: {filename}",
+                                    fill='#FFFFFF',
+                                    font=('Arial', font_size, 'bold'),
+                                    tags='filename_overlay')
+            counts_text = (
+                f"U:{len(self.user_boxes)}  "
+                f"L:{len(self.label_boxes)}  "
+                f"P:{len(self.model_boxes)}"
+            )
+            self.canvas.create_text(view_x + cw - 10, view_y + 5, anchor=tk.NE,
+                                    text=counts_text,
+                                    fill='#FFD166',
+                                    font=('Arial', font_size, 'bold'),
+                                    tags='filename_overlay')
+
+        # Scrollregion must reflect the full zoomed size so scrollbars are accurate
+        self.canvas.configure(scrollregion=(0, 0, full_w, full_h))
+
+        # Re-highlight any active selection
         self.highlight_selected_box()
-        
-        # Re-highlight selected prediction if any
         if self.selected_prediction is not None:
             self.highlight_selected_prediction()
         
@@ -1063,16 +1704,34 @@ class YOLOLabelingTool:
             self.model_boxes = preds
         
     def start_draw(self, event):
-        self.drawing = True
+        if self.current_image is None or self.batch_mode:
+            return
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
-        self.start_x, self.start_y = self.canvas_to_image_coords(canvas_x, canvas_y)
-        
-        # Create initial rectangle with RGB hex color
+        img_x, img_y = self.canvas_to_image_coords(canvas_x, canvas_y)
+
+        # 1) Pointer on a box edge → start an edge-resize.
+        hover = self._detect_edge_hover(img_x, img_y)
+        if hover is not None and not self.editing_box:
+            source, idx, handle = hover
+            self._start_edge_resize(source, idx, handle)
+            return
+
+        # 2) Pointer inside an existing box → tentative click-to-select.
+        # We commit to the selection on release; if the user actually drags,
+        # we'll switch over to drawing a new box from the press point.
+        inside = self._detect_box_at(img_x, img_y)
+        if inside is not None and not self.editing_box:
+            self._click_select_candidate = inside
+            self.start_x, self.start_y = img_x, img_y
+            return
+
+        # 3) Empty area → start drawing a new box.
+        self.drawing = True
+        self.start_x, self.start_y = img_x, img_y
+
         color = self.class_info[self.current_class]["color"]
         rgb_color = self.bgr_to_rgb_hex(color)
-        
-        # Convert to canvas coordinates for display
         canvas_start_x, canvas_start_y = self.image_to_canvas_coords(self.start_x, self.start_y)
         self.current_rect = self.canvas.create_rectangle(
             canvas_start_x, canvas_start_y, canvas_start_x, canvas_start_y,
@@ -1080,12 +1739,38 @@ class YOLOLabelingTool:
         )
         
     def draw(self, event):
-        if not self.drawing and not self.editing_box:
+        # Edge-resize in progress?
+        if self._resize_active:
+            canvas_x = self.canvas.canvasx(event.x)
+            canvas_y = self.canvas.canvasy(event.y)
+            img_x, img_y = self.canvas_to_image_coords(canvas_x, canvas_y)
+            self._update_edge_resize(img_x, img_y)
             return
-            
+
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         cur_x, cur_y = self.canvas_to_image_coords(canvas_x, canvas_y)
+
+        # Pending click-select on a box: if motion exceeds ~4 canvas pixels,
+        # treat as a drag and switch into drawing-a-new-box mode from the press
+        # point. Otherwise stay pending until release.
+        if self._click_select_candidate is not None and not self.drawing:
+            threshold_img = max(1.0, 4.0 / max(self.zoom_scale, 0.01))
+            if abs(cur_x - self.start_x) > threshold_img or abs(cur_y - self.start_y) > threshold_img:
+                self._click_select_candidate = None
+                self.drawing = True
+                color = self.class_info[self.current_class]["color"]
+                rgb_color = self.bgr_to_rgb_hex(color)
+                canvas_start_x, canvas_start_y = self.image_to_canvas_coords(self.start_x, self.start_y)
+                self.current_rect = self.canvas.create_rectangle(
+                    canvas_start_x, canvas_start_y, canvas_start_x, canvas_start_y,
+                    outline=rgb_color, width=2
+                )
+            else:
+                return
+
+        if not self.drawing and not self.editing_box:
+            return
         
         # Get image dimensions
         img_height, img_width = self.current_image.shape[:2]
@@ -1129,9 +1814,37 @@ class YOLOLabelingTool:
         self.update_status(f"Box size: {int(width)}x{int(height)} pixels")
         
     def end_draw(self, event):
+        # Finalize edge-resize if active
+        if self._resize_active:
+            self._finish_edge_resize()
+            return
+
+        # Click-without-drag inside an existing box → commit selection.
+        if self._click_select_candidate is not None:
+            source, idx = self._click_select_candidate
+            self._click_select_candidate = None
+            boxes = self.user_boxes if source == 'user' else self.label_boxes
+            if 0 <= idx < len(boxes):
+                # Clear any prior selection / prediction highlight before applying ours
+                if self.selected_box_index is not None or self.selected_prediction is not None:
+                    self.clear_selections()
+                self.selected_box_index = idx
+                self.selected_box_source = source
+                self.highlight_selected_box()
+                cls_id = boxes[idx][0]
+                if hasattr(cls_id, 'item'):
+                    cls_id = int(cls_id.item())
+                else:
+                    cls_id = int(cls_id)
+                cls_name = self.class_info.get(cls_id, {}).get('name', '?')
+                self.update_status(
+                    f"Selected {source} box {idx+1} ({cls_name}) — press 1-9/0 to change class, Esc to cancel"
+                )
+            return
+
         if not self.drawing and not self.editing_box:
             return
-            
+
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         end_x, end_y = self.canvas_to_image_coords(canvas_x, canvas_y)
@@ -1169,6 +1882,8 @@ class YOLOLabelingTool:
             return
         
         if self.editing_box:
+            # Snapshot state before editing
+            self._push_history()
             # Update existing box
             self.user_boxes[self.selected_box_index] = (
                 self.user_boxes[self.selected_box_index][0],  # Keep the same class
@@ -1176,11 +1891,13 @@ class YOLOLabelingTool:
             )
             self.editing_box = False
         else:
+            # Snapshot state before adding new box
+            self._push_history()
             # Add new box
             self.user_boxes.append((self.current_class, x1, y1, x2, y2))
-            
+
         self.drawing = False
-        
+
         # Automatically save labels after adding/editing box
         self.save_labels()
         
@@ -1393,7 +2110,10 @@ class YOLOLabelingTool:
         if not self.label_clipboard:
             messagebox.showinfo("Empty Clipboard", "No labels in clipboard. Use Copy Labels first.")
             return
-        
+
+        # Snapshot state before pasting
+        self._push_history()
+
         # Add clipboard labels to user boxes
         pasted_count = 0
         for box in self.label_clipboard:
@@ -1479,6 +2199,8 @@ class YOLOLabelingTool:
     def delete_selected_box(self, event=None):
         """Delete the currently selected box"""
         if self.selected_box_index is not None:
+            # Snapshot state before deletion
+            self._push_history()
             if self.selected_box_source == 'user':
                 # Remove the box from user_boxes
                 del self.user_boxes[self.selected_box_index]
@@ -1530,7 +2252,13 @@ class YOLOLabelingTool:
                 boxes = self.user_boxes
             else:  # label
                 boxes = self.label_boxes
-                
+
+            # Defensive: index may be stale across image switches
+            if not (0 <= self.selected_box_index < len(boxes)):
+                self.selected_box_index = None
+                self.selected_box_source = None
+                return
+
             cls_id, x1, y1, x2, y2 = boxes[self.selected_box_index]
             
             # Convert numpy values to native Python types if needed
@@ -1639,10 +2367,17 @@ class YOLOLabelingTool:
         """Handle double-click to start editing a box"""
         if not self.user_boxes:
             return
-            
+        # If an edge resize is happening (or just happened), don't take over.
+        if self._resize_active:
+            return
+
+        # Double-click takes priority over a pending click-select that was
+        # set by the first half of the double-click sequence.
+        self._click_select_candidate = None
+
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
-        
+
         # Check if click is inside any user-drawn box
         for i, (cls_id, x1, y1, x2, y2) in enumerate(self.user_boxes):
             if x1 <= x <= x2 and y1 <= y <= y2:
@@ -1665,49 +2400,38 @@ class YOLOLabelingTool:
                 break
         
     def handle_zoom(self, event):
-        """Handle zoom with mouse wheel, centered on cursor position"""
-        # Get the current mouse position in canvas coordinates
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
-        
-        # Get current scroll position as fractions
-        old_x_fraction = canvas_x / (self.current_image.shape[1] * self.zoom_scale) if self.current_image is not None else 0
-        old_y_fraction = canvas_y / (self.current_image.shape[0] * self.zoom_scale) if self.current_image is not None else 0
-        
-        # Store old zoom scale
-        old_zoom = self.zoom_scale
-        
-        # Determine zoom direction
-        if event.num == 5 or event.delta < 0:  # Scroll down or negative delta
+        """Zoom with the mouse wheel, anchored on the cursor position."""
+        if self.current_image is None:
+            return
+
+        # Image-space point under the cursor — keep this stable across the zoom.
+        old_canvas_x = self.canvas.canvasx(event.x)
+        old_canvas_y = self.canvas.canvasy(event.y)
+        anchor_img_x = old_canvas_x / self.zoom_scale
+        anchor_img_y = old_canvas_y / self.zoom_scale
+
+        if event.num == 5 or event.delta < 0:
             self.zoom_scale = max(self.min_zoom, self.zoom_scale / self.zoom_factor)
-        elif event.num == 4 or event.delta > 0:  # Scroll up or positive delta
+        elif event.num == 4 or event.delta > 0:
             self.zoom_scale = min(self.max_zoom, self.zoom_scale * self.zoom_factor)
-        
-        # Redraw image with new zoom level
+
+        # Update scrollregion first so xview_moveto fractions are based on the
+        # new size, THEN scroll the viewport, THEN render (so display_image
+        # reads the post-scroll viewport and renders the right crop).
+        new_w = max(1, int(self.current_image.shape[1] * self.zoom_scale))
+        new_h = max(1, int(self.current_image.shape[0] * self.zoom_scale))
+        self.canvas.configure(scrollregion=(0, 0, new_w, new_h))
+
+        new_canvas_x = anchor_img_x * self.zoom_scale
+        new_canvas_y = anchor_img_y * self.zoom_scale
+        offset_x = new_canvas_x - event.x
+        offset_y = new_canvas_y - event.y
+        if new_w > 0:
+            self.canvas.xview_moveto(max(0.0, min(1.0, offset_x / new_w)))
+        if new_h > 0:
+            self.canvas.yview_moveto(max(0.0, min(1.0, offset_y / new_h)))
+
         self.display_image()
-        
-        # Adjust scroll position to keep the same point under the cursor
-        if self.current_image is not None:
-            # Calculate new dimensions
-            new_width = self.current_image.shape[1] * self.zoom_scale
-            new_height = self.current_image.shape[0] * self.zoom_scale
-            
-            # Calculate where the cursor point should be after zoom
-            new_canvas_x = old_x_fraction * new_width
-            new_canvas_y = old_y_fraction * new_height
-            
-            # Calculate the offset needed to keep cursor at same position
-            # We want the new canvas position to align with the window position
-            offset_x = new_canvas_x - event.x
-            offset_y = new_canvas_y - event.y
-            
-            # Scroll to the new position
-            # Convert to fractions for xview/yview
-            if new_width > 0:
-                self.canvas.xview_moveto(offset_x / new_width)
-            if new_height > 0:
-                self.canvas.yview_moveto(offset_y / new_height)
-        
         self.update_status(f"Zoom: {self.zoom_scale:.2f}x")
 
     def canvas_to_image_coords(self, x, y):
@@ -2343,15 +3067,22 @@ class YOLOLabelingTool:
             
             # Add new class
             self.class_info[next_id] = {"name": name, "color": color}
-            
+
+            # Auto-bind a default hotkey if one is still free
+            self._init_default_hotkeys()
+
             # Save configuration
             self.save_class_config()
-            
+
             # Refresh class buttons
             self.setup_class_buttons()
-            
+
             # Select the new class
             self.select_class(next_id)
+
+            # Sync the crop-review window (if open) so its dropdown lists
+            # the new class.
+            self._crop_review_refresh_class_info()
 
     def edit_class_name(self, class_id):
         """Edit the name of a class"""
@@ -2362,6 +3093,9 @@ class YOLOLabelingTool:
             self.class_info[class_id]["name"] = new_name
             self.save_class_config()
             self.class_labels[class_id].configure(text=new_name)
+            # Sync the crop-review window (if open) so the dropdown and
+            # captions pick up the new name.
+            self._crop_review_refresh_class_info()
 
     def delete_class(self, class_id):
         """Delete a class if it's not the last one"""
@@ -2369,18 +3103,21 @@ class YOLOLabelingTool:
             messagebox.showwarning("Warning", "Cannot delete the last class")
             return
             
-        if messagebox.askyesno("Confirm Delete", 
+        if messagebox.askyesno("Confirm Delete",
                               f"Delete class '{self.class_info[class_id]['name']}'?"):
             # Remove class from configuration
             del self.class_info[class_id]
-            
+
+            # Drop any hotkey that pointed to this class
+            self._cleanup_hotkeys()
+
             # Update any boxes using this class to use the first available class
             first_class = min(self.class_info.keys())
             for boxes in [self.user_boxes, self.label_boxes]:
                 for i, box in enumerate(boxes):
                     if box[0] == class_id:
                         boxes[i] = (first_class, *box[1:])
-            
+
             # Save configuration
             self.save_class_config()
             
@@ -2390,9 +3127,13 @@ class YOLOLabelingTool:
             # If current class was deleted, select the first available class
             if self.current_class == class_id:
                 self.select_class(first_class)
-            
+
             # Redraw to update any boxes
             self.display_image()
+
+            # Sync the crop-review window — closes itself if the reviewed
+            # class was the one deleted, otherwise just refreshes dropdown.
+            self._crop_review_refresh_class_info()
 
     def edit_selected_box(self):
         """Start editing the selected box"""
@@ -2427,6 +3168,7 @@ class YOLOLabelingTool:
     def select_class(self, class_id):
         self.current_class = class_id
         self.selected_class_var.set(f"Selected Class: {class_id} ({self.class_info[class_id]['name']})")
+        self._highlight_selected_class()
 
     def delete_current_image(self):
         """Delete the current image and its corresponding label file"""
@@ -2535,37 +3277,1186 @@ class YOLOLabelingTool:
             # Make sure to release the grab
             self.class_reassign_menu.grab_release()
             
-    def reassign_box_class(self, new_class_id):
-        """Reassign the class of the selected box"""
+    def reassign_box_class(self, new_class_id, keep_selection=False):
+        """Reassign the class of the selected box.
+
+        keep_selection=True is used by the hotkey path so the user can press
+        another number to reassign again without re-clicking.
+        """
         if self.selected_box_index is None:
             return
-            
+
+        # Snapshot state before class change
+        self._push_history()
+
         # Update the class ID based on the box source
         if self.selected_box_source == 'user':
-            # Get current box coordinates
             _, x1, y1, x2, y2 = self.user_boxes[self.selected_box_index]
-            # Update with new class
             self.user_boxes[self.selected_box_index] = (new_class_id, x1, y1, x2, y2)
         else:  # label
-            # Get current box coordinates
             _, x1, y1, x2, y2 = self.label_boxes[self.selected_box_index]
-            # Update with new class
             self.label_boxes[self.selected_box_index] = (new_class_id, x1, y1, x2, y2)
-            
-        # Clear selection
-        self.clear_selections()
-        
-        # Re-detect overlaps if highlight mode is on (class change can affect overlaps!)
+
+        if not keep_selection:
+            self.clear_selections()
+
+        # Class change can change which boxes overlap
         if self.highlight_overlaps:
             self.detect_current_overlaps()
-        
-        # Save labels to update the file
+
         self.save_labels()
-        
-        # Redraw to show updated colors
-        self.display_image()
-        
+        self.display_image()  # also re-applies highlight_selected_box if we kept the selection
         self.update_status(f"Changed class to: {self.class_info[new_class_id]['name']}")
+
+    # --- Bulk class reassignment ---
+    def _find_label_file_for(self, img_path):
+        """Return the .txt label-file path for an image, or None if not locatable."""
+        if img_path is None:
+            return None
+        if self.label_folder:
+            return Path(self.label_folder) / f"{img_path.stem}.txt"
+        img_path_str = str(img_path)
+        for img_folder, lbl_folder in getattr(self, 'per_image_label_folders', {}).items():
+            if img_path_str.startswith(img_folder):
+                return Path(lbl_folder) / f"{img_path.stem}.txt"
+        # Fallback: conventional siblings
+        p = Path(img_path)
+        for cand in [p.parent / 'labels', p.parent.parent / 'labels']:
+            if cand.exists():
+                return cand / f"{img_path.stem}.txt"
+        return None
+
+    def _scope_paths(self, scope):
+        """Return the list of image paths for a given scope string."""
+        if scope == 'current':
+            return [self.current_image_path] if self.current_image_path else []
+        if scope == 'filtered':
+            return list(self.filtered_image_paths)
+        return list(self.image_paths)
+
+    def _count_class_labels(self, class_id, scope):
+        """Count labels matching class_id within scope. Returns (label_count, image_count)."""
+        paths = self._scope_paths(scope)
+        label_count = 0
+        image_count = 0
+        for p in paths:
+            if p is None:
+                continue
+            count_in_img = 0
+            # Prefer cache when available
+            cached = self.labels_cache.get(str(p))
+            if cached is not None:
+                count_in_img = sum(1 for lbl in cached if int(lbl[0]) == class_id)
+            else:
+                lf = self._find_label_file_for(p)
+                if lf is None or not lf.exists():
+                    continue
+                try:
+                    with open(lf) as f:
+                        for line in f:
+                            parts = line.strip().split()
+                            if len(parts) < 5:
+                                continue
+                            try:
+                                if int(float(parts[0])) == class_id:
+                                    count_in_img += 1
+                            except ValueError:
+                                continue
+                except (IOError, OSError):
+                    continue
+            if count_in_img > 0:
+                label_count += count_in_img
+                image_count += 1
+        return label_count, image_count
+
+    def _apply_bulk_reassign(self, from_class, to_class, scope):
+        """Rewrite label files in scope so that class==from_class becomes to_class.
+
+        Touches files directly so the operation works across the whole dataset
+        without keeping every image in memory. The current image's in-memory
+        state is saved before, and reloaded after.
+        """
+        paths = self._scope_paths(scope)
+        if not paths:
+            messagebox.showinfo("Reassign", "No images in scope.")
+            return
+
+        # If the current image is in scope, persist user_boxes first so we
+        # don't lose unsaved drawings.
+        current_in_scope = (self.current_image_path is not None
+                            and self.current_image_path in paths)
+        if current_in_scope:
+            self.save_labels()
+
+        self.progress_var.set(0)
+        self.filter_result_var.set("Reassigning…")
+        self.root.update_idletasks()
+
+        total = len(paths)
+        modified_files = 0
+        modified_labels = 0
+        last_ui = time.time()
+
+        for i, p in enumerate(paths):
+            lf = self._find_label_file_for(p)
+            if lf is None or not lf.exists():
+                continue
+            try:
+                with open(lf) as f:
+                    lines = f.readlines()
+            except (IOError, OSError):
+                continue
+
+            changed_in_file = 0
+            new_lines = []
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    new_lines.append(line)
+                    continue
+                try:
+                    cls_id = int(float(parts[0]))
+                except ValueError:
+                    new_lines.append(line)
+                    continue
+                if cls_id == from_class:
+                    parts[0] = str(to_class)
+                    new_lines.append(' '.join(parts) + '\n')
+                    changed_in_file += 1
+                else:
+                    new_lines.append(line)
+
+            if changed_in_file:
+                try:
+                    with open(lf, 'w') as f:
+                        f.writelines(new_lines)
+                    modified_files += 1
+                    modified_labels += changed_in_file
+                    # Invalidate cached labels so subsequent filters see the new state
+                    self.labels_cache.pop(str(p), None)
+                except (IOError, OSError) as e:
+                    print(f"Failed to write {lf}: {e}")
+                    continue
+
+            now = time.time()
+            if now - last_ui >= 0.3 or i == total - 1:
+                self.progress_var.set(((i + 1) / total) * 100)
+                self.filter_result_var.set(
+                    f"Reassigning: {i+1}/{total} | {modified_labels} labels in {modified_files} files"
+                )
+                self.root.update_idletasks()
+                last_ui = now
+
+        self.progress_var.set(100)
+
+        # Reload the current image's labels so the canvas reflects the change.
+        if current_in_scope:
+            self.user_boxes = []  # those were saved into the file already
+            self.load_labels()
+            if self.highlight_overlaps:
+                self.detect_current_overlaps()
+            self.display_image()
+
+        from_name = self.class_info.get(from_class, {}).get('name', f'?{from_class}')
+        to_name = self.class_info.get(to_class, {}).get('name', f'?{to_class}')
+        summary = f"Reassigned {modified_labels} labels ({from_name} → {to_name}) in {modified_files} files"
+        self.filter_result_var.set(summary)
+        self.update_status(summary)
+        messagebox.showinfo("Reassign complete", summary)
+
+    def _collect_class_crops(self, target_class, paths):
+        """Walk `paths`, return list of {img_path, line_idx, cls_id, bbox_norm}
+        for every label line matching target_class.
+
+        bbox_norm is the YOLO-normalized (cx, cy, w, h) tuple — kept normalized
+        so the pixel rectangle is resolved at *render* time against the
+        actual loaded image's dimensions. This avoids subtle wrong-crop bugs
+        if the cached header dimensions disagree with what cv2 actually reads.
+        """
+        crops = []
+        for img_path in paths:
+            if img_path is None:
+                continue
+            lf = self._find_label_file_for(img_path)
+            if lf is None or not lf.exists():
+                continue
+            try:
+                with open(lf) as f:
+                    lines = f.readlines()
+            except (IOError, OSError):
+                continue
+            for li, line in enumerate(lines):
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                try:
+                    cls_id = int(float(parts[0]))
+                    if cls_id != target_class:
+                        continue
+                    cx, cy, w, h = map(float, parts[1:5])
+                except ValueError:
+                    continue
+                crops.append({
+                    'img_path': img_path,
+                    'line_idx': li,
+                    'cls_id': cls_id,
+                    'bbox_norm': (cx, cy, w, h),
+                })
+        return crops
+
+    def _rewrite_label_line(self, img_path, line_idx, new_class_id):
+        """Rewrite a single line's class id in the label file. Returns True on success."""
+        lf = self._find_label_file_for(img_path)
+        if lf is None or not lf.exists():
+            return False
+        try:
+            with open(lf) as f:
+                lines = f.readlines()
+        except (IOError, OSError):
+            return False
+        if not (0 <= line_idx < len(lines)):
+            return False
+        parts = lines[line_idx].strip().split()
+        if len(parts) < 5:
+            return False
+        parts[0] = str(new_class_id)
+        lines[line_idx] = ' '.join(parts) + '\n'
+        try:
+            with open(lf, 'w') as f:
+                f.writelines(lines)
+        except (IOError, OSError):
+            return False
+        # Invalidate the cache so subsequent filters see the new state
+        self.labels_cache.pop(str(img_path), None)
+        return True
+
+    def _delete_label_line(self, img_path, line_idx):
+        """Drop a single line from the label file. Returns True on success.
+
+        If removing the line leaves the file empty, the file is removed too,
+        matching the convention used by save_labels.
+        """
+        lf = self._find_label_file_for(img_path)
+        if lf is None or not lf.exists():
+            return False
+        try:
+            with open(lf) as f:
+                lines = f.readlines()
+        except (IOError, OSError):
+            return False
+        if not (0 <= line_idx < len(lines)):
+            return False
+        del lines[line_idx]
+        try:
+            if lines:
+                with open(lf, 'w') as f:
+                    f.writelines(lines)
+            else:
+                os.remove(lf)
+        except (IOError, OSError):
+            return False
+        self.labels_cache.pop(str(img_path), None)
+        return True
+
+    def show_reassign_class_dialog(self):
+        """Open a dialog to bulk-reassign every label of one class to another."""
+        if len(self.class_info) < 2:
+            messagebox.showinfo("Reassign", "Need at least 2 classes to reassign.")
+            return
+        if not self.image_paths:
+            messagebox.showinfo("Reassign", "No images loaded.")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Reassign Class Labels")
+        win.transient(self.root)
+        win.resizable(False, False)
+
+        ttk.Label(win, text="Change all labels:",
+                  font=('TkDefaultFont', 11, 'bold')).pack(padx=20, pady=(15, 8))
+
+        class_options = [f"{cid}: {info['name']}"
+                         for cid, info in sorted(self.class_info.items())]
+
+        from_frame = ttk.Frame(win)
+        from_frame.pack(fill=tk.X, padx=20, pady=2)
+        ttk.Label(from_frame, text="From class:", width=12).pack(side=tk.LEFT)
+        from_var = tk.StringVar(value=class_options[0])
+        from_cb = ttk.Combobox(from_frame, textvariable=from_var, values=class_options,
+                               state='readonly', width=28)
+        from_cb.pack(side=tk.LEFT)
+
+        to_frame = ttk.Frame(win)
+        to_frame.pack(fill=tk.X, padx=20, pady=2)
+        ttk.Label(to_frame, text="To class:", width=12).pack(side=tk.LEFT)
+        to_var = tk.StringVar(value=class_options[1])
+        to_cb = ttk.Combobox(to_frame, textvariable=to_var, values=class_options,
+                             state='readonly', width=28)
+        to_cb.pack(side=tk.LEFT)
+
+        ttk.Label(win, text="Scope:", font=('TkDefaultFont', 10, 'bold')
+                  ).pack(anchor=tk.W, padx=20, pady=(15, 5))
+        scope_var = tk.StringVar(value='dataset')
+        scope_frame = ttk.Frame(win)
+        scope_frame.pack(fill=tk.X, padx=30)
+        ttk.Radiobutton(scope_frame, text="Current image only",
+                        variable=scope_var, value='current').pack(anchor=tk.W)
+        ttk.Radiobutton(scope_frame,
+                        text=f"Filtered images ({len(self.filtered_image_paths)})",
+                        variable=scope_var, value='filtered').pack(anchor=tk.W)
+        ttk.Radiobutton(scope_frame,
+                        text=f"Entire dataset ({len(self.image_paths)})",
+                        variable=scope_var, value='dataset').pack(anchor=tk.W)
+
+        preview_var = tk.StringVar(value="Computing preview…")
+        ttk.Label(win, textvariable=preview_var, foreground='#0066cc'
+                  ).pack(padx=20, pady=(15, 5))
+        ttk.Label(win, text="⚠ Writes label files directly — cannot be undone.",
+                  foreground='#cc6600').pack(padx=20, pady=(0, 8))
+
+        def parse_class_id(s):
+            try:
+                return int(s.split(':', 1)[0].strip())
+            except (ValueError, IndexError):
+                return None
+
+        def update_preview(*_):
+            from_id = parse_class_id(from_var.get())
+            to_id = parse_class_id(to_var.get())
+            if from_id is None or to_id is None:
+                preview_var.set("(invalid selection)")
+                return
+            if from_id == to_id:
+                preview_var.set("From and To are the same — no change would be made.")
+                return
+            preview_var.set("Counting matching labels…")
+            win.update_idletasks()
+            count, img_count = self._count_class_labels(from_id, scope_var.get())
+            preview_var.set(f"Will change {count} labels across {img_count} images.")
+
+        from_cb.bind('<<ComboboxSelected>>', update_preview)
+        to_cb.bind('<<ComboboxSelected>>', update_preview)
+        for w in scope_frame.winfo_children():
+            if isinstance(w, ttk.Radiobutton):
+                w.config(command=update_preview)
+        update_preview()
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(pady=12)
+
+        def on_apply():
+            from_id = parse_class_id(from_var.get())
+            to_id = parse_class_id(to_var.get())
+            if from_id is None or to_id is None:
+                return
+            if from_id == to_id:
+                messagebox.showinfo("Reassign", "From and To are the same.")
+                return
+            from_name = self.class_info[from_id]['name']
+            to_name = self.class_info[to_id]['name']
+            if not messagebox.askyesno(
+                "Confirm reassign",
+                f"Change all '{from_name}' labels to '{to_name}'?\n\n"
+                f"Scope: {scope_var.get()}\n"
+                f"This rewrites label files and cannot be undone."
+            ):
+                return
+            win.destroy()
+            self._apply_bulk_reassign(from_id, to_id, scope_var.get())
+
+        ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=8)
+        ttk.Button(btn_frame, text="Apply", command=on_apply).pack(side=tk.LEFT, padx=8)
+
+        # Center on parent
+        win.update_idletasks()
+        try:
+            pw, ph = self.root.winfo_width(), self.root.winfo_height()
+            px, py = self.root.winfo_rootx(), self.root.winfo_rooty()
+            ww, wh = win.winfo_width(), win.winfo_height()
+            win.geometry(f"+{px + (pw - ww) // 2}+{py + (ph - wh) // 2}")
+        except Exception:
+            pass
+
+    # --- Crop-review window: audit & relabel one class at a time ---
+    def open_class_crop_review(self):
+        """Entry point: open the per-class crop review for the current
+        Filter-by-Class selection across the currently-filtered images."""
+        if not self.image_paths:
+            messagebox.showinfo("Crop Review", "Load images first.")
+            return
+        # Resolve which class to review
+        target_class = None
+        if self.filter_by_class_enabled and self.filter_class_id in self.class_info:
+            target_class = self.filter_class_id
+        else:
+            # No Filter-by-Class active: ask the user
+            target_class = self._ask_class("Review crops of which class?")
+            if target_class is None:
+                return
+
+        self.update_status("Collecting crops…")
+        self.root.update_idletasks()
+        entries = self._collect_class_crops(target_class, self.filtered_image_paths)
+        if not entries:
+            messagebox.showinfo(
+                "Crop Review",
+                f"No labels of class '{self.class_info[target_class]['name']}' in the filtered set."
+            )
+            return
+        self._open_crop_review_window(entries, target_class)
+
+    def _ask_class(self, prompt):
+        """Tiny modal to pick a class id. Returns class_id or None."""
+        if not self.class_info:
+            return None
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Pick a class")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        ttk.Label(dlg, text=prompt, font=('TkDefaultFont', 10, 'bold')
+                  ).pack(padx=20, pady=(15, 8))
+        opts = [f"{cid}: {info['name']}" for cid, info in sorted(self.class_info.items())]
+        var = tk.StringVar(value=opts[0])
+        ttk.Combobox(dlg, textvariable=var, values=opts, state='readonly', width=28
+                     ).pack(padx=20, pady=4)
+        chosen = {'value': None}
+        def on_ok():
+            try:
+                chosen['value'] = int(var.get().split(':', 1)[0])
+            except Exception:
+                pass
+            dlg.destroy()
+        ttk.Frame(dlg).pack(pady=4)
+        bf = ttk.Frame(dlg)
+        bf.pack(pady=10)
+        ttk.Button(bf, text="Cancel", command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bf, text="OK", command=on_ok).pack(side=tk.LEFT, padx=6)
+        dlg.grab_set()
+        self.root.wait_window(dlg)
+        return chosen['value']
+
+    def _open_crop_review_window(self, entries, target_class):
+        if self._crop_review_window is not None and self._crop_review_window.winfo_exists():
+            self._crop_review_window.destroy()
+
+        self._crop_review_entries = entries
+        self._crop_review_target = target_class
+        self._crop_review_page = 0
+        self._crop_review_selected = None
+        self._crop_review_dirty_paths = set()
+        # Reset persistent caches for a fresh session
+        self._crop_review_thumb_cache = {}
+        self._crop_review_img_cache = {}
+
+        win = tk.Toplevel(self.root)
+        cls_name = self.class_info[target_class]['name']
+        win.title(f"Crop Review — {cls_name}")
+        win.geometry("1100x780")
+        self._crop_review_window = win
+
+        # Top toolbar: title + page nav + grid selector
+        top = ttk.Frame(win)
+        top.pack(fill=tk.X, padx=8, pady=6)
+        self._crop_review_title_var = tk.StringVar()
+        ttk.Label(top, textvariable=self._crop_review_title_var,
+                  font=('TkDefaultFont', 11, 'bold')).pack(side=tk.LEFT)
+        ttk.Button(top, text="◀ Prev", command=self._crop_review_prev_page).pack(side=tk.LEFT, padx=(20, 4))
+        ttk.Button(top, text="Next ▶", command=self._crop_review_next_page).pack(side=tk.LEFT)
+        ttk.Label(top, text="   Go to:").pack(side=tk.LEFT, padx=(20, 4))
+        self._crop_review_goto_var = tk.StringVar()
+        self._crop_review_goto_entry = ttk.Entry(
+            top, textvariable=self._crop_review_goto_var, width=5
+        )
+        self._crop_review_goto_entry.pack(side=tk.LEFT)
+        self._crop_review_goto_entry.bind(
+            '<Return>', lambda e: self._crop_review_goto_page()
+        )
+        ttk.Button(top, text="Go",
+                   command=self._crop_review_goto_page).pack(side=tk.LEFT, padx=4)
+        ttk.Label(top, text="   Grid:").pack(side=tk.LEFT, padx=(20, 4))
+        self._crop_review_grid_var = tk.StringVar(value='4x6')
+        gcb = ttk.Combobox(top, textvariable=self._crop_review_grid_var,
+                           values=['3x4', '4x6', '5x8', '6x10'],
+                           width=6, state='readonly')
+        gcb.pack(side=tk.LEFT)
+        gcb.bind('<<ComboboxSelected>>', lambda e: self._crop_review_render())
+
+        # Action bar (selection + reassign target)
+        action = ttk.Frame(win)
+        action.pack(fill=tk.X, padx=8, pady=4)
+        self._crop_review_sel_var = tk.StringVar(
+            value="Click a crop, then press 1-9/0 to reassign (selection auto-advances). Delete removes. Page nav drops handled."
+        )
+        ttk.Label(action, textvariable=self._crop_review_sel_var,
+                  foreground='#0066cc').pack(side=tk.LEFT)
+        ttk.Label(action, text="   Reassign to: ").pack(side=tk.LEFT)
+        class_options = [f"{cid}: {info['name']}"
+                         for cid, info in sorted(self.class_info.items())]
+        self._crop_review_target_var = tk.StringVar()
+        self._crop_review_target_cb = ttk.Combobox(
+            action, textvariable=self._crop_review_target_var,
+            values=class_options, state='readonly', width=22
+        )
+        self._crop_review_target_cb.pack(side=tk.LEFT)
+        ttk.Button(action, text="Apply",
+                   command=self._crop_review_apply_dropdown).pack(side=tk.LEFT, padx=4)
+        # Delete the selected crop's label outright (Delete / Backspace also work)
+        delete_btn = tk.Button(action, text="🗑 Delete", fg='#cc2222',
+                               command=self._crop_review_delete_selected)
+        delete_btn.pack(side=tk.LEFT, padx=4)
+
+        # Crop grid host
+        self._crop_review_grid_frame = ttk.Frame(win)
+        self._crop_review_grid_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        # Debounced re-render when the grid frame is resized, so cells
+        # adaptively fill the window and thumbnails re-fit to the new cell size.
+        self._crop_review_resize_after = None
+        self._crop_review_last_cell_size = (0, 0)
+        self._crop_review_grid_frame.bind('<Configure>',
+                                          self._crop_review_on_grid_resize)
+
+        # Status bar
+        self._crop_review_status_var = tk.StringVar(value="")
+        ttk.Label(win, textvariable=self._crop_review_status_var,
+                  relief=tk.SUNKEN, anchor='w').pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Hotkeys: digits (both top-row and num-pad) = reassign selection;
+        # Delete/Backspace = remove; arrows = paginate; Esc = close.
+        # Suppress when focus is on the page-goto entry so typing a page works.
+        def _hk(fn):
+            def wrapped(e):
+                try:
+                    if win.focus_get() is self._crop_review_goto_entry:
+                        return None
+                except Exception:
+                    pass
+                return fn(e)
+            return wrapped
+        for digit in '0123456789':
+            win.bind(f"<Key-{digit}>",
+                     _hk(lambda e, d=digit: self._crop_review_hotkey(d)))
+            win.bind(f"<KP_{digit}>",
+                     _hk(lambda e, d=digit: self._crop_review_hotkey(d)))
+        win.bind("<Delete>",    _hk(lambda e: self._crop_review_delete_selected()))
+        win.bind("<BackSpace>", _hk(lambda e: self._crop_review_delete_selected()))
+        win.bind("<Left>",      _hk(lambda e: self._crop_review_prev_page()))
+        win.bind("<Right>",     _hk(lambda e: self._crop_review_next_page()))
+        win.bind("<Escape>", lambda e: self._crop_review_close())
+        win.protocol("WM_DELETE_WINDOW", self._crop_review_close)
+
+        self._crop_review_render()
+
+    def _crop_review_close(self):
+        if self._crop_review_window is None:
+            return
+        win = self._crop_review_window
+        self._crop_review_window = None
+        # Cancel any pending resize-driven re-render so it doesn't fire
+        # after the window is gone.
+        pending = getattr(self, '_crop_review_resize_after', None)
+        if pending is not None:
+            try:
+                self.root.after_cancel(pending)
+            except tk.TclError:
+                pass
+            self._crop_review_resize_after = None
+        dirty = self._crop_review_dirty_paths
+        self._crop_review_entries = []
+        self._crop_review_canvases = []
+        self._crop_review_thumb_cache = {}
+        self._crop_review_img_cache = {}
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        # If the main current image was modified, reload its labels & redraw
+        if self.current_image_path and str(self.current_image_path) in dirty:
+            self.load_labels()
+            if self.highlight_overlaps:
+                self.detect_current_overlaps()
+            self.display_image()
+
+    def _crop_review_get_grid(self):
+        try:
+            r, c = self._crop_review_grid_var.get().split('x')
+            return max(1, int(r)), max(1, int(c))
+        except Exception:
+            return 4, 6
+
+    def _crop_review_prev_page(self):
+        # Flush handled entries lazily — only at page-change time, so the
+        # current page stays stable while the user is still working on it.
+        self._crop_review_flush_handled()
+        if self._crop_review_page > 0:
+            self._crop_review_page -= 1
+            self._crop_review_render()
+
+    def _crop_review_next_page(self):
+        self._crop_review_flush_handled()
+        rows, cols = self._crop_review_get_grid()
+        per_page = rows * cols
+        max_page = max(0, (len(self._crop_review_entries) - 1) // per_page)
+        if self._crop_review_page < max_page:
+            self._crop_review_page += 1
+            self._crop_review_render()
+        else:
+            # Already on the last page; user pressed Next so flush handled and
+            # re-render the same page to compact the view.
+            self._crop_review_render()
+
+    def _crop_review_goto_page(self):
+        raw = self._crop_review_goto_var.get().strip()
+        if not raw:
+            return
+        try:
+            target = int(raw)
+        except ValueError:
+            self._crop_review_status_var.set(f"Invalid page: {raw!r}")
+            return
+        rows, cols = self._crop_review_get_grid()
+        per_page = rows * cols
+        total = len(self._crop_review_entries)
+        max_page = max(0, (total - 1) // per_page) if total else 0
+        # User-facing pages are 1-indexed; clamp to valid range.
+        target_idx = max(0, min(max_page, target - 1))
+        self._crop_review_flush_handled()
+        self._crop_review_page = target_idx
+        self._crop_review_goto_var.set('')
+        # Drop focus so subsequent digit hotkeys work for reassign.
+        try:
+            self._crop_review_window.focus_set()
+        except Exception:
+            pass
+        self._crop_review_render()
+
+    def _crop_review_refresh_class_info(self):
+        """Sync the open crop-review window with the current class_info.
+
+        Called after any change to class_info (add / delete / rename / reload).
+        Safe no-op if the window isn't open.
+        """
+        win = self._crop_review_window
+        if win is None:
+            return
+        try:
+            if not win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+
+        # If the class under review was deleted, the review can't continue.
+        if self._crop_review_target not in self.class_info:
+            try:
+                self._crop_review_status_var.set(
+                    f"Class {self._crop_review_target} was removed — closing review."
+                )
+            except Exception:
+                pass
+            self._crop_review_close()
+            return
+
+        # Rebuild the "Reassign to" dropdown.
+        # Setting values via configure() is more reliable across Tk versions
+        # than the dict-style ['values'] = ... assignment.
+        class_options = [f"{cid}: {info['name']}"
+                         for cid, info in sorted(self.class_info.items())]
+        try:
+            self._crop_review_target_cb.configure(values=class_options)
+        except tk.TclError:
+            pass
+
+        # The displayed text in the combobox entry is held by the StringVar,
+        # which may still contain the OLD "ID: OldName". Reconcile it:
+        #   - If the previously-shown class still exists, refresh its name.
+        #   - Else fall back to the first option (or empty).
+        try:
+            current_text = self._crop_review_target_var.get()
+        except tk.TclError:
+            current_text = ''
+        cur_cls_id = None
+        if current_text:
+            try:
+                cur_cls_id = int(current_text.split(':', 1)[0].strip())
+            except (ValueError, IndexError):
+                cur_cls_id = None
+        if cur_cls_id is not None and cur_cls_id in self.class_info:
+            new_display = f"{cur_cls_id}: {self.class_info[cur_cls_id]['name']}"
+            if new_display != current_text:
+                self._crop_review_target_var.set(new_display)
+        elif class_options:
+            self._crop_review_target_var.set(class_options[0])
+        else:
+            self._crop_review_target_var.set('')
+
+        # Drop entries whose class no longer exists (rare but possible after delete)
+        stale = [e for e in self._crop_review_entries
+                 if e['cls_id'] not in self.class_info]
+        if stale:
+            for e in stale:
+                self._crop_review_thumb_cache.pop(id(e), None)
+            self._crop_review_entries = [
+                e for e in self._crop_review_entries if e['cls_id'] in self.class_info
+            ]
+            if (self._crop_review_selected is not None
+                and self._crop_review_selected >= len(self._crop_review_entries)):
+                self._crop_review_selected = None
+
+        # Cheap re-render — image+thumb caches mean only widgets are rebuilt.
+        self._crop_review_render()
+
+        # Force the Combobox to redraw so users see the new options immediately
+        # rather than waiting for the next idle cycle.
+        try:
+            self._crop_review_target_cb.update_idletasks()
+        except tk.TclError:
+            pass
+
+    def _crop_review_flush_handled(self):
+        """Remove entries whose current class no longer matches the review
+        target. Called only when the user navigates pages — keeps the visible
+        page stable during rapid in-place reassigns."""
+        target = self._crop_review_target
+        before = len(self._crop_review_entries)
+        # Free thumb-cache slots for entries being dropped
+        keep = []
+        for e in self._crop_review_entries:
+            if e['cls_id'] == target:
+                keep.append(e)
+            else:
+                self._crop_review_thumb_cache.pop(id(e), None)
+        if len(keep) != before:
+            self._crop_review_entries = keep
+
+    def _crop_review_load_image(self, ip_str):
+        """Persistent LRU cache of cv2.imread results, so paging back and forth
+        doesn't trigger fresh disk reads."""
+        img = self._crop_review_img_cache.get(ip_str)
+        if img is not None:
+            # Bump to most-recent by re-inserting
+            del self._crop_review_img_cache[ip_str]
+            self._crop_review_img_cache[ip_str] = img
+            return img
+        img = cv2.imread(ip_str)
+        if img is None:
+            return None
+        self._crop_review_img_cache[ip_str] = img
+        # LRU eviction (dict preserves insertion order)
+        if len(self._crop_review_img_cache) > self._crop_review_img_cache_max:
+            oldest = next(iter(self._crop_review_img_cache))
+            self._crop_review_img_cache.pop(oldest, None)
+        return img
+
+    def _crop_review_build_thumbnail(self, entry, cell_w, cell_h):
+        """Return a PhotoImage for this entry, computing once and caching."""
+        eid = id(entry)
+        cached = self._crop_review_thumb_cache.get(eid)
+        if cached is not None:
+            return cached
+        img = self._crop_review_load_image(str(entry['img_path']))
+        if img is None:
+            return None
+        ih, iw = img.shape[:2]
+        cx, cy, bw, bh = entry['bbox_norm']
+        x1 = int(round((cx - bw / 2) * iw))
+        y1 = int(round((cy - bh / 2) * ih))
+        x2 = int(round((cx + bw / 2) * iw))
+        y2 = int(round((cy + bh / 2) * ih))
+        x1c, y1c = max(0, min(x1, iw)), max(0, min(y1, ih))
+        x2c, y2c = max(0, min(x2, iw)), max(0, min(y2, ih))
+        if x2c <= x1c or y2c <= y1c:
+            return None
+        crop = img[y1c:y2c, x1c:x2c]
+        ch, cw = crop.shape[:2]
+        scale = min(cell_w / cw, cell_h / ch)
+        nw, nh = max(1, int(cw * scale)), max(1, int(ch * scale))
+        crop_rgb = cv2.cvtColor(
+            cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_AREA),
+            cv2.COLOR_BGR2RGB
+        )
+        photo = ImageTk.PhotoImage(image=Image.fromarray(crop_rgb))
+        self._crop_review_thumb_cache[eid] = photo
+        return photo
+
+    def _crop_review_caption_text(self, entry):
+        """Build the per-cell caption, including the "→ NewClass" tag when
+        the entry has been reassigned away from the review target."""
+        text = f"{entry['img_path'].name}  #{entry['line_idx'] + 1}"
+        cls_id = entry['cls_id']
+        if cls_id != self._crop_review_target:
+            cls_name = self.class_info.get(cls_id, {}).get('name', f'?{cls_id}')
+            text += f"   → {cls_name}"
+        return text
+
+    def _crop_review_apply_cell_style(self, cell, entry):
+        """Set a cell's background to reflect its current state.
+        Priority: selection > handled > normal."""
+        target = self._crop_review_target
+        sel = self._crop_review_selected
+        is_selected = (sel is not None
+                       and 0 <= sel < len(self._crop_review_entries)
+                       and self._crop_review_entries[sel] is entry)
+        is_handled = (entry['cls_id'] != target)
+        try:
+            if is_selected:
+                cell.configure(bg='#FFD166', borderwidth=3)
+            elif is_handled:
+                cell.configure(bg='#5a3a1a', borderwidth=1)
+            else:
+                cell.configure(bg='#222', borderwidth=1)
+        except tk.TclError:
+            pass
+
+    def _crop_review_compute_cell_size(self, rows, cols):
+        """Return (cell_w, cell_h) sized so the grid fills the host frame.
+        Falls back to a sensible default before the frame is realized."""
+        try:
+            fw = self._crop_review_grid_frame.winfo_width()
+            fh = self._crop_review_grid_frame.winfo_height()
+        except tk.TclError:
+            fw, fh = 0, 0
+        # Account for the 2px grid-cell padding on both sides (padx/pady=2).
+        gap = 4
+        avail_w = max(0, fw - gap * cols - 4)
+        avail_h = max(0, fh - gap * rows - 4)
+        cell_w = max(60, avail_w // cols) if cols and avail_w > 60 * cols else 200
+        cell_h = max(40, avail_h // rows) if rows and avail_h > 40 * rows else 150
+        return cell_w, cell_h
+
+    def _crop_review_on_grid_resize(self, _event=None):
+        """Debounced reaction to grid-frame resizing — re-render so cells
+        and thumbnails adapt to the new window size."""
+        if self._crop_review_window is None:
+            return
+        rows, cols = self._crop_review_get_grid()
+        new_w, new_h = self._crop_review_compute_cell_size(rows, cols)
+        # Skip if size didn't actually change (Configure fires on every move too)
+        if (new_w, new_h) == self._crop_review_last_cell_size:
+            return
+        if self._crop_review_resize_after is not None:
+            try:
+                self.root.after_cancel(self._crop_review_resize_after)
+            except tk.TclError:
+                pass
+        def _do_resize():
+            self._crop_review_resize_after = None
+            if self._crop_review_window is None:
+                return
+            # Cell size changed → thumbnails computed at the old size are stale.
+            self._crop_review_thumb_cache.clear()
+            self._crop_review_render()
+        self._crop_review_resize_after = self.root.after(80, _do_resize)
+
+    def _crop_review_render(self):
+        # Tear down old cells (we still rebuild widgets, but image data is cached)
+        for w in self._crop_review_grid_frame.winfo_children():
+            w.destroy()
+        self._crop_review_canvases = []
+
+        rows, cols = self._crop_review_get_grid()
+        per_page = rows * cols
+        total = len(self._crop_review_entries)
+        total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
+        if self._crop_review_page >= total_pages:
+            self._crop_review_page = max(0, total_pages - 1)
+
+        page = self._crop_review_page
+        start = page * per_page
+        end = min(start + per_page, total)
+        cls_name = self.class_info.get(self._crop_review_target, {}).get('name', '?')
+        self._crop_review_title_var.set(
+            f"Class: {cls_name}   |   page {page + 1}/{total_pages}   "
+            f"|   showing {start + 1 if total else 0}–{end} of {total}"
+        )
+
+        # Compute per-cell size from the actual grid frame size so cells
+        # adaptively fill the window. All cells share the same size via the
+        # 'cells' uniform group + weight=1.
+        cell_w, cell_h = self._crop_review_compute_cell_size(rows, cols)
+        self._crop_review_last_cell_size = (cell_w, cell_h)
+        for r in range(rows):
+            self._crop_review_grid_frame.grid_rowconfigure(
+                r, weight=1, uniform='cells')
+        for c in range(cols):
+            self._crop_review_grid_frame.grid_columnconfigure(
+                c, weight=1, uniform='cells')
+
+        for r in range(rows):
+            for c in range(cols):
+                idx = start + r * cols + c
+                if idx >= total:
+                    break
+                entry = self._crop_review_entries[idx]
+                cell = tk.Frame(self._crop_review_grid_frame, bg='#222',
+                                relief=tk.SUNKEN, borderwidth=1, padx=2, pady=2)
+                cell.grid(row=r, column=c, padx=2, pady=2, sticky='nsew')
+
+                photo = self._crop_review_build_thumbnail(entry, cell_w, cell_h)
+                cnv = tk.Canvas(cell, width=cell_w, height=cell_h, bg='#111',
+                                highlightthickness=0)
+                cnv.pack(expand=True)
+                if photo is not None:
+                    cnv.create_image(cell_w // 2, cell_h // 2,
+                                     image=photo, anchor='center')
+                    cnv.photo = photo  # keep extra ref alive on the canvas too
+                else:
+                    cnv.create_text(cell_w // 2, cell_h // 2,
+                                    text="(failed to read)", fill='#888')
+
+                caption_lbl = ttk.Label(cell, text=self._crop_review_caption_text(entry),
+                                        font=('TkDefaultFont', 8))
+                caption_lbl.pack()
+
+                def on_click(_e, ent=entry):
+                    try:
+                        self._crop_review_selected = self._crop_review_entries.index(ent)
+                    except ValueError:
+                        return
+                    self._crop_review_refresh_action_bar()
+                    # Cheap per-cell style update — no widget destruction.
+                    for c2, _cnv2, _lbl2, e2 in self._crop_review_canvases:
+                        self._crop_review_apply_cell_style(c2, e2)
+                    # Jump the main window to this crop's source image
+                    self._crop_review_jump_to_entry(ent)
+                for widget in (cnv, cell, caption_lbl):
+                    widget.bind('<Button-1>', on_click)
+
+                self._crop_review_canvases.append((cell, cnv, caption_lbl, entry))
+                self._crop_review_apply_cell_style(cell, entry)
+
+        self._crop_review_refresh_action_bar()
+
+    def _crop_review_refresh_action_bar(self):
+        """Update only the status line + dropdown that describe the current
+        selection. Called instead of repainting every cell."""
+        sel = self._crop_review_selected
+        if sel is not None and 0 <= sel < len(self._crop_review_entries):
+            entry = self._crop_review_entries[sel]
+            cur_name = self.class_info.get(entry['cls_id'], {}).get('name', '?')
+            self._crop_review_sel_var.set(
+                f"Selected: {entry['img_path'].name} #{entry['line_idx'] + 1} "
+                f"({cur_name}) — press 1-9/0 to reassign"
+            )
+            opt = f"{entry['cls_id']}: {cur_name}"
+            if opt in self._crop_review_target_cb['values']:
+                self._crop_review_target_var.set(opt)
+        else:
+            self._crop_review_sel_var.set(
+                "Click a crop, then press 1-9/0 to reassign (selection auto-advances). Delete removes. Page nav drops handled."
+            )
+
+    # Back-compat alias for the previous name
+    def _crop_review_update_selection(self):
+        for cell, _cnv, _lbl, entry in self._crop_review_canvases:
+            self._crop_review_apply_cell_style(cell, entry)
+        self._crop_review_refresh_action_bar()
+
+    def _crop_review_find_cell_for(self, entry):
+        for cell, cnv, caption_lbl, ent in self._crop_review_canvases:
+            if ent is entry:
+                return cell, cnv, caption_lbl
+        return None, None, None
+
+    def _crop_review_jump_to_entry(self, entry):
+        """Navigate the main window to the entry's source image and select
+        its label box. Keeps focus on the review window so digit/arrow
+        hotkeys keep working there."""
+        if not self.filtered_image_paths:
+            return
+        target_path = entry.get('img_path')
+        if target_path is None:
+            return
+        # filtered_image_paths holds Path objects — compare by string for safety
+        target_str = str(target_path)
+        target_idx = None
+        for i, p in enumerate(self.filtered_image_paths):
+            if str(p) == target_str:
+                target_idx = i
+                break
+        if target_idx is None:
+            self._crop_review_status_var.set(
+                f"Image not in current filter: {target_path.name}"
+            )
+            return
+
+        # Only re-load if we're moving to a different image
+        if target_idx != self.current_image_index or self.current_image is None:
+            # Clear stale selection before load_image() — display_image()
+            # runs inside it and would use a now-invalid box index.
+            self.selected_box_index = None
+            self.selected_box_source = None
+            if self.selected_box_rect:
+                try:
+                    self.canvas.delete(self.selected_box_rect)
+                except tk.TclError:
+                    pass
+                self.selected_box_rect = None
+            self.current_image_index = target_idx
+            self.load_image()
+
+        # Locate the matching label box. line_idx maps to label_boxes index for
+        # well-formed YOLO files (one valid line per row); fall back to a
+        # geometric match on bbox_norm if line_idx is out of range.
+        sel_idx = None
+        li = entry.get('line_idx')
+        if li is not None and 0 <= li < len(self.label_boxes):
+            sel_idx = li
+        if sel_idx is None and self.current_image is not None:
+            cx, cy, bw, bh = entry.get('bbox_norm', (0, 0, 0, 0))
+            img_h, img_w = self.current_image.shape[:2]
+            tx1 = int((cx - bw / 2) * img_w)
+            ty1 = int((cy - bh / 2) * img_h)
+            tx2 = int((cx + bw / 2) * img_w)
+            ty2 = int((cy + bh / 2) * img_h)
+            best_i, best_d = None, None
+            for i, (_c, x1, y1, x2, y2) in enumerate(self.label_boxes):
+                d = abs(x1 - tx1) + abs(y1 - ty1) + abs(x2 - tx2) + abs(y2 - ty2)
+                if best_d is None or d < best_d:
+                    best_d = d
+                    best_i = i
+            sel_idx = best_i
+
+        if sel_idx is not None:
+            self.selected_box_index = sel_idx
+            self.selected_box_source = 'label'
+            self.highlight_selected_box()
+
+        # Lift the main window so the user can see the change without
+        # losing the review window's hotkey focus.
+        try:
+            self.root.lift()
+        except tk.TclError:
+            pass
+        try:
+            if self._crop_review_window is not None:
+                self._crop_review_window.lift()
+                self._crop_review_window.focus_set()
+        except tk.TclError:
+            pass
+
+    def _crop_review_advance_selection(self):
+        """After a reassign, jump selection to the next on-page cell whose
+        entry is still unhandled (cls_id == target). Wraps around the page."""
+        if not self._crop_review_canvases:
+            self._crop_review_selected = None
+            self._crop_review_refresh_action_bar()
+            return
+        sel = self._crop_review_selected
+        cur_entry = (self._crop_review_entries[sel]
+                     if sel is not None and 0 <= sel < len(self._crop_review_entries)
+                     else None)
+        # Find the index of cur_entry within the visible-cells list
+        cur_pos = -1
+        for i, (_, _, _, ent) in enumerate(self._crop_review_canvases):
+            if ent is cur_entry:
+                cur_pos = i
+                break
+        target = self._crop_review_target
+        n = len(self._crop_review_canvases)
+        for offset in range(1, n + 1):
+            pos = (cur_pos + offset) % n
+            _, _, _, ent = self._crop_review_canvases[pos]
+            if ent['cls_id'] == target:  # not yet handled
+                try:
+                    self._crop_review_selected = self._crop_review_entries.index(ent)
+                except ValueError:
+                    continue
+                self._crop_review_refresh_action_bar()
+                for cell, _cnv, _lbl, e in self._crop_review_canvases:
+                    self._crop_review_apply_cell_style(cell, e)
+                return
+        # Every cell on this page has been reassigned — leave selection and
+        # tell the user to advance.
+        self._crop_review_status_var.set(
+            "Page handled — press → for next page (handled crops will drop)."
+        )
+
+    def _crop_review_hotkey(self, digit):
+        target = self.class_hotkeys.get(digit)
+        if target is None or target not in self.class_info:
+            self._crop_review_status_var.set(f"No class bound to '{digit}'")
+            return
+        if self._crop_review_selected is None:
+            self._crop_review_status_var.set("Pick a crop first.")
+            return
+        self._crop_review_reassign(self._crop_review_selected, target)
+
+    def _crop_review_apply_dropdown(self):
+        if self._crop_review_selected is None:
+            return
+        s = self._crop_review_target_var.get()
+        try:
+            target = int(s.split(':', 1)[0].strip())
+        except (ValueError, IndexError):
+            return
+        if target in self.class_info:
+            self._crop_review_reassign(self._crop_review_selected, target)
+
+    def _crop_review_delete_selected(self):
+        """Remove the selected crop's label line from disk."""
+        sel = self._crop_review_selected
+        if sel is None or not (0 <= sel < len(self._crop_review_entries)):
+            self._crop_review_status_var.set("Pick a crop first.")
+            return
+        entry = self._crop_review_entries[sel]
+        deleted_path = entry['img_path']
+        deleted_idx = entry['line_idx']
+        if not self._delete_label_line(deleted_path, deleted_idx):
+            self._crop_review_status_var.set(
+                f"FAILED to delete from {deleted_path.name}"
+            )
+            return
+        self._crop_review_dirty_paths.add(str(deleted_path))
+        cls_name = self.class_info.get(entry['cls_id'], {}).get('name', '?')
+        self._crop_review_status_var.set(
+            f"Deleted {deleted_path.name} #{deleted_idx + 1} ({cls_name})"
+        )
+        # Fix up line indices: every remaining entry from the *same* file with
+        # a higher line index must shift up by 1 because we deleted a line above.
+        for e in self._crop_review_entries:
+            if e is entry:
+                continue
+            if e['img_path'] == deleted_path and e['line_idx'] > deleted_idx:
+                e['line_idx'] -= 1
+        # Drop the thumbnail from cache before the entry vanishes
+        self._crop_review_thumb_cache.pop(id(entry), None)
+        self._crop_review_entries.pop(sel)
+        self._crop_review_selected = None
+        # Delete still re-renders (entries shift), but the persistent caches
+        # mean image reads are reused and only the new gap-filler needs work.
+        self._crop_review_render()
+
+    def _crop_review_reassign(self, entry_idx, new_class_id):
+        """Reassign one crop's class. Updates the file and the single affected
+        cell in place — the grid is NOT torn down and rebuilt, so the operation
+        feels instantaneous even on dense grids."""
+        if not (0 <= entry_idx < len(self._crop_review_entries)):
+            return
+        entry = self._crop_review_entries[entry_idx]
+        old_cls = entry['cls_id']
+        if old_cls == new_class_id:
+            self._crop_review_status_var.set("Already this class.")
+            return
+        if not self._rewrite_label_line(entry['img_path'], entry['line_idx'], new_class_id):
+            self._crop_review_status_var.set(
+                f"FAILED to write label file for {entry['img_path'].name}"
+            )
+            return
+        self._crop_review_dirty_paths.add(str(entry['img_path']))
+        entry['cls_id'] = new_class_id
+        old_name = self.class_info.get(old_cls, {}).get('name', '?')
+        new_name = self.class_info[new_class_id]['name']
+        self._crop_review_status_var.set(
+            f"Reassigned {entry['img_path'].name} #{entry['line_idx'] + 1}: "
+            f"{old_name} → {new_name}"
+        )
+        # In-place refresh of just this cell. NO grid teardown.
+        cell, _cnv, caption_lbl = self._crop_review_find_cell_for(entry)
+        if caption_lbl is not None:
+            caption_lbl.config(text=self._crop_review_caption_text(entry))
+        if cell is not None:
+            self._crop_review_apply_cell_style(cell, entry)
+        # Auto-advance selection so the user can keep tapping hotkeys.
+        self._crop_review_advance_selection()
 
     def jump_to_image(self):
         """Jump to a specific image number"""
@@ -2688,56 +4579,80 @@ class YOLOLabelingTool:
             widget.destroy()
         self.class_buttons.clear()
         self.class_labels.clear()
-        
+
         # Create scrollable frame for classes
         canvas = tk.Canvas(self.class_frame)
         scrollbar = ttk.Scrollbar(self.class_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
+
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         # Create class buttons
         for class_id in sorted(self.class_info.keys()):
             frame = ttk.Frame(scrollable_frame)
             frame.pack(fill=tk.X, pady=2)
-            
+
             # Checkbox for visibility
             var = tk.BooleanVar(value=True)
             self.class_checkboxes[class_id] = var
             self.class_visibility[class_id] = True
-            
+
             checkbox = ttk.Checkbutton(frame, variable=var,
                                      command=lambda id=class_id: self.toggle_class_visibility(id))
             checkbox.pack(side=tk.LEFT)
-            
+
             # Color button
             color = self.class_info[class_id]["color"]
             rgb_color = self.bgr_to_rgb_hex(color)
-            btn = tk.Button(frame, width=2, bg=rgb_color, relief=tk.RAISED)
+            btn = tk.Button(frame, width=2, bg=rgb_color, relief=tk.RAISED, borderwidth=2)
             btn.configure(command=lambda id=class_id: self.select_class(id))
             btn.pack(side=tk.LEFT, padx=2)
             self.class_buttons[class_id] = btn
-            
+
+            # Clickable hotkey button — shows the current digit (or "—" if unbound).
+            # Clicking opens a capture-key dialog so the user can rebind it.
+            hk = self._class_to_hotkey(class_id) or "—"
+            hk_btn = tk.Button(frame, text=f"[{hk}]", width=3, relief=tk.FLAT,
+                               foreground="#444" if hk != "—" else "#999",
+                               font=('TkDefaultFont', 8, 'bold'),
+                               cursor='hand2',
+                               command=lambda cid=class_id: self.assign_hotkey_for_class(cid))
+            hk_btn.pack(side=tk.LEFT, padx=(2, 0))
+
             # Class name label (clickable for editing)
             label = ttk.Label(frame, text=self.class_info[class_id]["name"])
             label.pack(side=tk.LEFT, padx=5)
             label.bind('<Double-Button-1>', lambda e, id=class_id: self.edit_class_name(id))
             self.class_labels[class_id] = label
-            
+
             # Delete button
             if len(self.class_info) > 1:  # Only show delete button if more than one class
                 delete_btn = ttk.Button(frame, text="×", width=2,
                                       command=lambda id=class_id: self.delete_class(id))
                 delete_btn.pack(side=tk.RIGHT, padx=2)
-        
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        # Apply selection highlight (sunken relief on the active class button)
+        self._highlight_selected_class()
+
+    def _highlight_selected_class(self):
+        """Visually mark the currently-selected class button."""
+        for cls_id, btn in self.class_buttons.items():
+            try:
+                if cls_id == self.current_class:
+                    btn.configure(relief=tk.SUNKEN, borderwidth=4)
+                else:
+                    btn.configure(relief=tk.RAISED, borderwidth=2)
+            except tk.TclError:
+                # Button may have been destroyed mid-rebuild — skip silently
+                pass
 
     def toggle_class_visibility(self, class_id):
         """Toggle visibility of a class"""
@@ -2793,6 +4708,8 @@ class YOLOLabelingTool:
     def accept_selected_prediction(self, event=None):
         """Accept the currently selected prediction and add it to user boxes"""
         if self.selected_prediction is not None:
+            # Snapshot state before accepting prediction
+            self._push_history()
             # Get the selected prediction
             cls_id, x1, y1, x2, y2 = self.model_boxes[self.selected_prediction]
             
@@ -2824,6 +4741,8 @@ class YOLOLabelingTool:
     def accept_all_predictions(self, event=None):
         """Accept all model predictions and add them to user boxes"""
         if self.model_boxes:
+            # Snapshot state before accepting all
+            self._push_history()
             # Add all predictions to user boxes, converting numpy values to native Python types
             for cls_id, x1, y1, x2, y2 in self.model_boxes:
                 # Convert numpy values to native Python types
@@ -2852,6 +4771,12 @@ class YOLOLabelingTool:
                 with open(self.config_file, 'r') as f:
                     config = json.load(f)
                     self.class_info = {int(k): v for k, v in config['classes'].items()}
+                    # Optional 'hotkeys' map: {"1": 0, "2": 1, ...}
+                    raw_hotkeys = config.get('hotkeys', {})
+                    self.class_hotkeys = {
+                        str(k): int(v) for k, v in raw_hotkeys.items()
+                        if str(k) in '0123456789'
+                    }
             else:
                 # Create default config if file doesn't exist
                 self.class_info = {
@@ -2863,6 +4788,10 @@ class YOLOLabelingTool:
             self.class_info = {
                 0: {"name": "Default", "color": [0, 0, 255]}
             }
+        # Drop any saved bindings for classes that no longer exist, then fill
+        # in defaults so 0-9 always have something sensible mapped.
+        self._cleanup_hotkeys()
+        self._init_default_hotkeys()
 
     def load_classes_from_yaml(self, yaml_path):
         """Load class names and dataset paths from YOLO data.yaml file"""
@@ -2894,7 +4823,12 @@ class YOLOLabelingTool:
                     self.class_info[idx] = {"name": name, "color": color}
             else:
                 raise ValueError("Invalid 'names' format in YAML file")
-            
+
+            # Re-validate hotkey map for the new class list, then fill in defaults
+            # for any digits that no longer point anywhere.
+            self._cleanup_hotkeys()
+            self._init_default_hotkeys()
+
             # Load image and label paths from YAML. Support strings or lists for train/val/test.
             loaded_images = False
             loaded_labels = False
@@ -3072,12 +5006,14 @@ class YOLOLabelingTool:
                 self.update_class_filter_dropdown()
             if hasattr(self, 'populate_presence_filter_checkboxes'):
                 self.populate_presence_filter_checkboxes()
-            
+            # Sync any open crop-review window
+            self._crop_review_refresh_class_info()
+
             # Load current image if available
             if self.image_paths and self.current_image_index < 0:
                 self.current_image_index = 0
                 self.load_image()
-                
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load YAML file: {str(e)}")
             # Fall back to loading from JSON config
@@ -3101,10 +5037,118 @@ class YOLOLabelingTool:
         # Convert to 0-255 range and return in BGR format for OpenCV
         return (int(b * 255), int(g * 255), int(r * 255))
 
+    # --- Hotkey management ---
+    def _init_default_hotkeys(self):
+        """Fill in default key→class bindings for digits not yet assigned.
+
+        Defaults follow the common convention: 1..9 → class 0..8, 0 → class 9.
+        Pre-existing user assignments (already in self.class_hotkeys) are
+        preserved; we only fill *gaps*.
+        """
+        used_classes = set(self.class_hotkeys.values())
+        defaults = {str(i + 1): i for i in range(9)}
+        defaults['0'] = 9
+        for digit, cls_id in defaults.items():
+            if digit in self.class_hotkeys:
+                continue
+            if cls_id in used_classes:
+                continue
+            if cls_id not in self.class_info:
+                continue
+            self.class_hotkeys[digit] = cls_id
+            used_classes.add(cls_id)
+
+    def _cleanup_hotkeys(self):
+        """Drop bindings for class ids that no longer exist."""
+        for digit in list(self.class_hotkeys.keys()):
+            if self.class_hotkeys[digit] not in self.class_info:
+                del self.class_hotkeys[digit]
+
+    def _class_to_hotkey(self, class_id):
+        """Return the digit currently bound to class_id, or None."""
+        for digit, cid in self.class_hotkeys.items():
+            if cid == class_id:
+                return digit
+        return None
+
+    def assign_hotkey_for_class(self, class_id):
+        """Modal dialog: capture a 0-9 keypress and bind it to class_id."""
+        if class_id not in self.class_info:
+            return
+        cls_name = self.class_info[class_id]['name']
+        current = self._class_to_hotkey(class_id)
+
+        win = tk.Toplevel(self.root)
+        win.title("Assign hotkey")
+        win.transient(self.root)
+        win.resizable(False, False)
+
+        ttk.Label(win, text=f"Hotkey for class:", font=('TkDefaultFont', 10)
+                  ).pack(padx=20, pady=(15, 0))
+        ttk.Label(win, text=cls_name, font=('TkDefaultFont', 13, 'bold')
+                  ).pack(padx=20, pady=(0, 8))
+        current_text = f"Current: {current}" if current else "Current: (none)"
+        ttk.Label(win, text=current_text, foreground='#0066cc').pack(padx=20, pady=2)
+        ttk.Label(win, text="Press 0-9 (top row or num-pad) to bind   |   Backspace to clear   |   Esc to cancel",
+                  foreground='#666').pack(padx=20, pady=(10, 15))
+
+        def on_key(event):
+            ch = event.keysym
+            if ch == 'Escape':
+                win.destroy()
+                return
+            if ch in ('BackSpace', 'Delete'):
+                if current and current in self.class_hotkeys:
+                    del self.class_hotkeys[current]
+                    self.update_status(f"Cleared hotkey for {cls_name}")
+                self.save_class_config()
+                self.setup_class_buttons()
+                win.destroy()
+                return
+            # Accept both top-row digits ('0'..'9') and numpad ('KP_0'..'KP_9').
+            # Normalize to the bare digit character for storage so the main
+            # hotkey lookup works the same regardless of input source.
+            digit = None
+            if len(ch) == 1 and ch in '0123456789':
+                digit = ch
+            elif ch.startswith('KP_') and len(ch) == 4 and ch[3] in '0123456789':
+                digit = ch[3]
+            if digit is not None:
+                prev_class = self.class_hotkeys.get(digit)
+                # Drop any prior binding for THIS class first
+                if current and current in self.class_hotkeys:
+                    del self.class_hotkeys[current]
+                self.class_hotkeys[digit] = class_id
+                self.save_class_config()
+                self.setup_class_buttons()
+                if prev_class is not None and prev_class != class_id:
+                    prev_name = self.class_info.get(prev_class, {}).get('name', '?')
+                    self.update_status(f"Key '{digit}' → {cls_name} (unbound from {prev_name})")
+                else:
+                    self.update_status(f"Key '{digit}' → {cls_name}")
+                win.destroy()
+
+        win.bind("<Key>", on_key)
+        # Capture all keypresses by grabbing focus and modally
+        win.update_idletasks()
+        # Center on parent
+        try:
+            pw, ph = self.root.winfo_width(), self.root.winfo_height()
+            px, py = self.root.winfo_rootx(), self.root.winfo_rooty()
+            ww, wh = win.winfo_width(), win.winfo_height()
+            win.geometry(f"+{px + (pw - ww) // 2}+{py + (ph - wh) // 2}")
+        except Exception:
+            pass
+        win.focus_force()
+        win.grab_set()
+
     def save_class_config(self):
         """Save class configuration to JSON file"""
         try:
-            config = {'classes': {str(k): v for k, v in self.class_info.items()}}
+            config = {
+                'classes': {str(k): v for k, v in self.class_info.items()},
+                'hotkeys': dict(self.class_hotkeys),
+            }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
         except Exception as e:
