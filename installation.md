@@ -8,6 +8,10 @@ pip install flash-attn --no-build-isolation
 
 !cd /workspace/ultralytics && pip install -e .
 
+!gdown https://drive.google.com/uc?id=... -O /workspace/datasets/
+
 !yolo detect train data=data.yaml model=yolo11n epochs=100 imgsz=640 batch=0.8 save=True amp=False
+
+!python /workspace/ultralytics/tools/dataset_checker_qwen.py --model Qwen/Qwen3.5-9B --yaml /workspace/datasets/datasets/data.yaml --share
 
 <Option> pip install --force-reinstall --no-cache-dir "setuptools<81"

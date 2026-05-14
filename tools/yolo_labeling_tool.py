@@ -1577,11 +1577,11 @@ class YOLOLabelingTool:
                 if self.highlight_overlaps and i in self.overlapping_boxes:
                     color = (0, 0, 255)
                     thickness = max(4, int(4 * text_zoom))
-                    label_text = f"L • {self.class_info[cls_id]['name']} ⚠"
+                    label_text = f"L {self.class_info[cls_id]['name']} ⚠"
                 else:
                     color = self.class_info[cls_id]["color"]
                     thickness = max(2, int(2 * text_zoom))
-                    label_text = f"L • {self.class_info[cls_id]['name']}"
+                    label_text = f"L {self.class_info[cls_id]['name']}"
                 cv2.rectangle(image_resized, (zx1, zy1), (zx2, zy2), color[::-1], thickness)
                 cv2.putText(image_resized, label_text,
                             (zx1, zy1 - 5),
@@ -1604,7 +1604,7 @@ class YOLOLabelingTool:
                 color = self.class_info[cls_id]["color"]
                 cv2.rectangle(image_resized, (zx1, zy1), (zx2, zy2),
                               color[::-1], max(2, int(2 * text_zoom)))
-                cv2.putText(image_resized, f"U • {self.class_info[cls_id]['name']}",
+                cv2.putText(image_resized, f"U {self.class_info[cls_id]['name']}",
                             (zx1, zy1 - 5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5 * text_zoom,
                             color[::-1], max(1, int(text_zoom)))
@@ -4849,6 +4849,7 @@ class YOLOLabelingTool:
             folder_stats = []  # Track (folder_path, image_count, label_path)
             
             def resolve_and_add_image_folder(entry):
+                nonlocal loaded_labels
                 # entry can be a string path pointing directly to images or to a train folder
                 p = Path(entry)
                 if not p.is_absolute():
@@ -4891,6 +4892,7 @@ class YOLOLabelingTool:
                         if lbl.exists():
                             self.per_image_label_folders[str(found)] = str(lbl)
                             label_folder_found = str(lbl)
+                            loaded_labels = True
                             break
                     
                     # Record statistics
@@ -4916,24 +4918,23 @@ class YOLOLabelingTool:
                     except Exception:
                         pass
 
-            # If no train images found, try val/test or common folders
-            if not loaded_images:
-                for key in ('val', 'test'):
-                    if key in data and data[key]:
-                        entries = data[key]
-                        if isinstance(entries, (list, tuple)):
-                            for entry in entries:
-                                try:
-                                    if resolve_and_add_image_folder(entry):
-                                        loaded_images = True
-                                except Exception:
-                                    continue
-                        else:
+            # Also load validation/test entries if present, even when train images were found
+            for key in ('val', 'test'):
+                if key in data and data[key]:
+                    entries = data[key]
+                    if isinstance(entries, (list, tuple)):
+                        for entry in entries:
                             try:
-                                if resolve_and_add_image_folder(entries):
+                                if resolve_and_add_image_folder(entry):
                                     loaded_images = True
                             except Exception:
-                                pass
+                                continue
+                    else:
+                        try:
+                            if resolve_and_add_image_folder(entries):
+                                loaded_images = True
+                        except Exception:
+                            pass
 
             # As a final fallback, try common image directories under base_path
             if not loaded_images:
@@ -4998,7 +4999,7 @@ class YOLOLabelingTool:
             
             # Show simplified message in GUI
             messagebox.showinfo("YAML Loaded", 
-                              f"Successfully loaded:\n" + "\n".join(f"  • {part}" for part in msg_parts) +
+                              f"Successfully loaded:\n" + "\n".join(f"  {part}" for part in msg_parts) +
                               f"\n\nCheck console for detailed folder statistics.")
             
             # Update UI components that depend on classes
@@ -5405,10 +5406,10 @@ class YOLOLabelingTool:
         self.filter_result_var.set(f"Cache complete: {labels_cached} labels, {dimensions_cached} dimensions in {time_str}")
         messagebox.showinfo("Cache Built", 
                           f"Successfully cached:\n"
-                          f"• {labels_cached} images with labels\n"
-                          f"• {dimensions_cached} image dimensions\n"
-                          f"• Total images scanned: {total_images}\n"
-                          f"• Time taken: {time_str}\n\n"
+                          f" {labels_cached} images with labels\n"
+                          f" {dimensions_cached} image dimensions\n"
+                          f" Total images scanned: {total_images}\n"
+                          f" Time taken: {time_str}\n\n"
                           f"Filtering will now be much faster!")
         
     def toggle_iou_filter(self):
