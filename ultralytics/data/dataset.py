@@ -277,10 +277,15 @@ class YOLODataset(BaseDataset):
             wh_arr = resolve_min_box_thresholds(min_wh_spec, names, key="min_rel_wh")
             area_arr = resolve_min_box_thresholds(min_area_spec, names, key="min_rel_area")
             if wh_arr is not None or area_arr is not None:
+                # Derive a clean prefix (e.g. "train"/"val") for log lines.
+                # self.prefix is the colorized "train: "/"val: " string from
+                # colorstr() and not suitable for direct display.
+                mode_label = "train" if self.augment else "val"
                 transforms.append(MinBoxFilter(
                     min_rel_wh=wh_arr,
                     min_rel_area=area_arr,
-                    prefix=str(self.prefix).strip().rstrip(":") or "data",
+                    names=names,
+                    prefix=mode_label,
                 ))
         transforms.append(
             Format(

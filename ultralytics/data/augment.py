@@ -1565,9 +1565,11 @@ class MinBoxFilter:
         min_rel_area (np.ndarray | None): Per-class minimum normalized
             area (w*h). Shape (nc,). A box is dropped if its area_rel is
             below the threshold for its class.
+        names (dict[int, str]): Class-id -> class-name map; used as row
+            labels in the per-class log summary.
         prefix (str): Prefix shown in log lines (e.g. ``train`` / ``val``).
 
-    Counters are stored in ``multiprocessing.Value`` so all dataloader
+    Counters are stored in ``multiprocessing.Array`` so all dataloader
     workers atomically aggregate into the same shared memory. The main
     training process drains them once per epoch via ``log_summary()``.
     """
@@ -1576,6 +1578,7 @@ class MinBoxFilter:
         self,
         min_rel_wh: np.ndarray | None = None,
         min_rel_area: np.ndarray | None = None,
+        names: dict[int, str] | None = None,
         prefix: str = "",
     ) -> None:
         self.min_rel_wh = (
@@ -1584,34 +1587,80 @@ class MinBoxFilter:
         self.min_rel_area = (
             None if min_rel_area is None else np.asarray(min_rel_area, dtype=np.float32)
         )
+        # Determine nc: prefer names; fall back to length of threshold arrays.
+        if names:
+            self.names = dict(names)
+            nc = max(int(i) for i in names) + 1
+        else:
+            self.names = {}
+            nc = 0
+            for arr in (self.min_rel_wh, self.min_rel_area):
+                if arr is not None:
+                    nc = max(nc, len(arr))
+        self.nc = nc
         self.prefix = prefix
-        # Shared int64 counters: forked workers inherit them and increment in
-        # shared memory; the main process drains once per epoch.
-        self._samples = _mp.Value("q", 0)
-        self._boxes = _mp.Value("q", 0)
-        self._dropped = _mp.Value("q", 0)
+        # Single shared lock guards all counter arrays. mp.Array supports an
+        # internal lock too, but coordinating two arrays + a Value across
+        # workers is cleanest with one explicit lock.
+        self._lock = _mp.Lock()
+        self._samples = _mp.Value("q", 0, lock=False)
+        self._seen = _mp.Array("q", max(1, nc), lock=False)
+        self._dropped_per_cls = _mp.Array("q", max(1, nc), lock=False)
+
+    @staticmethod
+    def _fmt_count(n: int) -> str:
+        """Compact thousands/millions formatting for legibility."""
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.1f}k"
+        return str(n)
 
     def log_summary(self, epoch: int | None = None) -> None:
-        """Drain counters and emit one log line for this epoch.
+        """Drain counters and emit a multi-line per-class summary for this
+        epoch.
 
         Args:
             epoch: Optional epoch number to include in the message.
         """
-        with self._samples.get_lock():
-            s = self._samples.value
-            b = self._boxes.value
-            d = self._dropped.value
+        with self._lock:
+            s = int(self._samples.value)
+            seen = list(self._seen)
+            dropped = list(self._dropped_per_cls)
             self._samples.value = 0
-            self._boxes.value = 0
-            self._dropped.value = 0
-        if b == 0:
-            return  # nothing observed (e.g. mode disabled or empty epoch)
-        rate = (d / max(b, 1)) * 100.0
+            for i in range(len(self._seen)):
+                self._seen[i] = 0
+                self._dropped_per_cls[i] = 0
+        total_seen = sum(seen)
+        total_dropped = sum(dropped)
+        if total_seen == 0:
+            return  # nothing observed
+        rate = (total_dropped / max(total_seen, 1)) * 100.0
         ep = f"epoch {epoch}: " if epoch is not None else ""
+        # Header
         LOGGER.info(
-            f"MinBoxFilter[{self.prefix}]: {ep}dropped {d}/{b} boxes "
-            f"({rate:.2f}%) across {s} samples"
+            f"MinBoxFilter[{self.prefix}] {ep}dropped "
+            f"{self._fmt_count(total_dropped)}/{self._fmt_count(total_seen)} "
+            f"({rate:.1f}%) across {self._fmt_count(s)} samples"
         )
+        # Per-class lines: show only classes that were actually seen this
+        # epoch; sort by drop rate (descending) then by count seen.
+        rows = []
+        for cid in range(self.nc):
+            if seen[cid] == 0:
+                continue
+            cls_rate = (dropped[cid] / seen[cid]) * 100.0
+            rows.append((cid, dropped[cid], seen[cid], cls_rate))
+        if not rows:
+            return
+        rows.sort(key=lambda r: (-r[3], -r[2]))  # high drop% first
+        max_name = max(len(self.names.get(r[0], f"class_{r[0]}")) for r in rows)
+        for cid, d_c, s_c, r_c in rows:
+            name = self.names.get(cid, f"class_{cid}")
+            LOGGER.info(
+                f"  - {name.ljust(max_name)} "
+                f"{self._fmt_count(d_c)}/{self._fmt_count(s_c)} ({r_c:.1f}%)"
+            )
 
     def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
         instances = labels.get("instances")
@@ -1656,12 +1705,24 @@ class MinBoxFilter:
             keep &= (bw_rel * bh_rel >= t_area)
 
         n_dropped = int((~keep).sum())
-        # Aggregate into shared counters; the main process drains once per
-        # epoch via log_summary().
-        with self._samples.get_lock():
-            self._samples.value += 1
-            self._boxes.value += len(keep)
-            self._dropped.value += n_dropped
+        # Aggregate per-class counts: how many boxes of each class we saw and
+        # how many we dropped. Local arrays first to minimize lock-held time.
+        if self.nc > 0:
+            # np.bincount returns nc-length array of counts; clamp cls range
+            # defensively (same clip as above).
+            cls_safe = np.clip(cls, 0, self.nc - 1)
+            seen_per = np.bincount(cls_safe, minlength=self.nc).astype(np.int64)
+            dropped_cls = cls_safe[~keep]
+            dropped_per = (
+                np.bincount(dropped_cls, minlength=self.nc).astype(np.int64)
+                if dropped_cls.size
+                else np.zeros(self.nc, dtype=np.int64)
+            )
+            with self._lock:
+                self._samples.value += 1
+                for i in range(self.nc):
+                    self._seen[i] += int(seen_per[i])
+                    self._dropped_per_cls[i] += int(dropped_per[i])
 
         if n_dropped == 0:
             return labels
