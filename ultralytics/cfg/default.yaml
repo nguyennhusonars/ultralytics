@@ -29,6 +29,8 @@ seed: 0 # (int) random seed for reproducibility
 deterministic: True # (bool) enable deterministic ops; reproducible but may be slower
 single_cls: False # (bool) treat all classes as a single class
 groups: # (dict, optional) merge original classes into named groups, e.g. {bus: [0,1,2,3], car: [4,5,6]}. Each value is a list of original class ids; labels with ids not in any group are dropped. Group names become the new class names; new class ids = insertion order. Original data.yaml and label files are untouched.
+min_rel_wh: # (float | dict, optional) drop boxes whose normalized width OR height is below this threshold after all augmentation phases. Float = uniform across all classes (e.g. 0.02 = 2% of image dim). Dict = per-class-name thresholds, e.g. {car: 0.02, human: 0.005}; use 'default' key for a fallback (unlisted classes -> 0 = no filter). With groups active, dict keys must be the GROUP names. Applies to both train and val. Original labels untouched.
+min_rel_area: # (float | dict, optional) drop boxes whose normalized area (w*h) is below this threshold. Same float-or-dict form as min_rel_wh. Combines with min_rel_wh (AND): a box is kept only if it passes every set threshold.
 rect: False # (bool) rectangular batches for train; rectangular batching for val when mode='val'
 cos_lr: False # (bool) cosine learning rate scheduler
 close_mosaic: 10 # (int) disable mosaic augmentation for final N epochs (0 to keep enabled)

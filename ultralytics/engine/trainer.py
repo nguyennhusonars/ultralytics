@@ -592,6 +592,8 @@ class BaseTrainer:
                 self.scheduler.last_epoch = self.epoch  # do not move
                 self.stop |= epoch >= self.epochs  # stop if exceeded epochs
             self.run_callbacks("on_fit_epoch_end")
+            # Emit one MinBoxFilter summary per epoch (if any filter is in use)
+            self._log_min_box_filters(epoch)
             self._clear_memory(0.5)  # clear if memory utilization > 50%
 
             # Early Stopping
@@ -637,6 +639,29 @@ class BaseTrainer:
             if fraction:
                 total = torch.cuda.get_device_properties(self.device).total_memory
         return ((memory / total) if total > 0 else 0) if fraction else (memory / 2**30)
+
+    def _log_min_box_filters(self, epoch: int) -> None:
+        """If MinBoxFilter is appended to the train/val transforms, drain its
+        shared counters and emit one summary line per dataset for this epoch.
+        No-op when the filter isn't active. Called from the main process only,
+        so we're safe to read the mp.Value-backed counters here."""
+        if RANK not in {-1, 0}:
+            return
+        try:
+            from ultralytics.data.augment import MinBoxFilter
+        except ImportError:
+            return
+        for loader_attr in ("train_loader", "test_loader"):
+            loader = getattr(self, loader_attr, None)
+            ds = getattr(loader, "dataset", None) if loader is not None else None
+            tfs = getattr(ds, "transforms", None)
+            if tfs is None:
+                continue
+            # `transforms` is a Compose; expose the inner list defensively.
+            inner = getattr(tfs, "transforms", None) or []
+            for t in inner:
+                if isinstance(t, MinBoxFilter):
+                    t.log_summary(epoch=epoch)
 
     def _clear_memory(self, threshold: float | None = None):
         """Clear accelerator memory by calling garbage collector and emptying cache."""

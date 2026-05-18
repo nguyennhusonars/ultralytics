@@ -24,9 +24,11 @@ from .augment import (
     Compose,
     Format,
     LetterBox,
+    MinBoxFilter,
     RandomLoadText,
     classify_augmentations,
     classify_transforms,
+    resolve_min_box_thresholds,
     v8_transforms,
 )
 from .base import BaseDataset
@@ -259,6 +261,27 @@ class YOLODataset(BaseDataset):
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        # Drop boxes that are too small after all augmentation. Train-arg wins;
+        # otherwise fall back to data.yaml keys. Each threshold may be a scalar
+        # (uniform across classes) or a dict keyed by class name (per-group).
+        # Applied to both train and val so the model never sees / is never
+        # evaluated on sub-threshold boxes.
+        min_wh_spec = getattr(hyp, "min_rel_wh", None) or (
+            self.data.get("min_rel_wh") if self.data else None
+        )
+        min_area_spec = getattr(hyp, "min_rel_area", None) or (
+            self.data.get("min_rel_area") if self.data else None
+        )
+        names = (self.data or {}).get("names") or {}
+        if names and (min_wh_spec or min_area_spec):
+            wh_arr = resolve_min_box_thresholds(min_wh_spec, names, key="min_rel_wh")
+            area_arr = resolve_min_box_thresholds(min_area_spec, names, key="min_rel_area")
+            if wh_arr is not None or area_arr is not None:
+                transforms.append(MinBoxFilter(
+                    min_rel_wh=wh_arr,
+                    min_rel_area=area_arr,
+                    prefix=str(self.prefix).strip().rstrip(":") or "data",
+                ))
         transforms.append(
             Format(
                 bbox_format="xywh",

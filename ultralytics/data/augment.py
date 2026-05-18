@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import multiprocessing as _mp
 import random
 from copy import deepcopy
 from typing import Any
@@ -1503,6 +1504,169 @@ class RandomFlip:
                 instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
         labels["img"] = np.ascontiguousarray(img)
         labels["instances"] = instances
+        return labels
+
+
+def resolve_min_box_thresholds(spec, names: dict[int, str], key: str = "") -> np.ndarray | None:
+    """Resolve a min_rel_wh / min_rel_area spec into a per-class threshold array.
+
+    Supported spec forms:
+        - None / falsy / 0: returns None (filter disabled for this dimension).
+        - float / int: uniform threshold for every class.
+        - dict: per-class thresholds keyed by class NAME (post-groups if groups
+                is active). Optional 'default' key sets the value for unlisted
+                classes; otherwise unlisted classes get 0 (no filter).
+
+    Args:
+        spec: User spec (scalar or dict).
+        names: Class-id -> class-name mapping (typically ``data['names']``).
+        key: Config key being resolved, used only for error messages.
+
+    Returns:
+        ndarray of shape (nc,) with the per-class threshold, or None if disabled.
+    """
+    if not spec:
+        return None
+    nc = len(names)
+    if isinstance(spec, (int, float)):
+        return np.full(nc, float(spec), dtype=np.float32)
+    if isinstance(spec, dict):
+        default = float(spec.get("default", 0.0))
+        arr = np.full(nc, default, dtype=np.float32)
+        name_to_id = {str(n): int(i) for i, n in names.items()}
+        for k, v in spec.items():
+            if k == "default":
+                continue
+            if k not in name_to_id:
+                raise ValueError(
+                    f"{key or 'min_box_threshold'}: class name '{k}' not in "
+                    f"data['names']={list(name_to_id)}"
+                )
+            arr[name_to_id[k]] = float(v)
+        return arr
+    raise TypeError(
+        f"{key or 'min_box_threshold'} must be float or dict, got {type(spec).__name__}"
+    )
+
+
+class MinBoxFilter:
+    """Drop boxes whose normalized size falls below per-class thresholds.
+
+    Applied at the end of the augmentation pipeline (after mosaic, affine,
+    flips, cutmix, etc.) so the decision uses the final box geometry the
+    model would actually train on. Both train and val datasets append this
+    transform when ``min_rel_wh`` or ``min_rel_area`` is set in the cfg or
+    in data.yaml; original label files are untouched.
+
+    Attributes:
+        min_rel_wh (np.ndarray | None): Per-class minimum normalized
+            width/height. Shape (nc,). A box is dropped if its w_rel or
+            h_rel is below the threshold for its class.
+        min_rel_area (np.ndarray | None): Per-class minimum normalized
+            area (w*h). Shape (nc,). A box is dropped if its area_rel is
+            below the threshold for its class.
+        prefix (str): Prefix shown in log lines (e.g. ``train`` / ``val``).
+
+    Counters are stored in ``multiprocessing.Value`` so all dataloader
+    workers atomically aggregate into the same shared memory. The main
+    training process drains them once per epoch via ``log_summary()``.
+    """
+
+    def __init__(
+        self,
+        min_rel_wh: np.ndarray | None = None,
+        min_rel_area: np.ndarray | None = None,
+        prefix: str = "",
+    ) -> None:
+        self.min_rel_wh = (
+            None if min_rel_wh is None else np.asarray(min_rel_wh, dtype=np.float32)
+        )
+        self.min_rel_area = (
+            None if min_rel_area is None else np.asarray(min_rel_area, dtype=np.float32)
+        )
+        self.prefix = prefix
+        # Shared int64 counters: forked workers inherit them and increment in
+        # shared memory; the main process drains once per epoch.
+        self._samples = _mp.Value("q", 0)
+        self._boxes = _mp.Value("q", 0)
+        self._dropped = _mp.Value("q", 0)
+
+    def log_summary(self, epoch: int | None = None) -> None:
+        """Drain counters and emit one log line for this epoch.
+
+        Args:
+            epoch: Optional epoch number to include in the message.
+        """
+        with self._samples.get_lock():
+            s = self._samples.value
+            b = self._boxes.value
+            d = self._dropped.value
+            self._samples.value = 0
+            self._boxes.value = 0
+            self._dropped.value = 0
+        if b == 0:
+            return  # nothing observed (e.g. mode disabled or empty epoch)
+        rate = (d / max(b, 1)) * 100.0
+        ep = f"epoch {epoch}: " if epoch is not None else ""
+        LOGGER.info(
+            f"MinBoxFilter[{self.prefix}]: {ep}dropped {d}/{b} boxes "
+            f"({rate:.2f}%) across {s} samples"
+        )
+
+    def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
+        instances = labels.get("instances")
+        if instances is None or len(instances) == 0:
+            return labels
+        if self.min_rel_wh is None and self.min_rel_area is None:
+            return labels
+        img = labels.get("img")
+        if img is None:
+            return labels
+        h, w = img.shape[:2]
+        if h <= 0 or w <= 0:
+            return labels
+
+        # Read box geometry without mutating instance state. Compute normalized
+        # width/height regardless of the underlying bbox format.
+        bb = instances.bboxes
+        fmt = instances._bboxes.format
+        if fmt == "xyxy":
+            bw = bb[:, 2] - bb[:, 0]
+            bh = bb[:, 3] - bb[:, 1]
+        else:  # 'xywh' or 'ltwh' — width is index 2, height is index 3
+            bw = bb[:, 2]
+            bh = bb[:, 3]
+        if instances.normalized:
+            bw_rel, bh_rel = bw, bh
+        else:
+            bw_rel = bw / float(w)
+            bh_rel = bh / float(h)
+
+        cls = labels["cls"].reshape(-1).astype(np.int64)
+        keep = np.ones(len(instances), dtype=bool)
+        if self.min_rel_wh is not None:
+            # Clip cls into a valid range defensively — group remap already
+            # ensures cls is in [0, nc), but guard against malformed inputs.
+            cls_idx = np.clip(cls, 0, len(self.min_rel_wh) - 1)
+            t_wh = self.min_rel_wh[cls_idx]
+            keep &= (bw_rel >= t_wh) & (bh_rel >= t_wh)
+        if self.min_rel_area is not None:
+            cls_idx = np.clip(cls, 0, len(self.min_rel_area) - 1)
+            t_area = self.min_rel_area[cls_idx]
+            keep &= (bw_rel * bh_rel >= t_area)
+
+        n_dropped = int((~keep).sum())
+        # Aggregate into shared counters; the main process drains once per
+        # epoch via log_summary().
+        with self._samples.get_lock():
+            self._samples.value += 1
+            self._boxes.value += len(keep)
+            self._dropped.value += n_dropped
+
+        if n_dropped == 0:
+            return labels
+        labels["instances"] = instances[keep]
+        labels["cls"] = labels["cls"][keep]
         return labels
 
 
