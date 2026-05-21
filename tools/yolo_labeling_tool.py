@@ -870,6 +870,11 @@ class YOLOLabelingTool:
         ttk.Button(self.classes_tab, text="🔀 Reassign Class…",
                   command=self.show_reassign_class_dialog).pack(pady=2, fill=tk.X, padx=10)
 
+        # Class groups: edit equivalence sets for "Find Bad Annotations" so
+        # that e.g. 'sedan'/'suv'/'hatchback' all count as 'car'.
+        ttk.Button(self.classes_tab, text="🧩 Edit Class Groups…",
+                  command=self.edit_class_groups).pack(pady=2, fill=tk.X, padx=10)
+
         # Selected class indicator
         self.selected_class_var = tk.StringVar(value="Selected Class: 0")
         ttk.Label(self.classes_tab, textvariable=self.selected_class_var).pack(pady=5)
@@ -944,10 +949,14 @@ class YOLOLabelingTool:
         analyze_btn_frame = ttk.Frame(self.analyze_tab)
         analyze_btn_frame.pack(pady=5, fill=tk.X, padx=5)
         
-        ttk.Button(analyze_btn_frame, text="📊 Analyze Dataset", 
+        ttk.Button(analyze_btn_frame, text="📊 Analyze Dataset",
                   command=self.analyze_dataset).pack(fill=tk.X, pady=2)
-        ttk.Button(analyze_btn_frame, text="🔄 Refresh Analysis", 
+        ttk.Button(analyze_btn_frame, text="🔄 Refresh Analysis",
                   command=self.refresh_analysis).pack(fill=tk.X, pady=2)
+        # Run the loaded model against every GT box and surface mismatches /
+        # missing predictions for hand-review (uses class_groups if set).
+        ttk.Button(analyze_btn_frame, text="🔍 Find Bad Annotations…",
+                  command=self.show_find_bad_dialog).pack(fill=tk.X, pady=2)
         
         # Analysis options
         options_frame = ttk.LabelFrame(self.analyze_tab, text="Analysis Options")
@@ -3504,6 +3513,218 @@ class YOLOLabelingTool:
                 })
         return crops
 
+    @staticmethod
+    def _iou_xyxy(a, b):
+        """Compute IoU of two boxes in (x1, y1, x2, y2) pixel coords."""
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+        iw = max(0.0, ix2 - ix1); ih = max(0.0, iy2 - iy1)
+        inter = iw * ih
+        if inter <= 0.0:
+            return 0.0
+        a_area = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+        b_area = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+        union = a_area + b_area - inter
+        return inter / union if union > 0 else 0.0
+
+    def _bad_scan_worker(self, config):
+        """Background-thread scanner. For every GT label in every image of
+        the scope: run the model, find the best-IoU prediction, and decide
+        whether the GT is suspicious. Pushes ('entry', dict) / ('progress',
+        i, total) / ('done', reason) / ('error', msg) messages onto
+        ``self._bad_scan_queue``.
+
+        Must not touch any Tk widget — the main thread reads the queue and
+        renders results."""
+        import queue as _queue  # local alias keeps scope tidy
+        try:
+            paths = list(config['paths'])
+            conf_thr = float(config['conf'])
+            iou_match = float(config['iou_match'])
+            detect_mismatch = bool(config['mismatch'])
+            detect_missing = bool(config['missing'])
+            for i, path in enumerate(paths):
+                if self._bad_scan_cancelled.is_set():
+                    self._bad_scan_queue.put(("done", "cancelled"))
+                    return
+                try:
+                    img = cv2.imread(str(path))
+                except Exception:
+                    img = None
+                if img is None:
+                    self._bad_scan_queue.put(("progress", i + 1, len(paths)))
+                    continue
+                ih, iw = img.shape[:2]
+                # Run model
+                try:
+                    results = self.pretrained_model(img, verbose=False, conf=conf_thr)
+                except Exception as e:
+                    self._bad_scan_queue.put(("error", f"model error on {path.name}: {e}"))
+                    self._bad_scan_queue.put(("progress", i + 1, len(paths)))
+                    continue
+                preds = []
+                for r in results:
+                    boxes = getattr(r, 'boxes', None)
+                    if boxes is None:
+                        continue
+                    for box in boxes:
+                        try:
+                            xyxy = box.xyxy[0].cpu().numpy()
+                            pcls = int(box.cls[0].cpu().numpy())
+                            pconf = float(box.conf[0].cpu().numpy())
+                        except Exception:
+                            continue
+                        preds.append((
+                            pcls, pconf,
+                            float(xyxy[0]), float(xyxy[1]),
+                            float(xyxy[2]), float(xyxy[3]),
+                        ))
+                # Read GT labels (raw lines so line_idx aligns with file)
+                lf = self._find_label_file_for(path)
+                if lf is None or not lf.exists():
+                    self._bad_scan_queue.put(("progress", i + 1, len(paths)))
+                    continue
+                try:
+                    lines = lf.read_text().splitlines()
+                except (IOError, OSError):
+                    self._bad_scan_queue.put(("progress", i + 1, len(paths)))
+                    continue
+                for li, line in enumerate(lines):
+                    parts = line.strip().split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        gt_cls = int(float(parts[0]))
+                        cx, cy, bw, bh = map(float, parts[1:5])
+                    except ValueError:
+                        continue
+                    gx1 = (cx - bw / 2.0) * iw
+                    gy1 = (cy - bh / 2.0) * ih
+                    gx2 = (cx + bw / 2.0) * iw
+                    gy2 = (cy + bh / 2.0) * ih
+                    gt_box = (gx1, gy1, gx2, gy2)
+                    best_iou = 0.0
+                    best_pred = None  # (cls, conf)
+                    for pcls, pconf, px1, py1, px2, py2 in preds:
+                        iou = self._iou_xyxy(gt_box, (px1, py1, px2, py2))
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_pred = (pcls, pconf)
+                    entry = None
+                    if best_pred is None or best_iou < iou_match:
+                        if detect_missing:
+                            entry = {
+                                'img_path': path,
+                                'line_idx': li,
+                                'cls_id': gt_cls,
+                                'bbox_norm': (cx, cy, bw, bh),
+                                'pred_cls_id': None,
+                                'pred_conf': 0.0,
+                                'iou': best_iou,
+                                'score': 1.0 - best_iou,
+                                'kind': 'missing',
+                            }
+                    else:
+                        pcls, pconf = best_pred
+                        if not self._classes_equivalent(gt_cls, pcls):
+                            if detect_mismatch:
+                                entry = {
+                                    'img_path': path,
+                                    'line_idx': li,
+                                    'cls_id': gt_cls,
+                                    'bbox_norm': (cx, cy, bw, bh),
+                                    'pred_cls_id': pcls,
+                                    'pred_conf': pconf,
+                                    'iou': best_iou,
+                                    'score': pconf,
+                                    'kind': 'class_mismatch',
+                                }
+                    if entry is not None:
+                        self._bad_scan_queue.put(("entry", entry))
+                self._bad_scan_queue.put(("progress", i + 1, len(paths)))
+            self._bad_scan_queue.put(("done", "complete"))
+        except Exception as e:
+            try:
+                self._bad_scan_queue.put(("error", f"scan worker crashed: {e}"))
+                self._bad_scan_queue.put(("done", "error"))
+            except Exception:
+                pass
+
+    def _bad_scan_drain(self):
+        """Main thread: drain ``_bad_scan_queue`` and stream entries into
+        the open crop review window. Schedules itself until the scan is
+        done; safe no-op if the review window was closed mid-scan."""
+        if not hasattr(self, '_bad_scan_queue'):
+            return
+        if self._crop_review_window is None:
+            # Window closed mid-scan — abort the scan cleanly.
+            self._bad_scan_cancelled.set()
+            return
+        import queue as _queue
+        new_entries = []
+        progress = None
+        done_msg = None
+        last_error = None
+        while True:
+            try:
+                msg = self._bad_scan_queue.get_nowait()
+            except _queue.Empty:
+                break
+            kind = msg[0]
+            if kind == 'entry':
+                new_entries.append(msg[1])
+            elif kind == 'progress':
+                progress = (msg[1], msg[2])
+            elif kind == 'done':
+                done_msg = msg[1]
+            elif kind == 'error':
+                last_error = msg[1]
+        if new_entries:
+            self._crop_review_entries.extend(new_entries)
+            # Re-sort by descending score so the worst rises to the top.
+            self._crop_review_entries.sort(key=lambda e: -e.get('score', 0.0))
+            # Coalesce render (re-use the after_idle scheme used by reassign).
+            prev = getattr(self, '_crop_review_render_after', None)
+            if prev is not None:
+                try:
+                    self.root.after_cancel(prev)
+                except tk.TclError:
+                    pass
+            def _do_render():
+                self._crop_review_render_after = None
+                if self._crop_review_window is not None:
+                    self._crop_review_render()
+            self._crop_review_render_after = self.root.after_idle(_do_render)
+        if progress is not None or done_msg is not None:
+            self._bad_scan_update_status(progress, done_msg, last_error)
+        if done_msg is None:
+            # keep polling
+            self._bad_scan_drain_after = self.root.after(150, self._bad_scan_drain)
+        else:
+            self._bad_scan_drain_after = None
+
+    def _bad_scan_update_status(self, progress, done_msg, last_error):
+        """Format the bad-scan progress line for the review window's status bar."""
+        if self._crop_review_window is None:
+            return
+        n_bad = len(self._crop_review_entries)
+        parts = []
+        if progress is not None:
+            i, total = progress
+            parts.append(f"Scanned {i}/{total}")
+        parts.append(f"{n_bad} bad found")
+        if done_msg == 'complete':
+            parts.append("✓ done")
+        elif done_msg == 'cancelled':
+            parts.append("⛔ cancelled")
+        elif done_msg == 'error':
+            parts.append("❌ error")
+        if last_error:
+            parts.append(last_error[:60])
+        self._crop_review_status_var.set("  ·  ".join(parts))
+
     def _rewrite_label_line(self, img_path, line_idx, new_class_id):
         """Rewrite a single line's class id in the label file. Returns True on success."""
         lf = self._find_label_file_for(img_path)
@@ -3557,6 +3778,189 @@ class YOLOLabelingTool:
             return False
         self.labels_cache.pop(str(img_path), None)
         return True
+
+    def edit_class_groups(self):
+        """Open a small editor where the user can define equivalence groups
+        like ``bus: bus_m, bus_l, bus_xl`` (one group per line). Saved into
+        class_config.json under the ``class_groups`` key."""
+        win = tk.Toplevel(self.root)
+        win.title("Edit Class Groups")
+        win.geometry("600x440")
+        win.transient(self.root)
+        ttk.Label(
+            win,
+            text=("One group per line, format:  group_name: member1, member2, ...\n"
+                  "Members are class names from this project.\n"
+                  "Used by 'Find Bad Annotations' to treat all members as the "
+                  "same class.\nLeave blank to disable grouping."),
+            justify=tk.LEFT,
+            foreground="#555",
+        ).pack(anchor=tk.W, padx=10, pady=(10, 4))
+
+        # Pre-populate from the current class_groups
+        groups = getattr(self, 'class_groups', {}) or {}
+        text_lines = []
+        for k, v in groups.items():
+            members = v if isinstance(v, (list, tuple)) else [v]
+            text_lines.append(f"{k}: {', '.join(str(m) for m in members)}")
+        txt = tk.Text(win, wrap=tk.WORD, height=18, font=('TkDefaultFont', 10))
+        txt.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        if text_lines:
+            txt.insert("1.0", "\n".join(text_lines))
+
+        # Show the available class names as a sticky hint above the buttons
+        all_names = sorted(info['name'] for info in self.class_info.values())
+        ttk.Label(
+            win,
+            text="Available classes: " + ", ".join(all_names),
+            foreground="#888",
+            wraplength=560,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=10, pady=(2, 0))
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(win, textvariable=status_var, foreground="#cc2222").pack(
+            anchor=tk.W, padx=10, pady=2
+        )
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=tk.X, padx=10, pady=(4, 10))
+
+        def _parse_and_save():
+            raw = txt.get("1.0", "end").strip()
+            known = {info['name'] for info in self.class_info.values()}
+            new_groups = {}
+            unknown_members = []
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if ':' not in line:
+                    status_var.set(f"Missing ':' on line: {line!r}")
+                    return
+                group_key, members_str = line.split(':', 1)
+                group_key = group_key.strip()
+                members = [m.strip() for m in members_str.split(',') if m.strip()]
+                if not group_key or not members:
+                    status_var.set(f"Empty group or members in: {line!r}")
+                    return
+                # Validate every member exists as a class name
+                for m in members:
+                    if m not in known:
+                        unknown_members.append(m)
+                new_groups[group_key] = members
+            if unknown_members:
+                status_var.set(
+                    f"Unknown class name(s): {', '.join(sorted(set(unknown_members)))}"
+                )
+                return
+            self.class_groups = new_groups
+            self._rebuild_class_group_lookup()
+            self.save_class_config()
+            win.destroy()
+
+        ttk.Button(btn_row, text="Save", command=_parse_and_save).pack(side=tk.RIGHT)
+        ttk.Button(btn_row, text="Cancel", command=win.destroy).pack(
+            side=tk.RIGHT, padx=4
+        )
+
+    def show_find_bad_dialog(self):
+        """Config dialog for 'Find Bad Annotations'. Reads scope/threshold
+        choices, then opens the bad-annotation review window."""
+        if not self.pretrained_model:
+            messagebox.showwarning(
+                "No model loaded",
+                "Load a YOLO model first (Setup tab → Pretrained Model)."
+            )
+            return
+        if not self.filtered_image_paths:
+            messagebox.showinfo("No images", "Load an image folder first.")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Find Bad Annotations")
+        win.geometry("440x280")
+        win.transient(self.root)
+
+        # Confidence threshold for predictions
+        conf_var = tk.DoubleVar(value=0.40)
+        iou_var = tk.DoubleVar(value=0.50)
+        mismatch_var = tk.BooleanVar(value=True)
+        missing_var = tk.BooleanVar(value=True)
+
+        frm = ttk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+        def _row(parent, label_text, var, width=8):
+            row = ttk.Frame(parent); row.pack(fill=tk.X, pady=3)
+            ttk.Label(row, text=label_text, width=28, anchor='w').pack(side=tk.LEFT)
+            ttk.Entry(row, textvariable=var, width=width).pack(side=tk.LEFT)
+
+        _row(frm, "Prediction confidence (≥):", conf_var)
+        _row(frm, "IoU threshold for match (≥):", iou_var)
+
+        ttk.Checkbutton(frm, text="Class mismatch (GT overlaps confident pred of different class)",
+                        variable=mismatch_var).pack(anchor=tk.W, pady=(8, 2))
+        ttk.Checkbutton(frm, text="Missing prediction (no overlap; model sees nothing)",
+                        variable=missing_var).pack(anchor=tk.W, pady=2)
+
+        # Show whether class_groups will be used
+        n_groups = len(getattr(self, 'class_groups', {}) or {})
+        ttk.Label(
+            frm,
+            text=(f"Class groups: {n_groups} defined (will be used to relax "
+                  "class-match checks)") if n_groups else
+                 ("Class groups: none defined — exact class match. "
+                  "Define via Setup → 'Edit Class Groups…' if needed."),
+            foreground="#666",
+            wraplength=400,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(8, 4))
+
+        # Scope: current scope is "currently filtered images" (the user already
+        # narrowed the working set via Filter tab). Keep it simple — just scan
+        # whatever is in filtered_image_paths.
+        ttk.Label(
+            frm,
+            text=f"Scope: {len(self.filtered_image_paths)} currently filtered images.",
+            foreground="#666",
+        ).pack(anchor=tk.W, pady=(0, 4))
+
+        status_var = tk.StringVar()
+        ttk.Label(frm, textvariable=status_var, foreground="#cc2222").pack(
+            anchor=tk.W, pady=2
+        )
+
+        btn_row = ttk.Frame(frm); btn_row.pack(fill=tk.X, pady=(10, 0))
+
+        def _start():
+            if not (mismatch_var.get() or missing_var.get()):
+                status_var.set("Pick at least one detection signal.")
+                return
+            try:
+                conf = float(conf_var.get())
+                iou_match = float(iou_var.get())
+            except (tk.TclError, ValueError):
+                status_var.set("Confidence and IoU must be numbers.")
+                return
+            if not (0 < conf <= 1.0):
+                status_var.set("Confidence must be in (0, 1].")
+                return
+            if not (0 < iou_match <= 1.0):
+                status_var.set("IoU must be in (0, 1].")
+                return
+            config = {
+                'paths': list(self.filtered_image_paths),
+                'conf': conf,
+                'iou_match': iou_match,
+                'mismatch': mismatch_var.get(),
+                'missing': missing_var.get(),
+            }
+            win.destroy()
+            self.open_bad_label_review(config)
+
+        ttk.Button(btn_row, text="Start scan", command=_start).pack(side=tk.RIGHT)
+        ttk.Button(btn_row, text="Cancel", command=win.destroy).pack(
+            side=tk.RIGHT, padx=4
+        )
 
     def show_reassign_class_dialog(self):
         """Open a dialog to bulk-reassign every label of one class to another."""
@@ -3735,10 +4139,21 @@ class YOLOLabelingTool:
         self.root.wait_window(dlg)
         return chosen['value']
 
-    def _open_crop_review_window(self, entries, target_class):
+    def _open_crop_review_window(self, entries, target_class, mode='filter'):
+        """Open the crop review window.
+
+        Args:
+            entries: initial list of crop dicts. In 'bad' mode this is
+                typically empty and gets filled by the background scanner.
+            target_class: GT class under review (filter mode), or None in
+                'bad' mode where each entry can have any GT class.
+            mode: 'filter' (one-class crop review) or 'bad' (mismatch /
+                missing annotations).
+        """
         if self._crop_review_window is not None and self._crop_review_window.winfo_exists():
             self._crop_review_window.destroy()
 
+        self._crop_review_mode = mode
         self._crop_review_entries = entries
         self._crop_review_target = target_class
         self._crop_review_page = 0
@@ -3749,8 +4164,11 @@ class YOLOLabelingTool:
         self._crop_review_img_cache = {}
 
         win = tk.Toplevel(self.root)
-        cls_name = self.class_info[target_class]['name']
-        win.title(f"Crop Review — {cls_name}")
+        if mode == 'bad':
+            win.title("Bad Annotation Review")
+        else:
+            cls_name = self.class_info[target_class]['name']
+            win.title(f"Crop Review — {cls_name}")
         win.geometry("1100x780")
         self._crop_review_window = win
 
@@ -3784,9 +4202,15 @@ class YOLOLabelingTool:
         # Action bar (selection + reassign target)
         action = ttk.Frame(win)
         action.pack(fill=tk.X, padx=8, pady=4)
-        self._crop_review_sel_var = tk.StringVar(
-            value="Click a crop, then press 1-9/0 to reassign (selection auto-advances). Delete removes. Page nav drops handled."
-        )
+        if mode == 'bad':
+            default_help = ("Worst annotations first. 1-9/0 reassigns, "
+                            "Delete drops, K marks reviewed (no change). "
+                            "Click a crop to jump to the main window.")
+        else:
+            default_help = ("Click a crop, then press 1-9/0 to reassign "
+                            "(selection auto-advances). Delete removes. "
+                            "Page nav drops handled.")
+        self._crop_review_sel_var = tk.StringVar(value=default_help)
         ttk.Label(action, textvariable=self._crop_review_sel_var,
                   foreground='#0066cc').pack(side=tk.LEFT)
         ttk.Label(action, text="   Reassign to: ").pack(side=tk.LEFT)
@@ -3804,6 +4228,18 @@ class YOLOLabelingTool:
         delete_btn = tk.Button(action, text="🗑 Delete", fg='#cc2222',
                                command=self._crop_review_delete_selected)
         delete_btn.pack(side=tk.LEFT, padx=4)
+        # In bad-annotation mode, give the user a way to stop the background
+        # scan and a "mark reviewed" action that just drops the entry without
+        # touching the label file.
+        if mode == 'bad':
+            ttk.Button(action, text="✓ Mark reviewed (K)",
+                       command=self._crop_review_mark_reviewed).pack(
+                           side=tk.LEFT, padx=4)
+            self._bad_scan_cancel_btn = ttk.Button(
+                action, text="⛔ Cancel scan",
+                command=self._bad_scan_request_cancel,
+            )
+            self._bad_scan_cancel_btn.pack(side=tk.LEFT, padx=4)
 
         # Crop grid host
         self._crop_review_grid_frame = ttk.Frame(win)
@@ -3841,40 +4277,73 @@ class YOLOLabelingTool:
         win.bind("<BackSpace>", _hk(lambda e: self._crop_review_delete_selected()))
         win.bind("<Left>",      _hk(lambda e: self._crop_review_prev_page()))
         win.bind("<Right>",     _hk(lambda e: self._crop_review_next_page()))
+        # K = mark current bad-annotation entry as reviewed (drop from list,
+        # don't touch label file). Only meaningful in bad-annotation mode.
+        if mode == 'bad':
+            win.bind("<k>", _hk(lambda e: self._crop_review_mark_reviewed()))
+            win.bind("<K>", _hk(lambda e: self._crop_review_mark_reviewed()))
         win.bind("<Escape>", lambda e: self._crop_review_close())
         win.protocol("WM_DELETE_WINDOW", self._crop_review_close)
 
         self._crop_review_render()
 
+    def _crop_review_cancel_pending(self):
+        """Cancel every after-callback scheduled by the review window. Used
+        on close (and as a defensive sweep before potentially-recursive ops)
+        so callbacks can't fire after teardown and touch dead widgets."""
+        for attr in ('_crop_review_resize_after',
+                     '_crop_review_render_after',
+                     '_crop_review_main_after',
+                     '_crop_review_jump_after',
+                     '_bad_scan_drain_after'):
+            pending = getattr(self, attr, None)
+            if pending is not None:
+                try:
+                    self.root.after_cancel(pending)
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
+
     def _crop_review_close(self):
+        # Guard against re-entry — Tk can fire WM_DELETE_WINDOW twice in
+        # rapid succession if the user clicks the close box while a render
+        # is mid-flight, and we don't want the cleanup logic to run twice.
+        if getattr(self, '_crop_review_closing', False):
+            return
         if self._crop_review_window is None:
             return
-        win = self._crop_review_window
-        self._crop_review_window = None
-        # Cancel any pending resize-driven re-render so it doesn't fire
-        # after the window is gone.
-        pending = getattr(self, '_crop_review_resize_after', None)
-        if pending is not None:
-            try:
-                self.root.after_cancel(pending)
-            except tk.TclError:
-                pass
-            self._crop_review_resize_after = None
-        dirty = self._crop_review_dirty_paths
-        self._crop_review_entries = []
-        self._crop_review_canvases = []
-        self._crop_review_thumb_cache = {}
-        self._crop_review_img_cache = {}
+        self._crop_review_closing = True
         try:
-            win.destroy()
-        except Exception:
-            pass
-        # If the main current image was modified, reload its labels & redraw
-        if self.current_image_path and str(self.current_image_path) in dirty:
-            self.load_labels()
-            if self.highlight_overlaps:
-                self.detect_current_overlaps()
-            self.display_image()
+            win = self._crop_review_window
+            self._crop_review_window = None
+            # If a background bad-annotation scan is in flight, tell it to
+            # stop. The worker thread is daemonized so it won't block exit
+            # even if the user closes Python immediately after.
+            cancel_evt = getattr(self, '_bad_scan_cancelled', None)
+            if cancel_evt is not None:
+                cancel_evt.set()
+            self._crop_review_cancel_pending()
+            dirty = self._crop_review_dirty_paths
+            self._crop_review_entries = []
+            self._crop_review_canvases = []
+            self._crop_review_thumb_cache = {}
+            self._crop_review_img_cache = {}
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            # If the main current image was modified, reload its labels &
+            # redraw. Defer one tick so the close finishes first — this
+            # keeps the UI responsive when the user mashes Esc.
+            if self.current_image_path and str(self.current_image_path) in dirty:
+                def _post_close_refresh():
+                    self.load_labels()
+                    if self.highlight_overlaps:
+                        self.detect_current_overlaps()
+                    self.display_image()
+                self.root.after_idle(_post_close_refresh)
+        finally:
+            self._crop_review_closing = False
 
     def _crop_review_get_grid(self):
         try:
@@ -3944,16 +4413,19 @@ class YOLOLabelingTool:
         except tk.TclError:
             return
 
-        # If the class under review was deleted, the review can't continue.
-        if self._crop_review_target not in self.class_info:
-            try:
-                self._crop_review_status_var.set(
-                    f"Class {self._crop_review_target} was removed — closing review."
-                )
-            except Exception:
-                pass
-            self._crop_review_close()
-            return
+        # In bad-annotation mode there's no single "target" class; entries
+        # span every GT class, so skip the target-class-deleted guard below.
+        if getattr(self, '_crop_review_mode', 'filter') != 'bad':
+            # If the class under review was deleted, the review can't continue.
+            if self._crop_review_target not in self.class_info:
+                try:
+                    self._crop_review_status_var.set(
+                        f"Class {self._crop_review_target} was removed — closing review."
+                    )
+                except Exception:
+                    pass
+                self._crop_review_close()
+                return
 
         # Rebuild the "Reassign to" dropdown.
         # Setting values via configure() is more reliable across Tk versions
@@ -4014,7 +4486,14 @@ class YOLOLabelingTool:
     def _crop_review_flush_handled(self):
         """Remove entries whose current class no longer matches the review
         target. Called only when the user navigates pages — keeps the visible
-        page stable during rapid in-place reassigns."""
+        page stable during rapid in-place reassigns.
+
+        In bad-annotation mode this is a no-op: entries don't share a single
+        target class, so there's nothing to flush by class identity. Bad-mode
+        entries are removed individually by reassign / delete / mark-reviewed
+        actions instead."""
+        if getattr(self, '_crop_review_mode', 'filter') == 'bad':
+            return
         target = self._crop_review_target
         before = len(self._crop_review_entries)
         # Free thumb-cache slots for entries being dropped
@@ -4078,14 +4557,118 @@ class YOLOLabelingTool:
         return photo
 
     def _crop_review_caption_text(self, entry):
-        """Build the per-cell caption, including the "→ NewClass" tag when
-        the entry has been reassigned away from the review target."""
-        text = f"{entry['img_path'].name}  #{entry['line_idx'] + 1}"
+        """Build the per-cell caption.
+
+        In standard (class-filter) mode this shows the file + line, with an
+        ``→ NewClass`` suffix once the entry has been reassigned.
+
+        In bad-annotation mode (entry carries ``kind`` / ``pred_cls_id``) it
+        shows the GT-vs-prediction diagnosis the user needs to act on, e.g.
+        ``img42.jpg #3   GT: sedan → Pred: truck (0.78)`` or
+        ``img42.jpg #3   GT: human   (no pred, IoU 0.00)``."""
+        base = f"{entry['img_path'].name}  #{entry['line_idx'] + 1}"
         cls_id = entry['cls_id']
+        cls_name = self.class_info.get(cls_id, {}).get('name', f'?{cls_id}')
+
+        kind = entry.get('kind')
+        if kind in ('class_mismatch', 'missing'):
+            if kind == 'class_mismatch':
+                pcid = entry.get('pred_cls_id')
+                pname = self.class_info.get(pcid, {}).get('name', f'?{pcid}')
+                pconf = entry.get('pred_conf', 0.0)
+                tail = f"GT: {cls_name} → Pred: {pname} ({pconf:.2f})"
+            else:
+                iou = entry.get('iou', 0.0)
+                tail = f"GT: {cls_name}   (no pred, IoU {iou:.2f})"
+            # When the user has reassigned the entry to a different class,
+            # also surface the new class so the action bar matches.
+            target = self._crop_review_target
+            if target is not None and cls_id != target:
+                tgt_name = self.class_info.get(target, {}).get('name', f'?{target}')
+                tail = f"{tgt_name} ← " + tail
+            return f"{base}   {tail}"
+
+        # Default (class-filter) caption path.
         if cls_id != self._crop_review_target:
-            cls_name = self.class_info.get(cls_id, {}).get('name', f'?{cls_id}')
-            text += f"   → {cls_name}"
+            text = base + f"   → {cls_name}"
+        else:
+            text = base
         return text
+
+    def _crop_review_mark_reviewed(self):
+        """Bad-annotation mode: drop the currently selected entry from the
+        review list WITHOUT changing the label file (the user has decided
+        the GT is actually fine and the model is wrong)."""
+        if getattr(self, '_crop_review_mode', 'filter') != 'bad':
+            return
+        sel = self._crop_review_selected
+        if sel is None or not (0 <= sel < len(self._crop_review_entries)):
+            return
+        entry = self._crop_review_entries[sel]
+        self._crop_review_status_var.set(
+            f"Marked reviewed: {entry['img_path'].name} #{entry['line_idx'] + 1}"
+        )
+        self._crop_review_thumb_cache.pop(id(entry), None)
+        del self._crop_review_entries[sel]
+        if sel < len(self._crop_review_entries):
+            self._crop_review_selected = sel
+        elif self._crop_review_entries:
+            self._crop_review_selected = len(self._crop_review_entries) - 1
+        else:
+            self._crop_review_selected = None
+        # Coalesced re-render (same pattern reassign uses)
+        prev = getattr(self, '_crop_review_render_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+        def _do_render():
+            self._crop_review_render_after = None
+            if self._crop_review_window is not None:
+                self._crop_review_render()
+        self._crop_review_render_after = self.root.after_idle(_do_render)
+
+    def _bad_scan_request_cancel(self):
+        """User clicked the Cancel-scan button. Tells the worker to stop on
+        its next iteration; entries already in the queue still get drained."""
+        if getattr(self, '_bad_scan_cancelled', None) is not None:
+            self._bad_scan_cancelled.set()
+            try:
+                self._crop_review_status_var.set(
+                    "Cancel requested — finishing in-flight work…"
+                )
+            except Exception:
+                pass
+
+    def open_bad_label_review(self, config):
+        """Open the crop review window in 'bad annotation' mode and kick
+        off a background scanner using ``config`` (a dict with keys: paths,
+        conf, iou_match, mismatch, missing)."""
+        if not self.pretrained_model:
+            messagebox.showwarning(
+                "No model loaded",
+                "Load a YOLO model first (Setup tab → Pretrained Model)."
+            )
+            return
+        # Make sure the group lookup matches whatever class_groups currently is
+        self._rebuild_class_group_lookup()
+        # Open the window first with an empty entry list — the worker streams
+        # results in via the after-loop drainer.
+        self._open_crop_review_window(entries=[], target_class=None, mode='bad')
+        # Spawn the scanner
+        import threading, queue
+        self._bad_scan_cancelled = threading.Event()
+        self._bad_scan_queue = queue.Queue()
+        self._bad_scan_thread = threading.Thread(
+            target=self._bad_scan_worker, args=(config,), daemon=True,
+        )
+        self._bad_scan_thread.start()
+        self._crop_review_status_var.set(
+            f"Scanning {len(config['paths'])} images — entries appear as they're found…"
+        )
+        # Start the main-thread drain loop
+        self._bad_scan_drain_after = self.root.after(150, self._bad_scan_drain)
 
     def _crop_review_apply_cell_style(self, cell, entry):
         """Set a cell's background to reflect its current state.
@@ -4095,7 +4678,13 @@ class YOLOLabelingTool:
         is_selected = (sel is not None
                        and 0 <= sel < len(self._crop_review_entries)
                        and self._crop_review_entries[sel] is entry)
-        is_handled = (entry['cls_id'] != target)
+        # "Handled" only meaningful in filter mode (where there's a single
+        # target class). In bad-annotation mode every visible entry is by
+        # definition unhandled — handled entries are removed on action.
+        if getattr(self, '_crop_review_mode', 'filter') == 'bad':
+            is_handled = False
+        else:
+            is_handled = (entry['cls_id'] != target)
         try:
             if is_selected:
                 cell.configure(bg='#FFD166', borderwidth=3)
@@ -4162,9 +4751,13 @@ class YOLOLabelingTool:
         page = self._crop_review_page
         start = page * per_page
         end = min(start + per_page, total)
-        cls_name = self.class_info.get(self._crop_review_target, {}).get('name', '?')
+        if getattr(self, '_crop_review_mode', 'filter') == 'bad':
+            head = "Bad annotations (worst first)"
+        else:
+            cls_name = self.class_info.get(self._crop_review_target, {}).get('name', '?')
+            head = f"Class: {cls_name}"
         self._crop_review_title_var.set(
-            f"Class: {cls_name}   |   page {page + 1}/{total_pages}   "
+            f"{head}   |   page {page + 1}/{total_pages}   "
             f"|   showing {start + 1 if total else 0}–{end} of {total}"
         )
 
@@ -4278,58 +4871,67 @@ class YOLOLabelingTool:
             )
             return
 
-        # Only re-load if we're moving to a different image
-        if target_idx != self.current_image_index or self.current_image is None:
-            # Clear stale selection before load_image() — display_image()
-            # runs inside it and would use a now-invalid box index.
-            self.selected_box_index = None
-            self.selected_box_source = None
-            if self.selected_box_rect:
-                try:
-                    self.canvas.delete(self.selected_box_rect)
-                except tk.TclError:
-                    pass
-                self.selected_box_rect = None
-            self.current_image_index = target_idx
-            self.load_image()
+        # Defer the (potentially slow) load_image + highlight to after_idle so
+        # the click handler returns immediately. This keeps the review window
+        # responsive while the main window catches up; rapid clicks coalesce
+        # because each new click cancels the previous pending load.
+        prev = getattr(self, '_crop_review_jump_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
 
-        # Locate the matching label box. line_idx maps to label_boxes index for
-        # well-formed YOLO files (one valid line per row); fall back to a
-        # geometric match on bbox_norm if line_idx is out of range.
-        sel_idx = None
-        li = entry.get('line_idx')
-        if li is not None and 0 <= li < len(self.label_boxes):
-            sel_idx = li
-        if sel_idx is None and self.current_image is not None:
-            cx, cy, bw, bh = entry.get('bbox_norm', (0, 0, 0, 0))
-            img_h, img_w = self.current_image.shape[:2]
-            tx1 = int((cx - bw / 2) * img_w)
-            ty1 = int((cy - bh / 2) * img_h)
-            tx2 = int((cx + bw / 2) * img_w)
-            ty2 = int((cy + bh / 2) * img_h)
-            best_i, best_d = None, None
-            for i, (_c, x1, y1, x2, y2) in enumerate(self.label_boxes):
-                d = abs(x1 - tx1) + abs(y1 - ty1) + abs(x2 - tx2) + abs(y2 - ty2)
-                if best_d is None or d < best_d:
-                    best_d = d
-                    best_i = i
-            sel_idx = best_i
+        def _do_jump(target_idx=target_idx, entry=entry):
+            self._crop_review_jump_after = None
+            if target_idx != self.current_image_index or self.current_image is None:
+                # Clear stale selection before load_image() — display_image()
+                # runs inside it and would use a now-invalid box index.
+                self.selected_box_index = None
+                self.selected_box_source = None
+                if self.selected_box_rect:
+                    try:
+                        self.canvas.delete(self.selected_box_rect)
+                    except tk.TclError:
+                        pass
+                    self.selected_box_rect = None
+                self.current_image_index = target_idx
+                self.load_image()
 
-        if sel_idx is not None:
-            self.selected_box_index = sel_idx
-            self.selected_box_source = 'label'
-            self.highlight_selected_box()
+            sel_idx = None
+            li = entry.get('line_idx')
+            if li is not None and 0 <= li < len(self.label_boxes):
+                sel_idx = li
+            if sel_idx is None and self.current_image is not None:
+                cx, cy, bw, bh = entry.get('bbox_norm', (0, 0, 0, 0))
+                img_h, img_w = self.current_image.shape[:2]
+                tx1 = int((cx - bw / 2) * img_w)
+                ty1 = int((cy - bh / 2) * img_h)
+                tx2 = int((cx + bw / 2) * img_w)
+                ty2 = int((cy + bh / 2) * img_h)
+                best_i, best_d = None, None
+                for i, (_c, x1, y1, x2, y2) in enumerate(self.label_boxes):
+                    d = (abs(x1 - tx1) + abs(y1 - ty1)
+                         + abs(x2 - tx2) + abs(y2 - ty2))
+                    if best_d is None or d < best_d:
+                        best_d = d
+                        best_i = i
+                sel_idx = best_i
 
-        # Lift the main window so the user can see the change without
-        # losing the review window's hotkey focus.
+            if sel_idx is not None:
+                self.selected_box_index = sel_idx
+                self.selected_box_source = 'label'
+                self.highlight_selected_box()
+
+        self._crop_review_jump_after = self.root.after_idle(_do_jump)
+
+        # Lift the main window so the user can see the change. We do NOT
+        # also lift+focus the review window: forcing focus back triggers a
+        # ping-pong with some Linux WMs (Wayland/i3/etc.) and can wedge the
+        # event loop. The review window keeps focus because we don't ask
+        # for a change — the WM leaves it where it was.
         try:
             self.root.lift()
-        except tk.TclError:
-            pass
-        try:
-            if self._crop_review_window is not None:
-                self._crop_review_window.lift()
-                self._crop_review_window.focus_set()
         except tk.TclError:
             pass
 
@@ -4392,7 +4994,8 @@ class YOLOLabelingTool:
             self._crop_review_reassign(self._crop_review_selected, target)
 
     def _crop_review_delete_selected(self):
-        """Remove the selected crop's label line from disk."""
+        """Remove the selected crop's label line from disk AND from the main
+        window if it's currently showing the same image."""
         sel = self._crop_review_selected
         if sel is None or not (0 <= sel < len(self._crop_review_entries)):
             self._crop_review_status_var.set("Pick a crop first.")
@@ -4410,6 +5013,10 @@ class YOLOLabelingTool:
         self._crop_review_status_var.set(
             f"Deleted {deleted_path.name} #{deleted_idx + 1} ({cls_name})"
         )
+
+        # Propagate the delete to the main window if it shows this image.
+        self._crop_review_apply_delete_to_main(deleted_path, deleted_idx)
+
         # Fix up line indices: every remaining entry from the *same* file with
         # a higher line index must shift up by 1 because we deleted a line above.
         for e in self._crop_review_entries:
@@ -4420,15 +5027,80 @@ class YOLOLabelingTool:
         # Drop the thumbnail from cache before the entry vanishes
         self._crop_review_thumb_cache.pop(id(entry), None)
         self._crop_review_entries.pop(sel)
-        self._crop_review_selected = None
-        # Delete still re-renders (entries shift), but the persistent caches
-        # mean image reads are reused and only the new gap-filler needs work.
-        self._crop_review_render()
+        # Keep selection anchored to the same on-screen slot when possible.
+        if sel < len(self._crop_review_entries):
+            self._crop_review_selected = sel
+        elif self._crop_review_entries:
+            self._crop_review_selected = len(self._crop_review_entries) - 1
+        else:
+            self._crop_review_selected = None
+        # Coalesce render via after_idle so mashing Delete doesn't pile up
+        # render passes (same pattern used by reassign).
+        prev = getattr(self, '_crop_review_render_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+        def _do_render():
+            self._crop_review_render_after = None
+            if self._crop_review_window is not None:
+                self._crop_review_render()
+        self._crop_review_render_after = self.root.after_idle(_do_render)
+
+    def _crop_review_apply_delete_to_main(self, deleted_path, deleted_idx):
+        """If the main window currently shows ``deleted_path``, remove the box
+        at ``deleted_idx`` from ``label_boxes``, fix up the selection index,
+        invalidate the labels cache, and schedule a coalesced redraw."""
+        if not self.current_image_path:
+            return
+        if str(self.current_image_path) != str(deleted_path):
+            return
+        if not (0 <= deleted_idx < len(self.label_boxes)):
+            return
+        # Drop the entry; subsequent boxes shift down by one index.
+        del self.label_boxes[deleted_idx]
+        # Fix up selection on the main canvas.
+        if self.selected_box_source == 'label':
+            if self.selected_box_index == deleted_idx:
+                # The selected box was the one we just removed.
+                self.selected_box_index = None
+                self.selected_box_source = None
+                if self.selected_box_rect:
+                    try:
+                        self.canvas.delete(self.selected_box_rect)
+                    except tk.TclError:
+                        pass
+                    self.selected_box_rect = None
+            elif (self.selected_box_index is not None
+                  and self.selected_box_index > deleted_idx):
+                # Selected box was below the deleted one; it shifted up by 1.
+                self.selected_box_index -= 1
+        # Drop any stale labels cache entry for this image.
+        try:
+            if hasattr(self, 'labels_cache'):
+                self.labels_cache.pop(str(self.current_image_path), None)
+        except Exception:
+            pass
+        # Coalesce the main-window redraw (same scheme as reassign).
+        prev = getattr(self, '_crop_review_main_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+        def _do_main_redraw():
+            self._crop_review_main_after = None
+            self.display_image()
+            if (self.selected_box_source == 'label'
+                    and self.selected_box_index is not None):
+                self.highlight_selected_box()
+        self._crop_review_main_after = self.root.after_idle(_do_main_redraw)
 
     def _crop_review_reassign(self, entry_idx, new_class_id):
-        """Reassign one crop's class. Updates the file and the single affected
-        cell in place — the grid is NOT torn down and rebuilt, so the operation
-        feels instantaneous even on dense grids."""
+        """Reassign one crop's class. Updates the label file, removes the
+        crop from the review grid immediately, and — if the main window is
+        showing this entry's source image — applies the change there too."""
         if not (0 <= entry_idx < len(self._crop_review_entries)):
             return
         entry = self._crop_review_entries[entry_idx]
@@ -4449,14 +5121,73 @@ class YOLOLabelingTool:
             f"Reassigned {entry['img_path'].name} #{entry['line_idx'] + 1}: "
             f"{old_name} → {new_name}"
         )
-        # In-place refresh of just this cell. NO grid teardown.
-        cell, _cnv, caption_lbl = self._crop_review_find_cell_for(entry)
-        if caption_lbl is not None:
-            caption_lbl.config(text=self._crop_review_caption_text(entry))
-        if cell is not None:
-            self._crop_review_apply_cell_style(cell, entry)
-        # Auto-advance selection so the user can keep tapping hotkeys.
-        self._crop_review_advance_selection()
+
+        # Apply the in-memory change to main-window state synchronously (cheap
+        # — just a tuple replacement). The actual canvas redraw is deferred so
+        # rapid hotkey tapping doesn't queue multiple display_image calls.
+        self._crop_review_apply_change_to_main(entry, new_class_id)
+
+        # Drop the entry from the review list. The next entry will shift up
+        # to take this slot; the user keeps tapping without losing position.
+        self._crop_review_thumb_cache.pop(id(entry), None)
+        del self._crop_review_entries[entry_idx]
+        # Keep selection anchored to the same on-screen slot when possible.
+        if entry_idx < len(self._crop_review_entries):
+            self._crop_review_selected = entry_idx
+        elif self._crop_review_entries:
+            self._crop_review_selected = len(self._crop_review_entries) - 1
+        else:
+            self._crop_review_selected = None
+        # Coalesce render via after_idle: if the user mashes hotkeys faster
+        # than we can draw, only the most-recent state is rendered. Cancel
+        # any prior pending render so we don't pile up.
+        prev = getattr(self, '_crop_review_render_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+        def _do_render():
+            self._crop_review_render_after = None
+            if self._crop_review_window is not None:
+                self._crop_review_render()
+        self._crop_review_render_after = self.root.after_idle(_do_render)
+
+    def _crop_review_apply_change_to_main(self, entry, new_class_id):
+        """If the main window currently shows the same image as the reassigned
+        crop, mutate its in-memory ``label_boxes``. The canvas redraw is
+        deferred via ``after_idle`` so rapid reassigns coalesce into a single
+        repaint instead of one per keystroke."""
+        if not self.current_image_path:
+            return
+        if str(self.current_image_path) != str(entry['img_path']):
+            return
+        li = entry['line_idx']
+        if not (0 <= li < len(self.label_boxes)):
+            return
+        # label_boxes entries are (cls_id, x1, y1, x2, y2); preserve geometry.
+        b = self.label_boxes[li]
+        self.label_boxes[li] = (new_class_id,) + tuple(b[1:])
+        try:
+            if hasattr(self, 'labels_cache'):
+                self.labels_cache.pop(str(self.current_image_path), None)
+        except Exception:
+            pass
+        # Coalesce the main-window redraw — multiple in-flight reassigns
+        # collapse to a single repaint on the next idle.
+        prev = getattr(self, '_crop_review_main_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+        def _do_main_redraw(li=li):
+            self._crop_review_main_after = None
+            self.display_image()
+            if (self.selected_box_source == 'label'
+                    and self.selected_box_index == li):
+                self.highlight_selected_box()
+        self._crop_review_main_after = self.root.after_idle(_do_main_redraw)
 
     def jump_to_image(self):
         """Jump to a specific image number"""
@@ -4777,21 +5508,30 @@ class YOLOLabelingTool:
                         str(k): int(v) for k, v in raw_hotkeys.items()
                         if str(k) in '0123456789'
                     }
+                    # Optional 'class_groups' map: {"bus": ["bus_m", "bus_l", ...], ...}
+                    # Used by Find Bad Annotations to treat all classes in a
+                    # group as one when checking class match.
+                    self.class_groups = config.get('class_groups', {}) or {}
             else:
                 # Create default config if file doesn't exist
                 self.class_info = {
                     0: {"name": "Default", "color": [0, 0, 255]}
                 }
+                self.class_groups = {}
                 self.save_class_config()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load class configuration: {str(e)}")
             self.class_info = {
                 0: {"name": "Default", "color": [0, 0, 255]}
             }
+            self.class_groups = {}
         # Drop any saved bindings for classes that no longer exist, then fill
         # in defaults so 0-9 always have something sensible mapped.
         self._cleanup_hotkeys()
         self._init_default_hotkeys()
+        # Re-derive the class-id -> group-key lookup from the (possibly fresh)
+        # class_info / class_groups state.
+        self._rebuild_class_group_lookup()
 
     def load_classes_from_yaml(self, yaml_path):
         """Load class names and dataset paths from YOLO data.yaml file"""
@@ -5149,11 +5889,48 @@ class YOLOLabelingTool:
             config = {
                 'classes': {str(k): v for k, v in self.class_info.items()},
                 'hotkeys': dict(self.class_hotkeys),
+                'class_groups': getattr(self, 'class_groups', {}) or {},
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save class configuration: {str(e)}")
+
+    def _rebuild_class_group_lookup(self):
+        """Derive ``self._class_to_group`` from ``self.class_groups``.
+
+        ``self._class_to_group`` is a {class_id: group_key} dict used at
+        comparison time. Classes that don't belong to any group are absent
+        from the dict; comparisons fall back to exact-class match for them."""
+        name_to_id = {info['name']: cid for cid, info in self.class_info.items()}
+        self._class_to_group = {}
+        groups = getattr(self, 'class_groups', {}) or {}
+        for group_key, members in groups.items():
+            if not isinstance(members, (list, tuple)):
+                continue
+            for m in members:
+                # Each member may be a class name (str) or an int id
+                if isinstance(m, str):
+                    cid = name_to_id.get(m)
+                else:
+                    try:
+                        cid = int(m)
+                    except (TypeError, ValueError):
+                        cid = None
+                if cid is None:
+                    continue
+                self._class_to_group[cid] = group_key
+
+    def _classes_equivalent(self, cls_a, cls_b):
+        """Return True when two class ids should be treated as the same class
+        for bad-annotation analysis. Same id always matches; otherwise both
+        must belong to the same group key in self.class_groups."""
+        if cls_a == cls_b:
+            return True
+        gmap = getattr(self, '_class_to_group', None) or {}
+        ga = gmap.get(int(cls_a))
+        gb = gmap.get(int(cls_b))
+        return ga is not None and ga == gb
 
     def build_label_cache(self):
         """Build a cache of label data and image dimensions to speed up filtering"""

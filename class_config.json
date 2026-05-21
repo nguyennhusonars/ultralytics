@@ -17,7 +17,7 @@
             ]
         },
         "2": {
-            "name": "bus",
+            "name": "bus_m",
             "color": [
                 0,
                 204,
@@ -25,7 +25,7 @@
             ]
         },
         "3": {
-            "name": "car",
+            "name": "bus_l",
             "color": [
                 229,
                 50,
@@ -33,7 +33,7 @@
             ]
         },
         "4": {
-            "name": "human",
+            "name": "bus_xl",
             "color": [
                 173,
                 204,
@@ -41,7 +41,7 @@
             ]
         },
         "5": {
-            "name": "motorbike",
+            "name": "hatchback",
             "color": [
                 0,
                 137,
@@ -49,7 +49,7 @@
             ]
         },
         "6": {
-            "name": "truck",
+            "name": "sedan",
             "color": [
                 204,
                 40,
@@ -65,7 +65,7 @@
             ]
         },
         "8": {
-            "name": "truck_m",
+            "name": "pickup",
             "color": [
                 68,
                 0,
@@ -73,7 +73,7 @@
             ]
         },
         "9": {
-            "name": "bus_l",
+            "name": "human",
             "color": [
                 255,
                 178,
@@ -81,7 +81,7 @@
             ]
         },
         "10": {
-            "name": "truck_l",
+            "name": "twowheels_standalone",
             "color": [
                 20,
                 204,
@@ -89,7 +89,7 @@
             ]
         },
         "11": {
-            "name": "truck_xl",
+            "name": "bike_with_driver",
             "color": [
                 255,
                 0,
@@ -97,7 +97,7 @@
             ]
         },
         "12": {
-            "name": "bus_m",
+            "name": "motorbike_with_driver",
             "color": [
                 122,
                 204,
@@ -105,7 +105,7 @@
             ]
         },
         "13": {
-            "name": "sedan",
+            "name": "truck_m",
             "color": [
                 25,
                 72,
@@ -113,7 +113,7 @@
             ]
         },
         "14": {
-            "name": "hatchback",
+            "name": "truck_l",
             "color": [
                 204,
                 17,
@@ -121,64 +121,20 @@
             ]
         },
         "15": {
-            "name": "pickup",
+            "name": "truck_xl",
             "color": [
                 50,
                 255,
                 127
             ]
-        },
-        "16": {
-            "name": "bike",
-            "color": [
-                143,
-                20,
-                204
-            ]
-        },
-        "17": {
-            "name": "bus_xl",
-            "color": [
-                255,
-                244,
-                0
-            ]
-        },
-        "18": {
-            "name": "twowheels_standalone",
-            "color": [
-                40,
-                162,
-                204
-            ]
-        },
-        "19": {
-            "name": "motorbike_with_driver",
-            "color": [
-                255,
-                25,
-                130
-            ]
-        },
-        "20": {
-            "name": "bike_with_driver",
-            "color": [
-                33,
-                204,
-                0
-            ]
         }
     },
     "hotkeys": {
-        "1": 19,
-        "2": 20,
-        "3": 2,
-        "4": 3,
         "5": 4,
-        "6": 5,
-        "7": 6,
-        "8": 7,
-        "9": 8,
-        "0": 18
+        "0": 5,
+        "1": 6,
+        "2": 7,
+        "3": 3,
+        "4": 13
     }
 }
