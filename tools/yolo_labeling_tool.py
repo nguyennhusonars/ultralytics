@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import json
 import random
+import re
 import argparse
 import time
 import yaml
@@ -157,9 +158,10 @@ class YOLOLabelingTool:
         self._crop_review_canvases = []         # [(cell_frame, canvas, caption_lbl, entry), ...]
         self._crop_review_dirty_paths = set()   # which image paths got modified
         # Persistent caches so re-renders are near-instant:
-        self._crop_review_thumb_cache = {}      # id(entry) -> PhotoImage
+        self._crop_review_thumb_cache = {}      # id(entry) -> PhotoImage (LRU)
+        self._crop_review_thumb_cache_max = 256  # bounded so long sessions don't bloat
         self._crop_review_img_cache = {}        # path-str -> cv2 image (insertion-order LRU)
-        self._crop_review_img_cache_max = 32
+        self._crop_review_img_cache_max = 32    # raw frames are big (~10–50MB each); keep modest
 
         # Undo / redo (per-image)
         self.history_undo = []
@@ -169,6 +171,23 @@ class YOLOLabelingTool:
         # Auto-fit on new image load
         self.auto_fit_on_load = True
         self._initial_fit_pending = False
+
+        # Session activity tracking (this-run-only). Populated by the
+        # _session_record_* hooks; surfaced in the status bar and the
+        # session-stats dialog.
+        self._session_start_time = time.time()
+        self._session_counts = {
+            'created':           {'total': 0, 'by_class': {}},
+            'deleted':           {'total': 0, 'by_class': {}},
+            'class_reassigned':  {'total': 0, 'by_class': {}},  # keyed by new class
+            'geometry_modified': {'total': 0, 'by_class': {}},
+        }
+        self._session_images_touched = set()
+        # Timeline + per-image counters drive pace, sparkline, and hot-list
+        # insights. Cap the action log so long sessions don't bloat memory.
+        from collections import deque
+        self._session_action_log = deque(maxlen=20000)  # (ts, kind, cls_id)
+        self._session_per_image = {}                     # {img_path_str: count}
 
         # Scroll-triggered re-render id (for debounced redraw via after_idle)
         self._scroll_redraw_id = None
@@ -557,6 +576,7 @@ class YOLOLabelingTool:
                 self.update_status("Resize too small — reverted")
             else:
                 boxes[self._resize_index] = (cls_id, nx1, ny1, nx2, ny2)
+                self._session_record_geometry_modified(cls_id, self.current_image_path)
         if self.current_rect:
             self.canvas.delete(self.current_rect)
             self.current_rect = None
@@ -957,6 +977,14 @@ class YOLOLabelingTool:
         # missing predictions for hand-review (uses class_groups if set).
         ttk.Button(analyze_btn_frame, text="🔍 Find Bad Annotations…",
                   command=self.show_find_bad_dialog).pack(fill=tk.X, pady=2)
+        # Export every label box of the currently filtered images as crops
+        # in a folder structure that a Qwen-VL verifier can consume.
+        ttk.Button(analyze_btn_frame, text="📤 Export Crops for Qwen…",
+                  command=self.show_export_crops_dialog).pack(fill=tk.X, pady=2)
+        # Ingest Qwen's verification.json and open a review window showing
+        # disagreements between GT and the model's verdict.
+        ttk.Button(analyze_btn_frame, text="🤖 Import Qwen Verification…",
+                  command=self.show_import_qwen_dialog).pack(fill=tk.X, pady=2)
         
         # Analysis options
         options_frame = ttk.LabelFrame(self.analyze_tab, text="Analysis Options")
@@ -1012,10 +1040,21 @@ class YOLOLabelingTool:
         self.canvas_hscroll.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Status bar
+        # Status bar — split into a left "action message" label and a right
+        # "session" mini-summary that stays visible regardless of transient
+        # messages. Clicking the session label opens the full stats dialog.
+        status_frame = ttk.Frame(self.root, relief=tk.SUNKEN)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        self.session_var = tk.StringVar(value="")
+        self.session_label = ttk.Label(status_frame, textvariable=self.session_var,
+                                       cursor='hand2', padding=(8, 0))
+        self.session_label.pack(side=tk.RIGHT)
+        self.session_label.bind('<Button-1>', lambda e: self._session_show_dialog())
         self.status_var = tk.StringVar()
-        self.status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN)
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.status_bar = ttk.Label(status_frame, textvariable=self.status_var, anchor='w')
+        self.status_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Kick off the session label render + periodic elapsed-time refresh.
+        self._session_refresh_label()
         
         # Setup class buttons
         self.setup_class_buttons()
@@ -1894,16 +1933,19 @@ class YOLOLabelingTool:
             # Snapshot state before editing
             self._push_history()
             # Update existing box
+            _kept_cls = self.user_boxes[self.selected_box_index][0]
             self.user_boxes[self.selected_box_index] = (
-                self.user_boxes[self.selected_box_index][0],  # Keep the same class
+                _kept_cls,  # Keep the same class
                 x1, y1, x2, y2
             )
             self.editing_box = False
+            self._session_record_geometry_modified(_kept_cls, self.current_image_path)
         else:
             # Snapshot state before adding new box
             self._push_history()
             # Add new box
             self.user_boxes.append((self.current_class, x1, y1, x2, y2))
+            self._session_record_created(self.current_class, self.current_image_path)
 
         self.drawing = False
 
@@ -2211,12 +2253,14 @@ class YOLOLabelingTool:
             # Snapshot state before deletion
             self._push_history()
             if self.selected_box_source == 'user':
-                # Remove the box from user_boxes
+                _cls = self.user_boxes[self.selected_box_index][0]
                 del self.user_boxes[self.selected_box_index]
+                self._session_record_deleted(_cls, self.current_image_path)
                 self.update_status("User box deleted")
             elif self.selected_box_source == 'label':
-                # Remove the box from label_boxes
+                _cls = self.label_boxes[self.selected_box_index][0]
                 del self.label_boxes[self.selected_box_index]
+                self._session_record_deleted(_cls, self.current_image_path)
                 self.update_status("Label box deleted")
             
             # Clear selection
@@ -2356,6 +2400,338 @@ class YOLOLabelingTool:
             if self.pretrained_model:
                 status.append("Model loaded")
             self.status_var.set(" | ".join(status))
+
+    # ─── Session activity tracking ────────────────────────────────────────
+    # All record_* hooks are no-throw: if any field is unexpected they just
+    # skip rather than crash the labeling action that called them.
+
+    def _session_record(self, kind, cls_id, img_path):
+        try:
+            bucket = self._session_counts.get(kind)
+            if bucket is None:
+                return
+            bucket['total'] += 1
+            cls_id = int(cls_id) if cls_id is not None else -1
+            bucket['by_class'][cls_id] = bucket['by_class'].get(cls_id, 0) + 1
+            self._session_action_log.append((time.time(), kind, cls_id))
+            if img_path is not None:
+                ip = str(img_path)
+                self._session_images_touched.add(ip)
+                self._session_per_image[ip] = self._session_per_image.get(ip, 0) + 1
+        except Exception:
+            pass
+        # Coalesce frequent updates — the status label only needs the new
+        # numbers once Tk returns to idle.
+        try:
+            self.root.after_idle(self._session_refresh_label)
+        except Exception:
+            pass
+
+    def _session_record_created(self, cls_id, img_path):
+        self._session_record('created', cls_id, img_path)
+
+    def _session_record_deleted(self, cls_id, img_path):
+        self._session_record('deleted', cls_id, img_path)
+
+    def _session_record_reassigned(self, new_cls_id, img_path):
+        # We index by destination class — that's what the user typically
+        # wants to see ("how many things did I correct INTO class X").
+        self._session_record('class_reassigned', new_cls_id, img_path)
+
+    def _session_record_geometry_modified(self, cls_id, img_path):
+        self._session_record('geometry_modified', cls_id, img_path)
+
+    def _session_format_elapsed(self):
+        secs = max(0, int(time.time() - self._session_start_time))
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h:d}h{m:02d}m"
+        if m:
+            return f"{m:d}m{s:02d}s"
+        return f"{s:d}s"
+
+    @staticmethod
+    def _session_format_duration(secs):
+        secs = max(0, int(secs))
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h:d}h{m:02d}m"
+        if m:
+            return f"{m:d}m{s:02d}s"
+        return f"{s:d}s"
+
+    def _session_pace_stats(self):
+        """Derive throughput insights from the action log. Returns a dict
+        with overall, recent-window, and idle-aware-active rates so the
+        dialog can show whether the user has slowed down lately."""
+        now = time.time()
+        elapsed = max(1.0, now - self._session_start_time)
+        log = list(self._session_action_log)
+        n = len(log)
+
+        # Recent rate (last 5 minutes) — normalized to per-minute even if
+        # the session is shorter than the window.
+        window = 300.0
+        cutoff = now - window
+        recent_n = sum(1 for t, _, _ in log if t >= cutoff)
+        recent_window = min(window, elapsed)
+        recent_apm = recent_n * 60.0 / max(1.0, recent_window)
+
+        # Idle-aware rate — gaps > 60s count as idle. This filters out
+        # AFK time so the "active" pace reflects head-down labeling.
+        idle_threshold = 60.0
+        prev_t = self._session_start_time
+        idle = 0.0
+        for t, _, _ in log:
+            gap = t - prev_t
+            if gap > idle_threshold:
+                idle += gap - idle_threshold
+            prev_t = t
+        # Trailing idle (from last action to now)
+        trailing_gap = now - prev_t
+        if trailing_gap > idle_threshold:
+            idle += trailing_gap - idle_threshold
+        active = max(1.0, elapsed - idle)
+
+        return {
+            'n': n,
+            'elapsed': elapsed,
+            'idle': idle,
+            'active': active,
+            'apm_overall': n * 60.0 / elapsed,
+            'apm_recent':  recent_apm,
+            'apm_active':  n * 60.0 / active,
+            'idle_pct':    100.0 * idle / elapsed,
+            'avg_secs':    elapsed / max(1, n),
+        }
+
+    def _session_timeline_sparkline(self, n_buckets=12, bucket_secs=300):
+        """Compact unicode sparkline of action counts in `n_buckets`
+        rolling windows ending now. Default = last 60 min in 5-min steps.
+        Returns (sparkline_str, max_per_bucket)."""
+        now = time.time()
+        buckets = [0] * n_buckets
+        for t, _, _ in self._session_action_log:
+            age = now - t
+            if age < 0:
+                continue
+            idx = int(age // bucket_secs)
+            if 0 <= idx < n_buckets:
+                buckets[n_buckets - 1 - idx] += 1   # most-recent on the right
+        peak = max(buckets) if buckets else 0
+        if peak == 0:
+            return ("·" * n_buckets, 0)
+        bars = "▁▂▃▄▅▆▇█"
+        out = []
+        for v in buckets:
+            if v == 0:
+                out.append(" ")
+            else:
+                step = int(round((v / peak) * (len(bars) - 1)))
+                out.append(bars[max(0, min(len(bars) - 1, step))])
+        return ("".join(out), peak)
+
+    def _session_top_images(self, n=5):
+        items = sorted(self._session_per_image.items(),
+                       key=lambda kv: -kv[1])
+        return items[:n]
+
+    def _session_action_mix(self):
+        """Returns list of (label, count, pct) for the four kinds."""
+        c = self._session_counts
+        order = (('created',           'Created'),
+                 ('deleted',           'Deleted'),
+                 ('class_reassigned',  'Reassigned'),
+                 ('geometry_modified', 'Moved/Resized'))
+        total = sum(c[k]['total'] for k, _ in order)
+        out = []
+        for k, label in order:
+            n = c[k]['total']
+            pct = 100.0 * n / total if total else 0.0
+            out.append((label, n, pct))
+        return out
+
+    def _session_refresh_label(self):
+        """Render the right-side status mini and re-schedule itself so the
+        elapsed time keeps ticking even when no action is taken."""
+        if not hasattr(self, 'session_var'):
+            return
+        c = self._session_counts
+        pace = self._session_pace_stats()
+        self.session_var.set(
+            f"⏱ {self._session_format_elapsed()}  "
+            f"· {pace['apm_recent']:.1f}/min  "
+            f"│ +{c['created']['total']} "
+            f"−{c['deleted']['total']} "
+            f"⟳{c['class_reassigned']['total'] + c['geometry_modified']['total']}  "
+            f"│ click for details"
+        )
+        # Re-arm only if the root is still alive. Use 10s — coarser than 1s
+        # so we don't burn cycles, finer than a minute so elapsed feels live.
+        try:
+            existing = getattr(self, '_session_refresh_after', None)
+            if existing is not None:
+                self.root.after_cancel(existing)
+        except tk.TclError:
+            pass
+        try:
+            self._session_refresh_after = self.root.after(10_000, self._session_refresh_label)
+        except tk.TclError:
+            pass
+
+    def _session_show_dialog(self):
+        """Pop a dialog with the full session breakdown: totals, pace,
+        per-class, hot images, and a recent-activity sparkline."""
+        win = tk.Toplevel(self.root)
+        win.title("Session stats")
+        win.geometry("620x720")
+
+        top = ttk.Frame(win, padding=8)
+        top.pack(fill=tk.X)
+        start = time.strftime('%Y-%m-%d %H:%M:%S',
+                              time.localtime(self._session_start_time))
+        ttk.Label(top, text=f"Started: {start}",
+                  font=('TkDefaultFont', 10)).pack(anchor='w')
+        ttk.Label(top, text=f"Elapsed: {self._session_format_elapsed()}",
+                  font=('TkDefaultFont', 10)).pack(anchor='w')
+        ttk.Label(top, text=f"Images touched: {len(self._session_images_touched)}",
+                  font=('TkDefaultFont', 10)).pack(anchor='w')
+
+        ttk.Separator(win, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
+
+        # ── Pace section ────────────────────────────────────────────────
+        pace = self._session_pace_stats()
+        psec = ttk.Frame(win, padding=8)
+        psec.pack(fill=tk.X)
+        ttk.Label(psec, text="Pace",
+                  font=('TkDefaultFont', 10, 'bold')).pack(anchor='w')
+        ttk.Label(psec, text=(
+            f"  Overall: {pace['apm_overall']:.2f} actions/min   "
+            f"({pace['n']} actions in {self._session_format_duration(pace['elapsed'])})"
+        )).pack(anchor='w')
+        ttk.Label(psec, text=(
+            f"  Active rate (idle ≥60s removed): {pace['apm_active']:.2f}/min   "
+            f"— active {self._session_format_duration(pace['active'])}, "
+            f"idle {self._session_format_duration(pace['idle'])} "
+            f"({pace['idle_pct']:.0f}%)"
+        )).pack(anchor='w')
+        ttk.Label(psec, text=(
+            f"  Last 5 min: {pace['apm_recent']:.2f}/min   "
+            f"Avg seconds per action: {pace['avg_secs']:.1f}s"
+        )).pack(anchor='w')
+
+        # Sparkline — last 60 min, 5-min buckets
+        spark, peak = self._session_timeline_sparkline(n_buckets=12,
+                                                       bucket_secs=300)
+        ttk.Label(psec, text=(
+            f"  Last hour ({len(spark)}×5min): [{spark}]   peak={peak}"
+        ), font=('TkFixedFont', 10)).pack(anchor='w', pady=(4, 0))
+
+        ttk.Separator(win, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
+
+        # ── Totals + action mix ─────────────────────────────────────────
+        c = self._session_counts
+        totals = ttk.Frame(win, padding=8)
+        totals.pack(fill=tk.X)
+        ttk.Label(totals, text="Totals",
+                  font=('TkDefaultFont', 10, 'bold')).pack(anchor='w')
+        mix = self._session_action_mix()
+        for label, n, pct in mix:
+            # Tiny inline bar — width proportional to share of total.
+            bar = '█' * int(round(pct / 5)) if pct > 0 else ''
+            ttk.Label(
+                totals,
+                text=f"  {label:<14}: {n:>5}   {pct:5.1f}%  {bar}",
+                font=('TkFixedFont', 10),
+            ).pack(anchor='w')
+
+        ttk.Separator(win, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
+
+        # Per-class breakdown table
+        body = ttk.Frame(win, padding=(8, 0, 8, 8))
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text="Per class",
+                  font=('TkDefaultFont', 10, 'bold')).pack(anchor='w')
+
+        cols = ('class', 'created', 'deleted', 'reassigned_to', 'moved')
+        tree = ttk.Treeview(body, columns=cols, show='headings', height=14)
+        tree.heading('class', text='Class')
+        tree.heading('created', text='Created')
+        tree.heading('deleted', text='Deleted')
+        tree.heading('reassigned_to', text='→ Class')
+        tree.heading('moved', text='Moved/Resized')
+        tree.column('class', width=160, anchor='w')
+        tree.column('created', width=80, anchor='e')
+        tree.column('deleted', width=80, anchor='e')
+        tree.column('reassigned_to', width=80, anchor='e')
+        tree.column('moved', width=110, anchor='e')
+        vsb = ttk.Scrollbar(body, orient='vertical', command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Build rows: union of class ids that show up in any bucket
+        seen = set()
+        for kind in c:
+            seen.update(c[kind]['by_class'].keys())
+        if not seen:
+            tree.insert('', 'end', values=('(no activity yet)', '', '', '', ''))
+        else:
+            rows = []
+            for cls_id in sorted(seen, key=lambda x: (x < 0, x)):
+                name = (self.class_info.get(cls_id, {}).get('name', f'?{cls_id}')
+                        if cls_id >= 0 else 'unknown')
+                rows.append((
+                    cls_id,
+                    f"{cls_id}: {name}" if cls_id >= 0 else name,
+                    c['created']['by_class'].get(cls_id, 0),
+                    c['deleted']['by_class'].get(cls_id, 0),
+                    c['class_reassigned']['by_class'].get(cls_id, 0),
+                    c['geometry_modified']['by_class'].get(cls_id, 0),
+                ))
+            # Sort by total activity (desc) so the busiest classes float up
+            rows.sort(key=lambda r: -(r[2] + r[3] + r[4] + r[5]))
+            for _id, name, cr, de, re_, mo in rows:
+                tree.insert('', 'end', values=(name, cr, de, re_, mo))
+
+        # ── Hot images ──────────────────────────────────────────────────
+        ttk.Separator(win, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
+        hot = ttk.Frame(win, padding=8)
+        hot.pack(fill=tk.X)
+        ttk.Label(hot, text="Most touched images",
+                  font=('TkDefaultFont', 10, 'bold')).pack(anchor='w')
+        top_imgs = self._session_top_images(n=5)
+        if not top_imgs:
+            ttk.Label(hot, text="  (none yet)",
+                      font=('TkFixedFont', 10)).pack(anchor='w')
+        else:
+            for ip, n in top_imgs:
+                name = Path(ip).name
+                ttk.Label(hot, text=f"  {n:>3}×  {name}",
+                          font=('TkFixedFont', 10)).pack(anchor='w')
+
+        # Footer
+        foot = ttk.Frame(win, padding=8)
+        foot.pack(fill=tk.X)
+        ttk.Button(foot, text="Close", command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(foot, text="Reset counters",
+                   command=lambda: (self._session_reset(), win.destroy(),
+                                    self._session_show_dialog())
+                   ).pack(side=tk.RIGHT, padx=(0, 6))
+        win.bind('<Escape>', lambda e: win.destroy())
+
+    def _session_reset(self):
+        """Zero all counters and reset the start time. Confirmation-free
+        because it's bound to an explicit button click."""
+        self._session_start_time = time.time()
+        for k in self._session_counts:
+            self._session_counts[k] = {'total': 0, 'by_class': {}}
+        self._session_images_touched = set()
+        self._session_action_log.clear()
+        self._session_per_image = {}
+        self._session_refresh_label()
         
     def toggle_predictions(self):
         """Toggle visibility of model predictions"""
@@ -3305,6 +3681,7 @@ class YOLOLabelingTool:
         else:  # label
             _, x1, y1, x2, y2 = self.label_boxes[self.selected_box_index]
             self.label_boxes[self.selected_box_index] = (new_class_id, x1, y1, x2, y2)
+        self._session_record_reassigned(new_class_id, self.current_image_path)
 
         if not keep_selection:
             self.clear_selections()
@@ -3863,6 +4240,253 @@ class YOLOLabelingTool:
             side=tk.RIGHT, padx=4
         )
 
+    def show_export_crops_dialog(self):
+        """Export every GT box from the currently filtered images as a crop
+        file under ``<output>/<class_name>/<...>.jpg``. Also writes a sidecar
+        ``manifest.json`` that maps each exported filename back to its origin
+        (img_path, line_idx, cls_id, bbox_norm). The Qwen verifier reads the
+        class folders; the labeling tool's importer reads the manifest."""
+        if not self.filtered_image_paths:
+            messagebox.showinfo("No images", "Load an image folder first.")
+            return
+        from tkinter import filedialog
+        out_dir = filedialog.askdirectory(
+            title="Choose output folder for crops + manifest"
+        )
+        if not out_dir:
+            return
+        out_dir = Path(out_dir)
+        win = tk.Toplevel(self.root)
+        win.title("Export Crops")
+        win.geometry("400x200")
+        win.transient(self.root)
+        msg = tk.StringVar(value="Preparing…")
+        ttk.Label(win, textvariable=msg, wraplength=380, justify=tk.LEFT).pack(
+            padx=12, pady=8
+        )
+        prog = ttk.Progressbar(win, mode='determinate', length=360)
+        prog.pack(padx=12, pady=4)
+        done_btn = ttk.Button(win, text="Close", command=win.destroy,
+                              state=tk.DISABLED)
+        done_btn.pack(pady=8)
+        win.update_idletasks()
+
+        manifest = {
+            "exported_from": str(self.image_folder) if hasattr(self, 'image_folder') else "",
+            "class_names": {str(cid): info['name']
+                            for cid, info in self.class_info.items()},
+            "entries": [],
+        }
+        n_exported = 0
+        n_skipped = 0
+        total = len(self.filtered_image_paths)
+        prog['maximum'] = total
+
+        def _safe(name):
+            return re.sub(r'[^A-Za-z0-9._-]', '_', str(name))
+
+        for i, img_path in enumerate(self.filtered_image_paths):
+            try:
+                img = cv2.imread(str(img_path))
+            except Exception:
+                img = None
+            if img is None:
+                n_skipped += 1
+                prog['value'] = i + 1
+                if i % 5 == 0:
+                    msg.set(f"{i + 1}/{total} images — exported {n_exported}, "
+                            f"skipped {n_skipped}")
+                    win.update_idletasks()
+                continue
+            ih, iw = img.shape[:2]
+            lf = self._find_label_file_for(img_path)
+            if lf is None or not lf.exists():
+                prog['value'] = i + 1
+                continue
+            try:
+                lines = lf.read_text().splitlines()
+            except (IOError, OSError):
+                continue
+            for li, line in enumerate(lines):
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                try:
+                    cls_id = int(float(parts[0]))
+                    cx, cy, bw, bh = map(float, parts[1:5])
+                except ValueError:
+                    continue
+                cls_name = self.class_info.get(cls_id, {}).get('name')
+                if not cls_name:
+                    n_skipped += 1
+                    continue
+                # Crop in pixel space, clipped to image
+                x1 = max(0, int((cx - bw / 2) * iw))
+                y1 = max(0, int((cy - bh / 2) * ih))
+                x2 = min(iw, int((cx + bw / 2) * iw))
+                y2 = min(ih, int((cy + bh / 2) * ih))
+                if x2 <= x1 or y2 <= y1:
+                    n_skipped += 1
+                    continue
+                crop = img[y1:y2, x1:x2]
+                cls_dir = out_dir / _safe(cls_name)
+                cls_dir.mkdir(parents=True, exist_ok=True)
+                # Use a deterministic, collision-resistant crop filename.
+                stem = _safe(Path(img_path).stem)
+                crop_name = f"{stem}__line{li:04d}.jpg"
+                crop_path = cls_dir / crop_name
+                try:
+                    cv2.imwrite(str(crop_path), crop)
+                except Exception:
+                    n_skipped += 1
+                    continue
+                manifest["entries"].append({
+                    "filename": crop_path.relative_to(out_dir).as_posix(),
+                    "img_path": str(img_path),
+                    "line_idx": li,
+                    "cls_id": cls_id,
+                    "bbox_norm": [cx, cy, bw, bh],
+                })
+                n_exported += 1
+            prog['value'] = i + 1
+            if i % 5 == 0:
+                msg.set(f"{i + 1}/{total} images — exported {n_exported}, "
+                        f"skipped {n_skipped}")
+                win.update_idletasks()
+
+        try:
+            (out_dir / "manifest.json").write_text(
+                json.dumps(manifest, indent=2)
+            )
+        except IOError as e:
+            messagebox.showerror("Export failed",
+                                 f"Could not write manifest.json: {e}")
+            win.destroy()
+            return
+        msg.set(
+            f"Done. Exported {n_exported} crops, skipped {n_skipped}. "
+            f"Manifest at {out_dir / 'manifest.json'}.\n\n"
+            f"Next: point qwen3_class_verify.py's IMAGE_FOLDER at "
+            f"{out_dir}, run it, then click "
+            f"'Import Qwen Verification' here with the resulting "
+            f"verification.json."
+        )
+        done_btn.config(state=tk.NORMAL)
+
+    def show_import_qwen_dialog(self):
+        """Read a Qwen verification.json + its sibling manifest.json (or a
+        user-supplied manifest) and open the bad-annotation review window
+        populated with every entry where Qwen disagrees with the GT class."""
+        from tkinter import filedialog
+        v_path = filedialog.askopenfilename(
+            title="Select Qwen verification.json",
+            filetypes=[("JSON", "*.json")],
+        )
+        if not v_path:
+            return
+        v_path = Path(v_path)
+        # The manifest typically sits next to the exported crops folder. Try
+        # to find it automatically; otherwise ask the user.
+        manifest_path = None
+        for guess in [v_path.parent.parent / "manifest.json",
+                      v_path.parent / "manifest.json"]:
+            if guess.exists():
+                manifest_path = guess
+                break
+        if manifest_path is None:
+            manifest_path = Path(filedialog.askopenfilename(
+                title="Select the matching manifest.json",
+                filetypes=[("JSON", "*.json")],
+            ) or "")
+        if not manifest_path or not manifest_path.exists():
+            messagebox.showerror("Missing manifest",
+                                 "Cannot import without the matching manifest.json.")
+            return
+
+        try:
+            ver = json.loads(v_path.read_text())
+            man = json.loads(manifest_path.read_text())
+        except (IOError, ValueError) as e:
+            messagebox.showerror("Read error", f"Failed to parse JSON: {e}")
+            return
+
+        # Build manifest lookup: filename -> origin record
+        man_lookup = {}
+        for rec in man.get("entries", []):
+            if rec.get("filename"):
+                man_lookup[rec["filename"]] = rec
+        # Name -> id map for current class_info (qwen uses names)
+        name_to_id = {info['name']: cid for cid, info in self.class_info.items()}
+
+        results = ver.get("results") if isinstance(ver, dict) else ver
+        if not isinstance(results, list):
+            messagebox.showerror("Bad file",
+                                 "verification.json must contain a 'results' list.")
+            return
+
+        entries = []
+        n_unknown = n_match = n_parse_err = n_unmapped = 0
+        # Confidence weighting for sort order
+        conf_w = {"high": 1.0, "medium": 0.7, "low": 0.4}
+        for r in results:
+            fname = r.get("filename")
+            pred_name = (r.get("pred_class") or "").strip()
+            if pred_name == "unknown" or not pred_name:
+                n_unknown += 1
+                continue
+            if pred_name == "parse_error":
+                n_parse_err += 1
+                continue
+            origin = man_lookup.get(fname)
+            if origin is None:
+                n_unmapped += 1
+                continue
+            gt_cls_id = int(origin.get("cls_id", -1))
+            pred_cls_id = name_to_id.get(pred_name)
+            if pred_cls_id is None:
+                n_unmapped += 1
+                continue
+            # Skip agreements (the user only cares about disagreements). If
+            # class_groups is set, also skip when within the same group.
+            if self._classes_equivalent(gt_cls_id, pred_cls_id):
+                n_match += 1
+                continue
+            cx, cy, bw, bh = origin.get("bbox_norm", [0.5, 0.5, 0.1, 0.1])
+            conf_str = (r.get("confidence") or "low").lower()
+            score = conf_w.get(conf_str, 0.4)
+            entries.append({
+                "img_path": Path(origin["img_path"]),
+                "line_idx": int(origin["line_idx"]),
+                "cls_id": gt_cls_id,
+                "bbox_norm": (float(cx), float(cy), float(bw), float(bh)),
+                "pred_cls_id": pred_cls_id,
+                "pred_conf": score,
+                "iou": 1.0,
+                "score": score,
+                "kind": "class_mismatch",  # reuse caption rendering
+                "qwen_notes": r.get("notes", ""),
+                "qwen_confidence": conf_str,
+            })
+
+        if not entries:
+            messagebox.showinfo(
+                "No disagreements",
+                f"Qwen agreed with GT on all crops.\n\n"
+                f"Skipped: {n_match} matches, {n_unknown} 'unknown', "
+                f"{n_parse_err} parse errors, {n_unmapped} unmapped."
+            )
+            return
+        # Sort worst (high confidence) first; same ordering the bad-label
+        # review uses.
+        entries.sort(key=lambda e: -e["score"])
+        self._open_crop_review_window(entries=entries, target_class=None,
+                                      mode='bad')
+        self._crop_review_status_var.set(
+            f"Loaded {len(entries)} qwen disagreements  ·  "
+            f"matches:{n_match}  unknown:{n_unknown}  "
+            f"parse_err:{n_parse_err}  unmapped:{n_unmapped}"
+        )
+
     def show_find_bad_dialog(self):
         """Config dialog for 'Find Bad Annotations'. Reads scope/threshold
         choices, then opens the bad-annotation review window."""
@@ -4295,6 +4919,7 @@ class YOLOLabelingTool:
                      '_crop_review_render_after',
                      '_crop_review_main_after',
                      '_crop_review_jump_after',
+                     '_crop_review_prefetch_after',
                      '_bad_scan_drain_after'):
             pending = getattr(self, attr, None)
             if pending is not None:
@@ -4322,6 +4947,9 @@ class YOLOLabelingTool:
             cancel_evt = getattr(self, '_bad_scan_cancelled', None)
             if cancel_evt is not None:
                 cancel_evt.set()
+            prefetch_cancel = getattr(self, '_crop_review_prefetch_cancel', None)
+            if prefetch_cancel is not None:
+                prefetch_cancel.set()
             self._crop_review_cancel_pending()
             dirty = self._crop_review_dirty_paths
             self._crop_review_entries = []
@@ -4358,7 +4986,10 @@ class YOLOLabelingTool:
         self._crop_review_flush_handled()
         if self._crop_review_page > 0:
             self._crop_review_page -= 1
-            self._crop_review_render()
+            # sync_visible reuses the existing cell widgets (~3.4× faster
+            # than full render) and falls back to render() if the layout
+            # can't be reused.
+            self._crop_review_sync_visible()
 
     def _crop_review_next_page(self):
         self._crop_review_flush_handled()
@@ -4367,11 +4998,9 @@ class YOLOLabelingTool:
         max_page = max(0, (len(self._crop_review_entries) - 1) // per_page)
         if self._crop_review_page < max_page:
             self._crop_review_page += 1
-            self._crop_review_render()
-        else:
-            # Already on the last page; user pressed Next so flush handled and
-            # re-render the same page to compact the view.
-            self._crop_review_render()
+        # Either advanced, or already on last page — sync_visible refreshes
+        # in-place using the existing cell widgets.
+        self._crop_review_sync_visible()
 
     def _crop_review_goto_page(self):
         raw = self._crop_review_goto_var.get().strip()
@@ -4396,7 +5025,9 @@ class YOLOLabelingTool:
             self._crop_review_window.focus_set()
         except Exception:
             pass
-        self._crop_review_render()
+        # Reuse existing cells (sync_visible falls back to render() if it
+        # can't, e.g. on a structural change).
+        self._crop_review_sync_visible()
 
     def _crop_review_refresh_class_info(self):
         """Sync the open crop-review window with the current class_info.
@@ -4506,6 +5137,36 @@ class YOLOLabelingTool:
         if len(keep) != before:
             self._crop_review_entries = keep
 
+    def _crop_review_ensure_cache_size(self, per_page):
+        """Size the THUMBNAIL LRU to hold ~5 pages so paging back and forth
+        always hits cache. We deliberately do NOT grow the RAW IMAGE cache
+        with per_page — each raw cv2 frame can be 10–50MB, and storing
+        per_page*3 of them at 6x10 would mean gigabytes resident."""
+        needed = max(self._crop_review_thumb_cache_max, per_page * 5)
+        if self._crop_review_thumb_cache_max < needed:
+            self._crop_review_thumb_cache_max = needed
+
+    def _crop_review_thumb_cache_put(self, eid, photo):
+        """LRU insert into the thumbnail cache. If `eid` is already there,
+        move it to the most-recent slot. Evict the oldest when over cap."""
+        if eid in self._crop_review_thumb_cache:
+            del self._crop_review_thumb_cache[eid]
+        self._crop_review_thumb_cache[eid] = photo
+        # Bound the cache — long sessions with thousands of entries would
+        # otherwise accumulate hundreds of MB of PhotoImage objects.
+        while len(self._crop_review_thumb_cache) > self._crop_review_thumb_cache_max:
+            oldest = next(iter(self._crop_review_thumb_cache))
+            self._crop_review_thumb_cache.pop(oldest, None)
+
+    def _crop_review_thumb_cache_get(self, eid):
+        """LRU access — moves the entry to the most-recent slot on hit."""
+        photo = self._crop_review_thumb_cache.get(eid)
+        if photo is None:
+            return None
+        del self._crop_review_thumb_cache[eid]
+        self._crop_review_thumb_cache[eid] = photo
+        return photo
+
     def _crop_review_load_image(self, ip_str):
         """Persistent LRU cache of cv2.imread results, so paging back and forth
         doesn't trigger fresh disk reads."""
@@ -4525,10 +5186,158 @@ class YOLOLabelingTool:
             self._crop_review_img_cache.pop(oldest, None)
         return img
 
+    def _crop_review_schedule_prefetch(self):
+        """Queue a background prefetch of adjacent-page thumbnails. Called
+        at the end of every render / sync_visible so the user's *next*
+        Prev/Next click finds thumbs already cached.
+
+        We schedule on after_idle so it never delays the current paint."""
+        if self._crop_review_window is None:
+            return
+        prev = getattr(self, '_crop_review_prefetch_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+            self._crop_review_prefetch_after = None
+
+        def _kick():
+            self._crop_review_prefetch_after = None
+            if self._crop_review_window is not None:
+                self._crop_review_prefetch_adjacent()
+        self._crop_review_prefetch_after = self.root.after_idle(_kick)
+
+    def _crop_review_prefetch_adjacent(self):
+        """Decode thumbnails for the next and previous pages in a worker
+        thread, so the user's next page-nav paints from cache instead of
+        blocking the UI on dozens of cv2.imread calls.
+
+        Self-cancels any in-flight prefetch via the shared cancel event so
+        rapid paging doesn't pile up worker threads."""
+        if self._crop_review_window is None:
+            return
+        rows, cols = self._crop_review_get_grid()
+        per_page = rows * cols
+        total = len(self._crop_review_entries)
+        if total == 0:
+            return
+        cell_w, cell_h = self._crop_review_last_cell_size
+        if cell_w <= 0 or cell_h <= 0:
+            return
+        page = self._crop_review_page
+
+        # Collect entries from upcoming and previous pages in priority order:
+        # next page first (highest hit-rate on Next click), then +2 (covers
+        # rapid Next-Next), then -1 / -2 for back-paging. Skip already-cached.
+        targets = []
+        for offset in (1, 2, -1, -2):
+            p = page + offset
+            if p < 0:
+                continue
+            s = p * per_page
+            if s >= total:
+                continue
+            e_ = min(s + per_page, total)
+            for entry in self._crop_review_entries[s:e_]:
+                if id(entry) not in self._crop_review_thumb_cache:
+                    targets.append(entry)
+        if not targets:
+            return
+
+        # Cancel any prior prefetch so it stops touching the cache.
+        prev_cancel = getattr(self, '_crop_review_prefetch_cancel', None)
+        if prev_cancel is not None:
+            prev_cancel.set()
+
+        import threading
+        cancel = threading.Event()
+        self._crop_review_prefetch_cancel = cancel
+
+        # Snapshot dimensions so a later grid-size change in the main
+        # thread doesn't corrupt in-flight work.
+        snap_w, snap_h = cell_w, cell_h
+
+        def worker():
+            local_imgs = {}
+            for entry in targets:
+                if cancel.is_set():
+                    return
+                ip = str(entry['img_path'])
+                img = local_imgs.get(ip)
+                if img is None:
+                    # dict.get / dict[__setitem__] are atomic under CPython's
+                    # GIL, so reading the main-thread LRU here is safe.
+                    img = self._crop_review_img_cache.get(ip)
+                    if img is None:
+                        img = cv2.imread(ip)
+                        if img is None:
+                            continue
+                    local_imgs[ip] = img
+                ih, iw = img.shape[:2]
+                cx, cy, bw, bh = entry['bbox_norm']
+                x1 = int(round((cx - bw / 2) * iw))
+                y1 = int(round((cy - bh / 2) * ih))
+                x2 = int(round((cx + bw / 2) * iw))
+                y2 = int(round((cy + bh / 2) * ih))
+                x1c, y1c = max(0, min(x1, iw)), max(0, min(y1, ih))
+                x2c, y2c = max(0, min(x2, iw)), max(0, min(y2, ih))
+                if x2c <= x1c or y2c <= y1c:
+                    continue
+                crop = img[y1c:y2c, x1c:x2c]
+                ch, cw = crop.shape[:2]
+                scale = min(snap_w / cw, snap_h / ch)
+                nw, nh = max(1, int(cw * scale)), max(1, int(ch * scale))
+                crop_rgb = cv2.cvtColor(
+                    cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_AREA),
+                    cv2.COLOR_BGR2RGB
+                )
+                pil = Image.fromarray(crop_rgb)
+
+                def _commit(entry=entry, pil=pil, ip=ip, img=img):
+                    # We DELIBERATELY do not check ``cancel.is_set()`` here.
+                    # The PIL image is already decoded — discarding it would
+                    # force a synchronous re-decode on the next paint, which
+                    # is the exact "fast then slow" symptom we're fixing.
+                    if self._crop_review_window is None:
+                        return
+                    # Guard against id(entry) reuse: the entry may have been
+                    # reassigned/deleted/flushed while the worker was decoding.
+                    # If it's no longer in the live list, drop the result —
+                    # otherwise we'd cache a thumbnail at an id() that Python
+                    # may later reuse for an unrelated entry.
+                    found = False
+                    for e in self._crop_review_entries:
+                        if e is entry:
+                            found = True
+                            break
+                    if not found:
+                        return
+                    if id(entry) in self._crop_review_thumb_cache:
+                        # Bump LRU but don't redo the PhotoImage construction.
+                        self._crop_review_thumb_cache_get(id(entry))
+                        return
+                    try:
+                        photo = ImageTk.PhotoImage(image=pil)
+                    except tk.TclError:
+                        return
+                    self._crop_review_thumb_cache_put(id(entry), photo)
+                    if ip not in self._crop_review_img_cache:
+                        self._crop_review_img_cache[ip] = img
+                        if len(self._crop_review_img_cache) > self._crop_review_img_cache_max:
+                            oldest = next(iter(self._crop_review_img_cache))
+                            self._crop_review_img_cache.pop(oldest, None)
+                try:
+                    self.root.after(0, _commit)
+                except (tk.TclError, RuntimeError):
+                    return
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _crop_review_build_thumbnail(self, entry, cell_w, cell_h):
         """Return a PhotoImage for this entry, computing once and caching."""
         eid = id(entry)
-        cached = self._crop_review_thumb_cache.get(eid)
+        cached = self._crop_review_thumb_cache_get(eid)
         if cached is not None:
             return cached
         img = self._crop_review_load_image(str(entry['img_path']))
@@ -4553,7 +5362,7 @@ class YOLOLabelingTool:
             cv2.COLOR_BGR2RGB
         )
         photo = ImageTk.PhotoImage(image=Image.fromarray(crop_rgb))
-        self._crop_review_thumb_cache[eid] = photo
+        self._crop_review_thumb_cache_put(eid, photo)
         return photo
 
     def _crop_review_caption_text(self, entry):
@@ -4616,18 +5425,8 @@ class YOLOLabelingTool:
             self._crop_review_selected = len(self._crop_review_entries) - 1
         else:
             self._crop_review_selected = None
-        # Coalesced re-render (same pattern reassign uses)
-        prev = getattr(self, '_crop_review_render_after', None)
-        if prev is not None:
-            try:
-                self.root.after_cancel(prev)
-            except tk.TclError:
-                pass
-        def _do_render():
-            self._crop_review_render_after = None
-            if self._crop_review_window is not None:
-                self._crop_review_render()
-        self._crop_review_render_after = self.root.after_idle(_do_render)
+        # Coalesced in-place sync (fast path: reuses cell widgets).
+        self._crop_review_schedule_sync()
 
     def _bad_scan_request_cancel(self):
         """User clicked the Cancel-scan button. Tells the worker to stop on
@@ -4735,6 +5534,120 @@ class YOLOLabelingTool:
             self._crop_review_render()
         self._crop_review_resize_after = self.root.after(80, _do_resize)
 
+    def _crop_review_schedule_sync(self):
+        """Coalesce in-place visible-cells refresh via ``after_idle``. Used
+        by reassign / delete / mark-reviewed: mashing a hotkey collapses
+        N updates into one render on the next idle tick."""
+        prev = getattr(self, '_crop_review_render_after', None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except tk.TclError:
+                pass
+        def _do_sync():
+            self._crop_review_render_after = None
+            if self._crop_review_window is not None:
+                self._crop_review_sync_visible()
+        self._crop_review_render_after = self.root.after_idle(_do_sync)
+
+    def _crop_review_install_entry(self, cell, cnv, caption_lbl, entry,
+                                   cell_w, cell_h):
+        """Install ``entry`` into an EXISTING cell. Updates the canvas image,
+        caption text, click binding, and style. Does not create or destroy
+        any widgets — used both by the full render path and by the in-place
+        sync used after reassign/delete/mark-reviewed for snappy feedback."""
+        photo = self._crop_review_build_thumbnail(entry, cell_w, cell_h)
+        cnv.delete("all")
+        if photo is not None:
+            cnv.create_image(cell_w // 2, cell_h // 2,
+                             image=photo, anchor='center')
+            cnv.photo = photo  # keep extra ref alive on the canvas too
+        else:
+            cnv.create_text(cell_w // 2, cell_h // 2,
+                            text="(failed to read)", fill='#888')
+        caption_lbl.config(text=self._crop_review_caption_text(entry))
+
+        def on_click(_e, ent=entry):
+            try:
+                self._crop_review_selected = self._crop_review_entries.index(ent)
+            except ValueError:
+                return
+            self._crop_review_refresh_action_bar()
+            for c2, _cnv2, _lbl2, e2 in self._crop_review_canvases:
+                self._crop_review_apply_cell_style(c2, e2)
+            self._crop_review_jump_to_entry(ent)
+        for w in (cnv, cell, caption_lbl):
+            w.bind('<Button-1>', on_click)
+        self._crop_review_apply_cell_style(cell, entry)
+
+    def _crop_review_sync_visible(self):
+        """Fast in-place refresh of the visible cells: reuse the cell widgets
+        and just rebind them to the entries that should now be visible.
+
+        Used by reassign / delete / mark-reviewed where the grid layout is
+        unchanged. Falls back to a full ``_crop_review_render`` when the
+        layout can't be reused (e.g. page needs more cells than exist).
+
+        Cuts post-action latency from ~150 ms (destroy + recreate 24
+        widgets) down to ~10 ms (just data updates on existing widgets)."""
+        if self._crop_review_window is None:
+            return
+        rows, cols = self._crop_review_get_grid()
+        per_page = rows * cols
+        self._crop_review_ensure_cache_size(per_page)
+        total = len(self._crop_review_entries)
+        total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
+        if self._crop_review_page >= total_pages:
+            self._crop_review_page = max(0, total_pages - 1)
+        page = self._crop_review_page
+        start = page * per_page
+        end = min(start + per_page, total)
+        page_entries = self._crop_review_entries[start:end]
+
+        cells = list(self._crop_review_canvases)
+        # If we need more cells than we currently have, only the full render
+        # path knows how to grow the grid — fall back to it.
+        if len(page_entries) > len(cells):
+            self._crop_review_render()
+            return
+
+        cell_w, cell_h = self._crop_review_last_cell_size
+        if cell_w <= 0 or cell_h <= 0:
+            self._crop_review_render()
+            return
+
+        # Title update is trivially cheap and keeps the page indicator honest
+        if getattr(self, '_crop_review_mode', 'filter') == 'bad':
+            head = "Bad annotations (worst first)"
+        else:
+            cls_name = self.class_info.get(self._crop_review_target, {}).get('name', '?')
+            head = f"Class: {cls_name}"
+        self._crop_review_title_var.set(
+            f"{head}   |   page {page + 1}/{total_pages}   "
+            f"|   showing {start + 1 if total else 0}–{end} of {total}"
+        )
+
+        new_canvases = []
+        for i, entry in enumerate(page_entries):
+            cell, cnv, caption_lbl, _old = cells[i]
+            self._crop_review_install_entry(
+                cell, cnv, caption_lbl, entry, cell_w, cell_h
+            )
+            new_canvases.append((cell, cnv, caption_lbl, entry))
+
+        # If the visible-page count shrank (e.g. last entry on last page),
+        # destroy the now-unused trailing cells. This is at most a few
+        # widgets so it's still much cheaper than rebuilding all of them.
+        for cell, _cnv, _lbl, _entry in cells[len(page_entries):]:
+            try:
+                cell.destroy()
+            except tk.TclError:
+                pass
+
+        self._crop_review_canvases = new_canvases
+        self._crop_review_refresh_action_bar()
+        self._crop_review_schedule_prefetch()
+
     def _crop_review_render(self):
         # Tear down old cells (we still rebuild widgets, but image data is cached)
         for w in self._crop_review_grid_frame.winfo_children():
@@ -4743,6 +5656,7 @@ class YOLOLabelingTool:
 
         rows, cols = self._crop_review_get_grid()
         per_page = rows * cols
+        self._crop_review_ensure_cache_size(per_page)
         total = len(self._crop_review_entries)
         total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
         if self._crop_review_page >= total_pages:
@@ -4782,41 +5696,24 @@ class YOLOLabelingTool:
                 cell = tk.Frame(self._crop_review_grid_frame, bg='#222',
                                 relief=tk.SUNKEN, borderwidth=1, padx=2, pady=2)
                 cell.grid(row=r, column=c, padx=2, pady=2, sticky='nsew')
-
-                photo = self._crop_review_build_thumbnail(entry, cell_w, cell_h)
                 cnv = tk.Canvas(cell, width=cell_w, height=cell_h, bg='#111',
                                 highlightthickness=0)
                 cnv.pack(expand=True)
-                if photo is not None:
-                    cnv.create_image(cell_w // 2, cell_h // 2,
-                                     image=photo, anchor='center')
-                    cnv.photo = photo  # keep extra ref alive on the canvas too
-                else:
-                    cnv.create_text(cell_w // 2, cell_h // 2,
-                                    text="(failed to read)", fill='#888')
-
-                caption_lbl = ttk.Label(cell, text=self._crop_review_caption_text(entry),
+                caption_lbl = ttk.Label(cell, text="",
                                         font=('TkDefaultFont', 8))
                 caption_lbl.pack()
-
-                def on_click(_e, ent=entry):
-                    try:
-                        self._crop_review_selected = self._crop_review_entries.index(ent)
-                    except ValueError:
-                        return
-                    self._crop_review_refresh_action_bar()
-                    # Cheap per-cell style update — no widget destruction.
-                    for c2, _cnv2, _lbl2, e2 in self._crop_review_canvases:
-                        self._crop_review_apply_cell_style(c2, e2)
-                    # Jump the main window to this crop's source image
-                    self._crop_review_jump_to_entry(ent)
-                for widget in (cnv, cell, caption_lbl):
-                    widget.bind('<Button-1>', on_click)
-
-                self._crop_review_canvases.append((cell, cnv, caption_lbl, entry))
-                self._crop_review_apply_cell_style(cell, entry)
+                # Hand off content installation to the shared helper so the
+                # rapid-action path (sync_visible) and the full render path
+                # build the same cell state.
+                self._crop_review_install_entry(
+                    cell, cnv, caption_lbl, entry, cell_w, cell_h
+                )
+                self._crop_review_canvases.append(
+                    (cell, cnv, caption_lbl, entry)
+                )
 
         self._crop_review_refresh_action_bar()
+        self._crop_review_schedule_prefetch()
 
     def _crop_review_refresh_action_bar(self):
         """Update only the status line + dropdown that describe the current
@@ -5010,6 +5907,7 @@ class YOLOLabelingTool:
             return
         self._crop_review_dirty_paths.add(str(deleted_path))
         cls_name = self.class_info.get(entry['cls_id'], {}).get('name', '?')
+        self._session_record_deleted(entry['cls_id'], deleted_path)
         self._crop_review_status_var.set(
             f"Deleted {deleted_path.name} #{deleted_idx + 1} ({cls_name})"
         )
@@ -5034,19 +5932,8 @@ class YOLOLabelingTool:
             self._crop_review_selected = len(self._crop_review_entries) - 1
         else:
             self._crop_review_selected = None
-        # Coalesce render via after_idle so mashing Delete doesn't pile up
-        # render passes (same pattern used by reassign).
-        prev = getattr(self, '_crop_review_render_after', None)
-        if prev is not None:
-            try:
-                self.root.after_cancel(prev)
-            except tk.TclError:
-                pass
-        def _do_render():
-            self._crop_review_render_after = None
-            if self._crop_review_window is not None:
-                self._crop_review_render()
-        self._crop_review_render_after = self.root.after_idle(_do_render)
+        # Coalesced in-place sync — mashing Delete collapses to one repaint.
+        self._crop_review_schedule_sync()
 
     def _crop_review_apply_delete_to_main(self, deleted_path, deleted_idx):
         """If the main window currently shows ``deleted_path``, remove the box
@@ -5117,6 +6004,7 @@ class YOLOLabelingTool:
         entry['cls_id'] = new_class_id
         old_name = self.class_info.get(old_cls, {}).get('name', '?')
         new_name = self.class_info[new_class_id]['name']
+        self._session_record_reassigned(new_class_id, entry['img_path'])
         self._crop_review_status_var.set(
             f"Reassigned {entry['img_path'].name} #{entry['line_idx'] + 1}: "
             f"{old_name} → {new_name}"
@@ -5138,20 +6026,10 @@ class YOLOLabelingTool:
             self._crop_review_selected = len(self._crop_review_entries) - 1
         else:
             self._crop_review_selected = None
-        # Coalesce render via after_idle: if the user mashes hotkeys faster
-        # than we can draw, only the most-recent state is rendered. Cancel
-        # any prior pending render so we don't pile up.
-        prev = getattr(self, '_crop_review_render_after', None)
-        if prev is not None:
-            try:
-                self.root.after_cancel(prev)
-            except tk.TclError:
-                pass
-        def _do_render():
-            self._crop_review_render_after = None
-            if self._crop_review_window is not None:
-                self._crop_review_render()
-        self._crop_review_render_after = self.root.after_idle(_do_render)
+        # Coalesced in-place sync — if the user mashes hotkeys faster than
+        # we can draw, only the most-recent state ends up rendered, and the
+        # render itself is just a content update on existing widgets.
+        self._crop_review_schedule_sync()
 
     def _crop_review_apply_change_to_main(self, entry, new_class_id):
         """If the main window currently shows the same image as the reassigned
