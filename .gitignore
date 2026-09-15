@@ -203,3 +203,6 @@ calibration_*.npy
 # Training logs
 args.yaml
 results.csv
+
+# yolo_labeling durable prediction cache (regenerable)
+.yolo_labeling_cache/
