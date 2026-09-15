@@ -214,6 +214,7 @@ CFG_FLOAT_KEYS = frozenset(
         "dis",
         "degrees",
         "shear",
+        "wh_thr",
         "time",
         "workspace",
         "batch",
@@ -234,6 +235,7 @@ CFG_FRACTION_KEYS = frozenset(
         "hsv_v",
         "translate",
         "perspective",
+        "area_thr",
         "flipud",
         "fliplr",
         "bgr",
@@ -278,6 +280,7 @@ CFG_BOOL_KEYS = frozenset(
         "verbose",
         "deterministic",
         "single_cls",
+        "stretch",
         "rect",
         "cos_lr",
         "overlap_mask",
@@ -1087,6 +1090,10 @@ def entrypoint(debug: str = "") -> None:
         from ultralytics import RTDETR
 
         model = RTDETR(model)  # no task argument
+    elif "deimv2" in stem:
+        from ultralytics.models.deimv2 import DEIMv2
+
+        model = DEIMv2(model)
     elif "fastsam" in stem:
         from ultralytics import FastSAM
 

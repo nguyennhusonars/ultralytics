@@ -29,6 +29,8 @@ verbose: True # (bool) print verbose logs
 seed: 0 # (int) random seed for reproducibility
 deterministic: True # (bool) enable deterministic ops; reproducible but may be slower
 single_cls: False # (bool) treat all classes as a single class
+groups: # (dict, optional) merge original classes into named groups, e.g. {bus: [0,1,2,3], car: [4,5,6]}. Each value is a list of original class ids; labels with ids not in any group are dropped. Group names become the new class names; new class ids = insertion order. Original data.yaml and label files are untouched.
+stretch: False # (bool) stretch-resize images to a square imgsz instead of aspect-preserving letterbox. Match this to the deployment preprocessing: enable it when the target device resizes without preserving aspect ratio.
 rect: False # (bool) rectangular batches for train; rectangular batching for val when mode='val'
 cos_lr: False # (bool) cosine learning rate scheduler
 close_mosaic: 10 # (int) disable mosaic augmentation for final N epochs (0 to keep enabled)
@@ -122,6 +124,8 @@ translate: 0.1 # (float) translation fraction (+/-)
 scale: 0.5 # (float | tuple) scale gain (+/-) as float, or explicit (min, max) tuple
 shear: 0.0 # (float) shear degrees (+/-)
 perspective: 0.0 # (float) perspective fraction (0–0.001 typical)
+wh_thr: 2 # (float) drop transformed boxes narrower/shorter than this many pixels
+area_thr: 0.1 # (float) drop transformed boxes retaining less than this fraction of their original area
 flipud: 0.0 # (float) vertical flip probability
 fliplr: 0.5 # (float) horizontal flip probability
 bgr: 0.0 # (float) RGB↔BGR channel swap probability

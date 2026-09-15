@@ -1,0 +1,42 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# DEIMv2-Femto - HGNetv2 Femto (3-stage) backbone with lightweight 2-level DEIMv2 decoder
+# Adapted from DEIMv2: https://github.com/ShihuaHuang95/DEIMv2
+# Original: 1.0M params, 1.7 GFLOPs, 31.0 AP on COCO
+
+# Parameters
+nc: 80 # number of classes
+scales:
+  # [depth, width, max_channels]
+  femto: [1.00, 1.00, 512]
+
+backbone:
+  # HGNetv2 Femto backbone (3 stages only, stride up to 16)
+  # [from, repeats, module, args]
+  - [-1, 1, HGStem, [16, 16]] # 0-P2/4
+  - [-1, 3, HGBlock, [16, 64, 3]] # 1 stage 1
+
+  - [-1, 1, DWConv, [64, 3, 2, 1, False]] # 2-P3/8
+  - [-1, 3, HGBlock, [32, 256, 3]] # 3 stage 2
+
+  - [-1, 1, DWConv, [256, 3, 2, 1, False]] # 4-P4/16
+  - [-1, 3, HGBlock, [64, 512, 5, True, False]] # 5 stage 3 (output: ch=512, stride 16)
+
+head:
+  # Lightweight 2-level neck (no AIFI, matching LiteEncoder spirit)
+  - [-1, 1, Conv, [96, 1, 1, None, 1, 1, False]] # 6 input_proj → ch=96, stride 16
+  - [-1, 1, Conv, [96, 3, 2]] # 7 downsample → ch=96, stride 32
+  - [-1, 1, Conv, [96, 1, 1]] # 8 Y5
+
+  # FPN: upsample stride-32, concat with stride-16
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9
+  - [[-1, 6], 1, Concat, [1]] # 10 cat → ch=192
+  - [-1, 1, RepC3, [96]] # 11 X4 (fpn_block, stride 16)
+
+  # PAN: downsample stride-16, concat with stride-32
+  - [-1, 1, Conv, [96, 3, 2]] # 12 downsample
+  - [[-1, 8], 1, Concat, [1]] # 13 cat → ch=192
+  - [-1, 1, RepC3, [96]] # 14 F5 (pan_block, stride 32)
+
+  - [[11, 14], 1, DEIMv2Decoder, [nc, 96, 150, 3, 2, [4, 2], 32, 4, 4, 256, True, False]] # DEIMv2Decoder(P4, P5)
+  # DEIMv2Decoder args: nc, hidden_dim, num_queries, num_decoder_layers, num_levels, num_points, reg_max, reg_scale, num_heads, d_ffn, share_bbox_head, use_gateway

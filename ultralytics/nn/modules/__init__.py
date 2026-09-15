@@ -76,6 +76,7 @@ from .conv import (
     RepConv,
     SpatialAttention,
 )
+from .deimv2 import DEIMv2Decoder
 from .head import (
     OBB,
     OBB26,
@@ -137,6 +138,7 @@ __all__ = (
     "C2fAttn",
     "C2fCIB",
     "C2fPSA",
+    "DEIMv2Decoder",
     "C3Ghost",
     "C3k2",
     "C3x",

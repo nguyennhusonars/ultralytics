@@ -1088,6 +1088,8 @@ class RandomPerspective(BaseTransform):
         scale: float | tuple[float, float] = 0.5,
         shear: float = 0.0,
         perspective: float = 0.0,
+        wh_thr: float = 2,
+        area_thr: float = 0.1,
         size: tuple[int, int] | None = None,
         preserve_obb: bool = False,
     ):
@@ -1103,6 +1105,10 @@ class RandomPerspective(BaseTransform):
                 50%-150%. If tuple, interpreted as absolute (min, max) scale factors.
             shear (float): Shear intensity (angle in degrees).
             perspective (float): Perspective distortion factor.
+            wh_thr (float): Width and height threshold in pixels. Transformed boxes smaller than this in either
+                dimension are discarded.
+            area_thr (float): Area ratio threshold. Transformed boxes retaining less than this fraction of their
+                pre-transform area are discarded. Segment inputs use a fixed 0.01 threshold instead.
             size (tuple[int, int] | None): Output size (width, height). If None, uses the input image size.
             preserve_obb (bool): Preserve oriented-box direction when transformed segments cross image boundaries.
         """
@@ -1111,6 +1117,8 @@ class RandomPerspective(BaseTransform):
         self.scale = scale
         self.shear = shear
         self.perspective = perspective
+        self.wh_thr = wh_thr
+        self.area_thr = area_thr
         self.size = size
         self.preserve_obb = preserve_obb
 
@@ -1228,7 +1236,10 @@ class RandomPerspective(BaseTransform):
         instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
         # Make the bboxes have the same scale with new_bboxes
         i = self.box_candidates(
-            box1=instances.bboxes.T, box2=new_instances.bboxes.T, area_thr=0.01 if len(segments) else 0.10
+            box1=instances.bboxes.T,
+            box2=new_instances.bboxes.T,
+            wh_thr=self.wh_thr,
+            area_thr=0.01 if len(segments) else self.area_thr,
         )
         labels["instances"] = new_instances[i]
         labels["cls"] = cls[i]
@@ -2816,6 +2827,8 @@ def v8_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace):
         scale=hyp.scale,
         shear=hyp.shear,
         perspective=hyp.perspective,
+        wh_thr=hyp.wh_thr,
+        area_thr=hyp.area_thr,
         size=(imgsz, imgsz),
         preserve_obb=getattr(dataset, "use_obb", False),
     )
@@ -2861,6 +2874,7 @@ def classify_transforms(
     std: tuple[float, float, float] = DEFAULT_STD,
     interpolation: str = "BILINEAR",
     crop_fraction: float | None = None,
+    stretch: bool = False,
 ):
     """Create a composition of image transforms for classification tasks.
 
@@ -2875,6 +2889,8 @@ def classify_transforms(
         std (tuple[float, float, float]): Standard deviation values for each RGB channel used in normalization.
         interpolation (str): Interpolation method of either 'NEAREST', 'BILINEAR' or 'BICUBIC'.
         crop_fraction (float | None): Deprecated, will be removed in a future version.
+        stretch (bool): Resize to the exact target, distorting aspect ratio, instead of the aspect-preserving
+            shortest-edge resize that CenterCrop then trims. Match this to the deployment preprocessing.
 
     Returns:
         (torchvision.transforms.Compose): A composition of torchvision transforms.
@@ -2891,8 +2907,10 @@ def classify_transforms(
     if crop_fraction:
         deprecation_warn("crop_fraction")
 
-    # Square target uses the scalar shortest-edge mode (preserves aspect); non-square resizes to the exact (h, w).
-    resize = scale_size[0] if scale_size[0] == scale_size[1] else scale_size
+    # Square target uses the scalar shortest-edge mode (preserves aspect); non-square resizes to the exact (h, w),
+    # which is already a stretch. `stretch` forces that exact-size path for square targets too, leaving CenterCrop
+    # a no-op, so training geometry can match a device that resizes without preserving aspect.
+    resize = scale_size if stretch or scale_size[0] != scale_size[1] else scale_size[0]
     tfl = [
         T.Resize(resize, interpolation=getattr(T.InterpolationMode, interpolation)),
         T.CenterCrop(size),
@@ -2918,6 +2936,7 @@ def classify_augmentations(
     force_color_jitter: bool = False,
     erasing: float = 0.0,
     interpolation: str = "BILINEAR",
+    stretch: bool = False,
 ):
     """Create a composition of image augmentation transforms for classification tasks.
 
@@ -2939,6 +2958,8 @@ def classify_augmentations(
         force_color_jitter (bool): Whether to apply color jitter even if auto augment is enabled.
         erasing (float): Probability of random erasing.
         interpolation (str): Interpolation method of either 'NEAREST', 'BILINEAR' or 'BICUBIC'.
+        stretch (bool): Distort the full frame to the target size instead of cropping a region from it. Match this
+            to the deployment preprocessing.
 
     Returns:
         (torchvision.transforms.Compose): A composition of image augmentation transforms.
@@ -2955,7 +2976,14 @@ def classify_augmentations(
     scale = tuple(scale or (0.08, 1.0))  # default imagenet scale range
     ratio = tuple(ratio or (3.0 / 4.0, 4.0 / 3.0))  # default imagenet ratio range
     interpolation = getattr(T.InterpolationMode, interpolation)
-    primary_tfl = [T.RandomResizedCrop(size, scale=scale, ratio=ratio, interpolation=interpolation)]
+    if stretch:
+        # Distort the whole frame to the target exactly as the device does, then take the scale jitter from that
+        # square so no crop of the source is lost and no further aspect distortion is introduced.
+        primary_tfl = [T.Resize((size, size), interpolation=interpolation)]
+        if scale != (1.0, 1.0):
+            primary_tfl.append(T.RandomResizedCrop(size, scale=scale, ratio=(1.0, 1.0), interpolation=interpolation))
+    else:
+        primary_tfl = [T.RandomResizedCrop(size, scale=scale, ratio=ratio, interpolation=interpolation)]
     if hflip > 0.0:
         primary_tfl.append(T.RandomHorizontalFlip(p=hflip))
     if vflip > 0.0:

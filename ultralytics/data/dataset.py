@@ -194,7 +194,9 @@ class YOLODataset(BaseDataset):
             self.label_files,
             repeat(self.prefix),
             repeat(self.use_keypoints),
-            repeat(len(self.data["names"])),
+            # Use the original class count when a groups override is active, so on-disk labels (which still
+            # carry original class ids) pass the class-bounds check.
+            repeat(self.data.get("groups_original_nc", len(self.data["names"]))),
             repeat(nkpt),
             repeat(ndim),
             repeat(self.single_cls),
@@ -299,6 +301,40 @@ class YOLODataset(BaseDataset):
         self.im_files = [lb["im_file"] for lb in labels]  # update im_files
         self.verify_labels(labels, cache_path)
         return labels
+
+    def update_labels(self, include_class: list[int] | None) -> None:
+        """Extend `BaseDataset.update_labels` with an in-memory class remap from the `groups` argument.
+
+        Labels whose original class id is not in the remap are dropped; ids in the remap are replaced with their
+        new (grouped) id. This runs after the base `include_class` filter, so `classes=[...]` is still expressed
+        in the original class-id space.
+
+        Args:
+            include_class (list[int], optional): List of classes to include. If None, all classes are included.
+        """
+        super().update_labels(include_class=include_class)
+        remap = (self.data or {}).get("groups_remap")
+        if not remap:
+            return
+        # Vectorized lookup: keep_keys holds the original ids to keep, new_vals their target ids.
+        keep_keys = np.array(sorted(remap.keys()), dtype=np.float32)
+        new_vals = np.array([remap[int(k)] for k in keep_keys], dtype=np.float32)
+        for i in range(len(self.labels)):
+            cls = self.labels[i]["cls"]
+            if cls.size == 0:
+                continue
+            cls_flat = cls.reshape(-1)
+            idx = np.searchsorted(keep_keys, cls_flat)
+            idx = np.where(idx < len(keep_keys), idx, 0)  # clamp out-of-range before the exact-match check
+            j = keep_keys[idx] == cls_flat  # False means "not in any group" -> drop
+            self.labels[i]["cls"] = new_vals[idx][j].reshape(-1, 1)
+            self.labels[i]["bboxes"] = self.labels[i]["bboxes"][j]
+            segments = self.labels[i].get("segments")
+            if segments:
+                self.labels[i]["segments"] = [segments[si] for si, keep in enumerate(j) if keep]
+            keypoints = self.labels[i].get("keypoints")
+            if keypoints is not None:
+                self.labels[i]["keypoints"] = keypoints[j]
 
     def build_transforms(self, hyp: dict | None = None) -> Compose:
         """Build and append transforms to the list.
@@ -1196,12 +1232,13 @@ class ClassificationDataset:
                 vflip=args.flipud,
                 erasing=args.erasing,
                 auto_augment=args.auto_augment,
+                stretch=args.stretch,
                 hsv_h=args.hsv_h,
                 hsv_s=args.hsv_s,
                 hsv_v=args.hsv_v,
             )
             if augment
-            else classify_transforms(size=args.imgsz)
+            else classify_transforms(size=args.imgsz, stretch=args.stretch)
         )
 
     def __getitem__(self, i: int) -> dict:

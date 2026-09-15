@@ -127,6 +127,9 @@ class BaseDataset(Dataset):
         self.img_path = img_path
         self.imgsz = imgsz
         self.augment = augment
+        # Stretch-resize to a square imgsz instead of aspect-preserving letterbox. `hyp` is normally an
+        # IterableSimpleNamespace but may be a plain dict, so read it both ways.
+        self.stretch = bool(hyp.get("stretch", False) if isinstance(hyp, dict) else getattr(hyp, "stretch", False))
         self.single_cls = single_cls
         self.prefix = prefix
         self.fraction = fraction
@@ -226,13 +229,14 @@ class BaseDataset(Dataset):
                 self.labels[i]["cls"][:] = 0
 
     def load_image(
-        self, i: int, rect_mode: bool = True, resize_short: bool = False
+        self, i: int, rect_mode: bool | None = None, resize_short: bool = False
     ) -> tuple[np.ndarray, tuple[int, int], tuple[int, int]]:
         """Load an image from dataset index 'i'.
 
         Args:
             i (int): Index of the image to load.
-            rect_mode (bool): Whether to use rectangular resizing (long side to imgsz).
+            rect_mode (bool, optional): Whether to use rectangular resizing (long side to imgsz). Defaults to the
+                inverse of the `stretch` argument, so callers that do not care inherit the configured behavior.
             resize_short (bool): Whether to resize the shorter side to imgsz while maintaining aspect ratio. Overrides
                 rect_mode when True.
 
@@ -244,6 +248,8 @@ class BaseDataset(Dataset):
         Raises:
             FileNotFoundError: If the image file is not found.
         """
+        if rect_mode is None:
+            rect_mode = not self.stretch
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy

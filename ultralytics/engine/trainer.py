@@ -69,6 +69,59 @@ from ultralytics.utils.torch_utils import (
 )
 
 
+def _apply_groups_override(data: dict, groups: dict) -> dict:
+    """Merge several original classes into named groups in-memory.
+
+    Labels with class ids not appearing in any group are dropped at load time. The original data.yaml and label
+    files are untouched -- the resolved remap is stashed on the data dict under 'groups_remap' for the dataset to
+    apply in `YOLODataset.update_labels`.
+
+    Args:
+        data (dict): Dataset dict from `check_det_dataset`, containing at least 'names'.
+        groups (dict): Mapping of {group_name: [original_class_id | original_class_name, ...]}.
+
+    Returns:
+        (dict): The updated data dict (also mutated in place).
+    """
+    if not isinstance(groups, dict) or not groups:
+        return data
+    orig_names = data.get("names") or {}
+    name_to_id = {str(n): int(i) for i, n in orig_names.items()}  # so users can refer to classes by name
+    remap: dict[int, int] = {}
+    new_names: dict[int, str] = {}
+    for new_id, (group_name, members) in enumerate(groups.items()):
+        new_names[new_id] = str(group_name)
+        if not isinstance(members, (list, tuple)):
+            members = [members]
+        for m in members:
+            if isinstance(m, str):
+                if m not in name_to_id:
+                    raise ValueError(
+                        f"groups: class name '{m}' (in group '{group_name}') not found in data['names']={orig_names}"
+                    )
+                orig_id = name_to_id[m]
+            else:
+                orig_id = int(m)
+            if orig_id in remap and remap[orig_id] != new_id:
+                raise ValueError(
+                    f"groups: original class id {orig_id} assigned to multiple "
+                    f"groups ('{new_names[remap[orig_id]]}' and '{group_name}')"
+                )
+            remap[orig_id] = new_id
+    # Preserve the original class count for the on-disk label verifier, which still sees original class ids
+    data["groups_original_nc"] = len(orig_names)
+    data["groups_remap"] = remap
+    data["names"] = new_names
+    data["nc"] = len(new_names)
+    dropped = sorted({int(i) for i in orig_names.keys()} - set(remap.keys()))
+    LOGGER.info(
+        f"groups: collapsed {len(remap)} original classes into {len(new_names)} groups "
+        f"({', '.join(new_names.values())}). "
+        f"Dropped {len(dropped)} ungrouped class id(s): {dropped if dropped else 'none'}"
+    )
+    return data
+
+
 class BaseTrainer:
     """A base class for creating trainers.
 
@@ -199,7 +252,7 @@ class BaseTrainer:
         self.csv = self.save_dir / "results.csv"
         if self.csv.exists() and not self.args.resume:
             self.csv.unlink()
-        self.plot_idx = [0, 1, 2]
+        self.plot_idx = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
         self.nan_recovery_attempts = 0
 
     def add_callback(self, event: str, callback):
@@ -805,6 +858,16 @@ class BaseTrainer:
             LOGGER.info("Overriding class names with single class.")
             data["names"] = {0: "item"}
             data["nc"] = 1
+        # Merge several original classes into one named group at train/val time. Training arg wins, otherwise
+        # fall back to the `groups:` key in data.yaml. Label files are not modified.
+        groups = getattr(self.args, "groups", None) or data.get("groups")
+        if groups:
+            if self.args.single_cls:
+                raise ValueError(
+                    "Arguments 'groups' and 'single_cls' are mutually exclusive — "
+                    "single_cls already collapses every class to id 0."
+                )
+            data = _apply_groups_override(data, groups)
         return data
 
     def setup_model(self):
