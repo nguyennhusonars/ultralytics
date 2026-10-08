@@ -8,20 +8,16 @@ Adapted from the DEIMv2 repository.
 from __future__ import annotations
 
 import copy
-from typing import Any
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
+from ultralytics.models.utils.ops import HungarianMatcher
 from ultralytics.nn.modules.deimv2 import (
     bbox2distance,
     box_cxcywh_to_xyxy,
-    weighting_function,
 )
-from ultralytics.utils.metrics import bbox_iou
-
-from ultralytics.models.utils.ops import HungarianMatcher
 
 
 def _box_iou(boxes1, boxes2):
@@ -53,8 +49,8 @@ def _generalized_box_iou(boxes1, boxes2):
 class DEIMv2DetectionLoss(nn.Module):
     """Loss function for DEIMv2 detection model.
 
-    Computes MAL (Modified Adaptive Loss), bbox L1, GIoU, FGL (Fine-Grained Localization),
-    and DDF (Decoupled Distillation Focal) losses.
+    Computes MAL (Modified Adaptive Loss), bbox L1, GIoU, FGL (Fine-Grained Localization), and DDF (Decoupled
+    Distillation Focal) losses.
     """
 
     def __init__(self, nc=80, alpha=0.75, gamma=1.5, reg_max=32, use_uni_set=True):
@@ -123,9 +119,9 @@ class DEIMv2DetectionLoss(nn.Module):
         target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
-        loss_giou = 1 - torch.diag(_generalized_box_iou(
-            box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes)
-        ))
+        loss_giou = 1 - torch.diag(
+            _generalized_box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
+        )
         return {
             "loss_bbox": loss_bbox.sum() / num_boxes,
             "loss_giou": loss_giou.sum() / num_boxes,
@@ -146,25 +142,38 @@ class DEIMv2DetectionLoss(nn.Module):
             is_dn = "is_dn" in outputs
             if is_dn and self.fgl_targets_dn is None:
                 self.fgl_targets_dn = bbox2distance(
-                    ref_points, box_cxcywh_to_xyxy(target_boxes),
-                    self.reg_max, outputs["reg_scale"], outputs["up"],
+                    ref_points,
+                    box_cxcywh_to_xyxy(target_boxes),
+                    self.reg_max,
+                    outputs["reg_scale"],
+                    outputs["up"],
                 )
             if not is_dn and self.fgl_targets is None:
                 self.fgl_targets = bbox2distance(
-                    ref_points, box_cxcywh_to_xyxy(target_boxes),
-                    self.reg_max, outputs["reg_scale"], outputs["up"],
+                    ref_points,
+                    box_cxcywh_to_xyxy(target_boxes),
+                    self.reg_max,
+                    outputs["reg_scale"],
+                    outputs["up"],
                 )
 
         target_corners, weight_right, weight_left = self.fgl_targets_dn if is_dn else self.fgl_targets
 
-        ious = torch.diag(_box_iou(
-            box_cxcywh_to_xyxy(outputs["pred_boxes"][idx]),
-            box_cxcywh_to_xyxy(target_boxes),
-        )[0])
+        ious = torch.diag(
+            _box_iou(
+                box_cxcywh_to_xyxy(outputs["pred_boxes"][idx]),
+                box_cxcywh_to_xyxy(target_boxes),
+            )[0]
+        )
         weight_targets = ious.unsqueeze(-1).repeat(1, 1, 4).reshape(-1).detach()
 
         losses["loss_fgl"] = self._unimodal_distribution_focal_loss(
-            pred_corners, target_corners, weight_right, weight_left, weight_targets, avg_factor=num_boxes,
+            pred_corners,
+            target_corners,
+            weight_right,
+            weight_left,
+            weight_targets,
+            avg_factor=num_boxes,
         )
 
         if "teacher_corners" in outputs:
@@ -178,13 +187,10 @@ class DEIMv2DetectionLoss(nn.Module):
                 weight_targets_local[idx] = ious.reshape_as(weight_targets_local[idx]).to(weight_targets_local.dtype)
                 weight_targets_local = weight_targets_local.unsqueeze(-1).repeat(1, 1, 4).reshape(-1).detach()
 
-                kl_loss = (
-                    T ** 2
-                    * nn.KLDivLoss(reduction="none")(
-                        F.log_softmax(pred_corners_all / T, dim=1),
-                        F.softmax(target_corners_all.detach() / T, dim=1),
-                    ).sum(-1)
-                )
+                kl_loss = T**2 * nn.KLDivLoss(reduction="none")(
+                    F.log_softmax(pred_corners_all / T, dim=1),
+                    F.softmax(target_corners_all.detach() / T, dim=1),
+                ).sum(-1)
                 loss_match_local = weight_targets_local * kl_loss
 
                 if "is_dn" not in outputs:
@@ -193,9 +199,8 @@ class DEIMv2DetectionLoss(nn.Module):
                     self.num_neg = ((~mask).sum() * batch_scale) ** 0.5
                 loss_match_local1 = loss_match_local[mask].mean() if mask.any() else 0
                 loss_match_local2 = loss_match_local[~mask].mean() if (~mask).any() else 0
-                losses["loss_ddf"] = (
-                    (loss_match_local1 * self.num_pos + loss_match_local2 * self.num_neg)
-                    / (self.num_pos + self.num_neg)
+                losses["loss_ddf"] = (loss_match_local1 * self.num_pos + loss_match_local2 * self.num_neg) / (
+                    self.num_pos + self.num_neg
                 )
 
         return losses
@@ -204,10 +209,9 @@ class DEIMv2DetectionLoss(nn.Module):
     def _unimodal_distribution_focal_loss(pred, label, weight_right, weight_left, weight=None, avg_factor=None):
         dis_left = label.long()
         dis_right = dis_left + 1
-        loss = (
-            F.cross_entropy(pred, dis_left, reduction="none") * weight_left.reshape(-1)
-            + F.cross_entropy(pred, dis_right, reduction="none") * weight_right.reshape(-1)
-        )
+        loss = F.cross_entropy(pred, dis_left, reduction="none") * weight_left.reshape(-1) + F.cross_entropy(
+            pred, dis_right, reduction="none"
+        ) * weight_right.reshape(-1)
         if weight is not None:
             loss = loss * weight.float()
         if avg_factor is not None:
@@ -254,10 +258,12 @@ class DEIMv2DetectionLoss(nn.Module):
                 assert len(dn_positive_idx[i]) == len(gt_idx)
                 dn_match_indices.append((dn_positive_idx[i], gt_idx))
             else:
-                dn_match_indices.append((
-                    torch.zeros(0, dtype=torch.int64, device=device),
-                    torch.zeros(0, dtype=torch.int64, device=device),
-                ))
+                dn_match_indices.append(
+                    (
+                        torch.zeros(0, dtype=torch.int64, device=device),
+                        torch.zeros(0, dtype=torch.int64, device=device),
+                    )
+                )
         return dn_match_indices
 
     def _match(self, outputs, targets):
@@ -320,10 +326,12 @@ class DEIMv2DetectionLoss(nn.Module):
         targets = []
         for i in range(bs):
             mask = batch_idx == i
-            targets.append({
-                "labels": batch["cls"][mask].to(torch.long).view(-1),
-                "boxes": batch["bboxes"][mask],
-            })
+            targets.append(
+                {
+                    "labels": batch["cls"][mask].to(torch.long).view(-1),
+                    "boxes": batch["bboxes"][mask],
+                }
+            )
 
         # Main loss matching
         indices = self._match(preds, targets)
@@ -334,7 +342,7 @@ class DEIMv2DetectionLoss(nn.Module):
         if "aux_outputs" in preds:
             aux_list = list(preds["aux_outputs"])
             if "pre_outputs" in preds:
-                aux_list = aux_list + [preds["pre_outputs"]]
+                aux_list = [*aux_list, preds["pre_outputs"]]
             for aux_outputs in aux_list:
                 idx_aux = self._match(aux_outputs, targets)
                 cached_indices.append(idx_aux)
@@ -403,8 +411,9 @@ class DEIMv2DetectionLoss(nn.Module):
         # Pre outputs
         if "pre_outputs" in preds:
             pre_idx = cached_indices[-1] if cached_indices else indices
-            pre_l = self._compute_losses(preds["pre_outputs"], targets, pre_idx, num_boxes,
-                                          losses_list=("mal", "boxes"))
+            pre_l = self._compute_losses(
+                preds["pre_outputs"], targets, pre_idx, num_boxes, losses_list=("mal", "boxes")
+            )
             for k, v in pre_l.items():
                 losses[f"{k}_pre"] = v
 
@@ -455,7 +464,10 @@ class DEIMv2DetectionLoss(nn.Module):
 
             if "dn_pre_outputs" in preds:
                 dn_pre_l = self._compute_losses(
-                    preds["dn_pre_outputs"], targets, indices_dn, dn_num_boxes,
+                    preds["dn_pre_outputs"],
+                    targets,
+                    indices_dn,
+                    dn_num_boxes,
                     losses_list=("mal", "boxes"),
                 )
                 for k, v in dn_pre_l.items():
