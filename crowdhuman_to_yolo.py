@@ -22,8 +22,8 @@ Never group 1 and 4 together: that emits two boxes per person.
 
 import argparse
 import json
-from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image

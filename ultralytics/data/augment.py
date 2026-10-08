@@ -3020,8 +3020,8 @@ def classify_augmentations(
         force_color_jitter (bool): Whether to apply color jitter even if auto augment is enabled.
         erasing (float): Probability of random erasing.
         interpolation (str): Interpolation method of either 'NEAREST', 'BILINEAR' or 'BICUBIC'.
-        stretch (bool): Distort the full frame to the target size instead of cropping a region from it. Match this
-            to the deployment preprocessing.
+        stretch (bool): Distort the full frame to the target size instead of cropping a region from it. Match this to
+            the deployment preprocessing.
 
     Returns:
         (torchvision.transforms.Compose): A composition of image augmentation transforms.
