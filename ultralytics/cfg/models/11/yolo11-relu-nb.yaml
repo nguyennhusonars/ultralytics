@@ -1,0 +1,83 @@
+# YOLO11 with ReLU AND a NON-BRANCHING replacement for C3k2.
+#
+# WHY. After SiLU (48% of activation volume), the next largest block of volume that does no
+# arithmetic is C3k2's branching: Concat 15.10 MB + Split 5.32 MB = 20.4 MB of yolo11n's
+# 129.9 MB at 640. C3k2 is cv1(1x1) -> chunk(2) -> n Bottlenecks -> cat -> cv2(1x1): the chunk
+# and cat materialise tensors and compute nothing. See cnngen_convert/docs/performance.md.
+#
+# THE REPLACEMENT is a 1x1 Conv for the channel change (only where channels actually change)
+# followed by stacked Bottleneck -- a residual Add, no Split, no Concat. Two parse_model facts
+# force this exact shape, both checked in ultralytics/nn/tasks.py:
+#   * RepConv is NOT in base_modules, so it never receives channel args and cannot be used in
+#     a width-scaled yaml, however attractive its train-time branching + inference-time fusion.
+#   * Bottleneck IS in base_modules but NOT in repeat_modules, so `repeats > 1` wraps it in
+#     nn.Sequential with IDENTICAL args -- which is only correct when c1 == c2. Hence the 1x1
+#     first, and no 1x1 at all where the preceding Conv already produced the right width
+#     (layers 6 and 8 below).
+#
+# *** THE DETECT INDEX MOVES, SO THE ONNX TAP NAMES CHANGE. ***
+# Six C3k2 need that 1x1, so the graph gains 6 layers and Detect moves from 23 to 29. The taps
+# become /model.29/Mul_2_output_0 and /model.29/Sigmoid_output_0. That means BOTH:
+#   * model.conf -- OUTPUTS, DET_BOXES, DET_SCORES
+#   * pvn_ai.cpp -- the yolov8_*_params output_node / output_node_1 strings
+# must be updated, and the SDK rebuilt. Verify the real names from the export rather than
+# trusting this comment: tools/inspect_onnx.py prints them.
+#
+# CAPACITY-MATCHED: every Bottleneck runs at e=0.25, which is the hidden width C3k2 uses, so
+# the ablation isolates the BRANCHING rather than confounding it with extra parameters. The
+# first attempt left Bottleneck at its default e=0.5 and came out 4.03M params / 6.5 GMAC
+# against yolo11n's 2.62M / 3.24M -- faster by the cost model but not a comparison.
+#
+# UNVERIFIED FOR ACCURACY. Bottleneck-instead-of-C3k2 is a capacity change, unlike ReLU. Train
+# it against yolo11-relu.yaml on the same data before believing anything about its mAP.
+
+nc: 80
+scales: # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024]
+  p: [0.50, 0.125, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+activation: nn.ReLU()
+
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 1, Conv, [256, 1, 1]] # 2  channel change for the stack below
+  - [-1, 2, Bottleneck, [256, True, 1, [3, 3], 0.25]] # 3  (was C3k2 [256, False, 0.25])
+  - [-1, 1, Conv, [256, 3, 2]] # 4-P3/8
+  - [-1, 1, Conv, [512, 1, 1]] # 5
+  - [-1, 2, Bottleneck, [512, True, 1, [3, 3], 0.25]] # 6  (was C3k2 [512, False, 0.25])
+  - [-1, 1, Conv, [512, 3, 2]] # 7-P4/16
+  - [-1, 2, Bottleneck, [512, True, 1, [3, 3], 0.25]] # 8  no 1x1: layer 7 already gives 512
+  - [-1, 1, Conv, [1024, 3, 2]] # 9-P5/32
+  - [-1, 2, Bottleneck, [1024, True, 1, [3, 3], 0.25]] # 10 no 1x1: layer 9 already gives 1024
+  - [-1, 1, SPPF, [1024, 5]] # 11
+  - [-1, 2, C2PSA, [1024]] # 12  kept -- it sits at P5/32 (20x20), so its Transpose/Reshape
+                           #     volume is only ~5.5 MB. Removing it is a SEPARATE ablation.
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 13
+  - [[-1, 8], 1, Concat, [1]] # 14 cat backbone P4
+  - [-1, 1, Conv, [512, 1, 1]] # 15
+  - [-1, 2, Bottleneck, [512, False, 1, [3, 3], 0.25]] # 16
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 17
+  - [[-1, 6], 1, Concat, [1]] # 18 cat backbone P3
+  - [-1, 1, Conv, [256, 1, 1]] # 19
+  - [-1, 2, Bottleneck, [256, False, 1, [3, 3], 0.25]] # 20 (P3/8-small)
+
+  - [-1, 1, Conv, [256, 3, 2]] # 21
+  - [[-1, 16], 1, Concat, [1]] # 22 cat head P4
+  - [-1, 1, Conv, [512, 1, 1]] # 23
+  - [-1, 2, Bottleneck, [512, False, 1, [3, 3], 0.25]] # 24 (P4/16-medium)
+
+  - [-1, 1, Conv, [512, 3, 2]] # 25
+  - [[-1, 12], 1, Concat, [1]] # 26 cat head P5
+  - [-1, 1, Conv, [1024, 1, 1]] # 27
+  - [-1, 2, Bottleneck, [1024, True, 1, [3, 3], 0.25]] # 28 (P5/32-large)
+
+  - [[20, 24, 28], 1, Detect, [nc]] # 29 Detect(P3, P4, P5)

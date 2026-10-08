@@ -1,0 +1,59 @@
+# YOLO11 with ReLU instead of SiLU. Identical topology -- the ONLY change is `activation`.
+#
+# WHY. Measured on a CV25 camera, nn_forward is 91% of frame time and tracks TOTAL ACTIVATION
+# VOLUME, not MACs (see cnngen_convert/docs/performance.md). ONNX exports SiLU as two separate
+# full-size tensors (Sigmoid then Mul), so each activation costs Conv -> Sigmoid -> Mul, three
+# tensors per layer; ReLU costs one. For yolo11n at 640 that is 62.7 of 129.9 MB -- 48% of the
+# whole activation volume.
+#
+# MEASURED, not predicted: a graph-surgery probe (same weights, SiLU pairs rewritten to Relu)
+# ran at nn_forward 63.00 ms against the baseline's 82.90 -- activation volume fell in the
+# ratio 0.7593 and time in the ratio 0.7600, agreeing to 0.1%. That is 10.2 -> ~12.9 fps.
+# Compare yolo11p (half width): 14.7 fps but -6.9 pp mAP50. ReLU's cost is typically 0.5-1 pp.
+#
+# Layer indices and the Detect module are UNCHANGED, so the ONNX tap names stay
+# /model.23/Mul_2_output_0 and /model.23/Sigmoid_output_0 -- no device-side change needed.
+
+nc: 80
+scales: # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024]
+  p: [0.50, 0.125, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+activation: nn.ReLU()
+
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 2, C3k2, [512, False, 0.25]]
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 2, C3k2, [512, True]]
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 2, C3k2, [1024, True]]
+  - [-1, 1, SPPF, [1024, 5]] # 9
+  - [-1, 2, C2PSA, [1024]] # 10
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]] # cat backbone P4
+  - [-1, 2, C3k2, [512, False]] # 13
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]] # cat backbone P3
+  - [-1, 2, C3k2, [256, False]] # 16 (P3/8-small)
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 13], 1, Concat, [1]] # cat head P4
+  - [-1, 2, C3k2, [512, False]] # 19 (P4/16-medium)
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 10], 1, Concat, [1]] # cat head P5
+  - [-1, 2, C3k2, [1024, True]] # 22 (P5/32-large)
+
+  - [[16, 19, 22], 1, Detect, [nc]] # Detect(P3, P4, P5)
