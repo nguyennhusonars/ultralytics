@@ -62,13 +62,8 @@ class ClassificationPredictor(BasePredictor):
         size = (size, size) if isinstance(size, int) else size
         self.transforms = (
             transforms
-<<<<<<< HEAD
-            if size == max(self.imgsz) and self.model.format == "pt"
-            else classify_transforms(self.imgsz, stretch=self.args.stretch)
-=======
             if size is not None and tuple(size) == tuple(self.imgsz) and self.model.format == "pt"
-            else classify_transforms(self.imgsz)
->>>>>>> upstream/main
+            else classify_transforms(self.imgsz, stretch=self.args.stretch)
         )
         tfl = getattr(self.transforms, "transforms", ())
         split = (
