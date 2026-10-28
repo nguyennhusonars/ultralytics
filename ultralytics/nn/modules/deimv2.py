@@ -12,8 +12,8 @@ import math
 from collections import OrderedDict
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.nn.init import constant_, xavier_uniform_
 
 from ultralytics.utils.torch_utils import TORCH_1_11
@@ -88,6 +88,7 @@ def _bilinear_grid_sample(im, grid):
                 parts.append(sampled)
             return torch.stack(parts, 0).reshape(N, C, *spatial_shape)
     else:
+
         def _sample(yi, xi):
             idx = (yi * W + xi).reshape(N, 1, -1).expand(-1, C, -1)
             return im_flat.gather(2, idx).reshape(N, C, *spatial_shape)
@@ -98,6 +99,7 @@ def _bilinear_grid_sample(im, grid):
         + _sample(gy0i, gx1i) * wc * mc
         + _sample(gy1i, gx1i) * wd * md
     )
+
 
 from .utils import bias_init_with_prob
 
@@ -137,17 +139,17 @@ def weighting_function(reg_max, up, reg_scale, deploy=False):
         upper_bound1 = (abs(up[0]) * abs(reg_scale)).item()
         upper_bound2 = (abs(up[0]) * abs(reg_scale) * 2).item()
         step = (upper_bound1 + 1) ** (2 / (reg_max - 2))
-        left_values = [-(step) ** i + 1 for i in range(reg_max // 2 - 1, 0, -1)]
+        left_values = [-((step) ** i) + 1 for i in range(reg_max // 2 - 1, 0, -1)]
         right_values = [(step) ** i - 1 for i in range(1, reg_max // 2)]
-        values = [-upper_bound2] + left_values + [torch.zeros_like(up[0][None])] + right_values + [upper_bound2]
+        values = [-upper_bound2, *left_values, torch.zeros_like(up[0][None]), *right_values, upper_bound2]
         return torch.tensor(values, dtype=up.dtype, device=up.device)
     else:
         upper_bound1 = abs(up[0]) * abs(reg_scale)
         upper_bound2 = abs(up[0]) * abs(reg_scale) * 2
         step = (upper_bound1 + 1) ** (2 / (reg_max - 2))
-        left_values = [-(step) ** i + 1 for i in range(reg_max // 2 - 1, 0, -1)]
+        left_values = [-((step) ** i) + 1 for i in range(reg_max // 2 - 1, 0, -1)]
         right_values = [(step) ** i - 1 for i in range(1, reg_max // 2)]
-        values = [-upper_bound2] + left_values + [torch.zeros_like(up[0][None])] + right_values + [upper_bound2]
+        values = [-upper_bound2, *left_values, torch.zeros_like(up[0][None]), *right_values, upper_bound2]
         return torch.cat(values, 0)
 
 
@@ -290,7 +292,7 @@ class DEIMv2MLP(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim, *h], [*h, output_dim]))
         self.act = get_activation(act)
 
     def forward(self, x):
@@ -310,7 +312,7 @@ class Integral(nn.Module):
         shape = x.shape
         x = F.softmax(x.reshape(-1, self.reg_max + 1), dim=1)
         x = F.linear(x, project.to(x.device)).reshape(-1, 4)
-        return x.reshape(list(shape[:-1]) + [-1])
+        return x.reshape([*list(shape[:-1]), -1])
 
 
 class LQE(nn.Module):
@@ -428,15 +430,12 @@ class MSDeformableAttention(nn.Module):
                 offset_normalizer = torch.tensor(value_spatial_shapes)
                 offset_normalizer = offset_normalizer.flip([1]).reshape(1, 1, 1, self.num_levels, 1, 2)
                 sampling_locations = (
-                    reference_points.reshape(bs, Len_q, 1, self.num_levels, 1, 2)
-                    + sampling_offsets / offset_normalizer
+                    reference_points.reshape(bs, Len_q, 1, self.num_levels, 1, 2) + sampling_offsets / offset_normalizer
                 )
             else:
                 raise ValueError(f"Last dim of reference_points must be 2 or 4, got {reference_points.shape[-1]}")
 
-        output = self._deformable_attention_core(
-            value, value_spatial_shapes, sampling_locations, attention_weights
-        )
+        output = self._deformable_attention_core(value, value_spatial_shapes, sampling_locations, attention_weights)
         return output
 
     def _deformable_attention_core(self, value, value_spatial_shapes, sampling_locations, attention_weights):
@@ -471,9 +470,7 @@ class MSDeformableAttention(nn.Module):
             if self.method == "default":
                 sampling_value_l = _bilinear_grid_sample(value_l, sampling_grid_l)
             elif self.method == "discrete":
-                sampling_coord = (
-                    sampling_grid_l * torch.tensor([[w, h]], device=value_l.device) + 0.5
-                ).to(torch.int64)
+                sampling_coord = (sampling_grid_l * torch.tensor([[w, h]], device=value_l.device) + 0.5).to(torch.int64)
                 sampling_coord = sampling_coord.clamp(0, h - 1)
                 sampling_coord = sampling_coord.reshape(bs * n_head, Len_q * self.num_points_list[level], 2)
                 s_idx = (
@@ -489,9 +486,7 @@ class MSDeformableAttention(nn.Module):
                 sampling_value_l = _bilinear_grid_sample(value_l, sampling_grid_l)
             sampling_value_list.append(sampling_value_l)
 
-        attn_weights = attention_weights.permute(0, 2, 1, 3).reshape(
-            bs * n_head, 1, Len_q, sum(self.num_points_list)
-        )
+        attn_weights = attention_weights.permute(0, 2, 1, 3).reshape(bs * n_head, 1, Len_q, sum(self.num_points_list))
         weighted = torch.cat(sampling_value_list, dim=-1) * attn_weights
         output = weighted.sum(-1).reshape(bs, n_head * c, Len_q)
         return output.permute(0, 2, 1)
@@ -569,8 +564,20 @@ class DEIMv2DecoderLayer(nn.Module):
 class DEIMv2TransformerDecoder(nn.Module):
     """Transformer Decoder with Fine-grained Distribution Refinement (FDR)."""
 
-    def __init__(self, hidden_dim, decoder_layer, decoder_layer_wide, num_layers, num_head, reg_max, reg_scale, up,
-                 eval_idx=-1, layer_scale=2, act="relu"):
+    def __init__(
+        self,
+        hidden_dim,
+        decoder_layer,
+        decoder_layer_wide,
+        num_layers,
+        num_head,
+        reg_max,
+        reg_scale,
+        up,
+        eval_idx=-1,
+        layer_scale=2,
+        act="relu",
+    ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
@@ -582,9 +589,7 @@ class DEIMv2TransformerDecoder(nn.Module):
             [copy.deepcopy(decoder_layer) for _ in range(self.eval_idx + 1)]
             + [copy.deepcopy(decoder_layer_wide) for _ in range(num_layers - self.eval_idx - 1)]
         )
-        self.lqe_layers = nn.ModuleList(
-            [copy.deepcopy(LQE(4, 64, 2, reg_max, act=act)) for _ in range(num_layers)]
-        )
+        self.lqe_layers = nn.ModuleList([copy.deepcopy(LQE(4, 64, 2, reg_max, act=act)) for _ in range(num_layers)])
 
     def value_op(self, memory, value_proj, value_scale, memory_mask, memory_spatial_shapes):
         """Preprocess values for MSDeformableAttention."""
@@ -599,15 +604,25 @@ class DEIMv2TransformerDecoder(nn.Module):
     def convert_to_deploy(self):
         """Convert decoder to deploy mode by pruning unused layers."""
         self.project = weighting_function(self.reg_max, self.up, self.reg_scale, deploy=True)
-        self.layers = self.layers[:self.eval_idx + 1]
-        self.lqe_layers = nn.ModuleList(
-            [nn.Identity()] * self.eval_idx + [self.lqe_layers[self.eval_idx]]
-        )
+        self.layers = self.layers[: self.eval_idx + 1]
+        self.lqe_layers = nn.ModuleList([nn.Identity()] * self.eval_idx + [self.lqe_layers[self.eval_idx]])
 
     def forward(
-        self, target, ref_points_unact, memory, spatial_shapes,
-        bbox_head, score_head, query_pos_head, pre_bbox_head, integral, up, reg_scale,
-        attn_mask=None, memory_mask=None, dn_meta=None,
+        self,
+        target,
+        ref_points_unact,
+        memory,
+        spatial_shapes,
+        bbox_head,
+        score_head,
+        query_pos_head,
+        pre_bbox_head,
+        integral,
+        up,
+        reg_scale,
+        attn_mask=None,
+        memory_mask=None,
+        dn_meta=None,
     ):
         output = target
         output_detach = pred_corners_undetach = 0
@@ -672,8 +687,13 @@ class DEIMv2TransformerDecoder(nn.Module):
 
 
 def get_contrastive_denoising_training_group(
-    targets, num_classes, num_queries, class_embed,
-    num_denoising=100, label_noise_ratio=0.5, box_noise_scale=1.0,
+    targets,
+    num_classes,
+    num_queries,
+    class_embed,
+    num_denoising=100,
+    label_noise_ratio=0.5,
+    box_noise_scale=1.0,
 ):
     """Generate contrastive denoising training group for the DEIM decoder."""
     if num_denoising <= 0:
@@ -760,8 +780,8 @@ def get_contrastive_denoising_training_group(
 class DEIMv2Decoder(nn.Module):
     """DEIMv2 Decoder for object detection, integrating transformer decoder with fine-grained distribution refinement.
 
-    This module serves as the head of the DEIMv2 detection pipeline within the Ultralytics framework.
-    It takes multi-scale feature maps from the backbone/neck and produces detection predictions.
+    This module serves as the head of the DEIMv2 detection pipeline within the Ultralytics framework. It takes
+    multi-scale feature maps from the backbone/neck and produces detection predictions.
 
     Attributes:
         export (bool): Export mode flag.
@@ -838,7 +858,7 @@ class DEIMv2Decoder(nn.Module):
         """
         super().__init__()
         feat_channels = list(ch)
-        feat_strides = [8 * (2 ** i) for i in range(len(feat_channels))]
+        feat_strides = [8 * (2**i) for i in range(len(feat_channels))]
 
         assert len(feat_channels) <= nl
         assert len(feat_strides) == len(feat_channels)
@@ -869,10 +889,12 @@ class DEIMv2Decoder(nn.Module):
             else:
                 self.input_proj.append(
                     nn.Sequential(
-                        OrderedDict([
-                            ("conv", nn.Conv2d(in_channels, hd, 1, bias=False)),
-                            ("norm", nn.BatchNorm2d(hd)),
-                        ])
+                        OrderedDict(
+                            [
+                                ("conv", nn.Conv2d(in_channels, hd, 1, bias=False)),
+                                ("norm", nn.BatchNorm2d(hd)),
+                            ]
+                        )
                     )
                 )
         in_channels = feat_channels[-1]
@@ -882,10 +904,12 @@ class DEIMv2Decoder(nn.Module):
             else:
                 self.input_proj.append(
                     nn.Sequential(
-                        OrderedDict([
-                            ("conv", nn.Conv2d(in_channels, hd, 3, 2, padding=1, bias=False)),
-                            ("norm", nn.BatchNorm2d(hd)),
-                        ])
+                        OrderedDict(
+                            [
+                                ("conv", nn.Conv2d(in_channels, hd, 3, 2, padding=1, bias=False)),
+                                ("norm", nn.BatchNorm2d(hd)),
+                            ]
+                        )
                     )
                 )
                 in_channels = hd
@@ -894,16 +918,40 @@ class DEIMv2Decoder(nn.Module):
         self.up = nn.Parameter(torch.tensor([0.5]), requires_grad=False)
         self.reg_scale_param = nn.Parameter(torch.tensor([reg_scale]), requires_grad=False)
         decoder_layer = DEIMv2DecoderLayer(
-            hd, nh, d_ffn, dropout, act, nl, np,
-            cross_attn_method=cross_attn_method, use_gateway=use_gateway,
+            hd,
+            nh,
+            d_ffn,
+            dropout,
+            act,
+            nl,
+            np,
+            cross_attn_method=cross_attn_method,
+            use_gateway=use_gateway,
         )
         decoder_layer_wide = DEIMv2DecoderLayer(
-            hd, nh, d_ffn, dropout, act, nl, np,
-            cross_attn_method=cross_attn_method, layer_scale=layer_scale, use_gateway=use_gateway,
+            hd,
+            nh,
+            d_ffn,
+            dropout,
+            act,
+            nl,
+            np,
+            cross_attn_method=cross_attn_method,
+            layer_scale=layer_scale,
+            use_gateway=use_gateway,
         )
         self.decoder = DEIMv2TransformerDecoder(
-            hd, decoder_layer, decoder_layer_wide, ndl, nh,
-            reg_max, self.reg_scale_param, self.up, eval_idx, layer_scale, act=act,
+            hd,
+            decoder_layer,
+            decoder_layer_wide,
+            ndl,
+            nh,
+            reg_max,
+            self.reg_scale_param,
+            self.up,
+            eval_idx,
+            layer_scale,
+            act=act,
         )
 
         # Denoising
@@ -933,14 +981,19 @@ class DEIMv2Decoder(nn.Module):
         eval_idx_resolved = eval_idx if eval_idx >= 0 else ndl + eval_idx
         dec_score_head = nn.Linear(hd, nc)
         self.dec_score_head = nn.ModuleList(
-            [dec_score_head if share_score_head else copy.deepcopy(dec_score_head) for _ in range(eval_idx_resolved + 1)]
+            [
+                dec_score_head if share_score_head else copy.deepcopy(dec_score_head)
+                for _ in range(eval_idx_resolved + 1)
+            ]
             + [copy.deepcopy(dec_score_head) for _ in range(ndl - eval_idx_resolved - 1)]
         )
         dec_bbox_head = DEIMv2MLP(hd, hd, 4 * (reg_max + 1), 3, act=mlp_act)
         self.dec_bbox_head = nn.ModuleList(
             [dec_bbox_head if share_bbox_head else copy.deepcopy(dec_bbox_head) for _ in range(eval_idx_resolved + 1)]
-            + [DEIMv2MLP(scaled_dim, scaled_dim, 4 * (reg_max + 1), 3, act=mlp_act)
-               for _ in range(ndl - eval_idx_resolved - 1)]
+            + [
+                DEIMv2MLP(scaled_dim, scaled_dim, 4 * (reg_max + 1), 3, act=mlp_act)
+                for _ in range(ndl - eval_idx_resolved - 1)
+            ]
         )
 
         self._reset_parameters(feat_channels)
@@ -965,9 +1018,8 @@ class DEIMv2Decoder(nn.Module):
         xavier_uniform_(self.query_pos_head.layers[1].weight)
         xavier_uniform_(self.query_pos_head.layers[-1].weight)
         for m, in_channels in zip(self.input_proj, feat_channels):
-            if in_channels != self.hidden_dim:
-                if hasattr(m, "__getitem__"):
-                    xavier_uniform_(m[0].weight)
+            if in_channels != self.hidden_dim and hasattr(m, "__getitem__"):
+                xavier_uniform_(m[0].weight)
 
     def _get_encoder_input(self, feats):
         proj_feats = [self.input_proj[i](feat) for i, feat in enumerate(feats)]
@@ -993,12 +1045,9 @@ class DEIMv2Decoder(nn.Module):
         """Convert to deploy mode by pruning unused decoder layers and heads."""
         self.decoder.convert_to_deploy()
         eval_idx = self.decoder.eval_idx
-        self.dec_score_head = nn.ModuleList(
-            [nn.Identity()] * eval_idx + [self.dec_score_head[eval_idx]]
-        )
+        self.dec_score_head = nn.ModuleList([nn.Identity()] * eval_idx + [self.dec_score_head[eval_idx]])
         self.dec_bbox_head = nn.ModuleList(
-            [self.dec_bbox_head[i] if i <= eval_idx else nn.Identity()
-             for i in range(len(self.dec_bbox_head))]
+            [self.dec_bbox_head[i] if i <= eval_idx else nn.Identity() for i in range(len(self.dec_bbox_head))]
         )
 
     def _generate_anchors(self, spatial_shapes=None, grid_size=0.05, dtype=torch.float32, device="cpu"):
@@ -1010,12 +1059,14 @@ class DEIMv2Decoder(nn.Module):
 
         anchors = []
         for lvl, (h, w) in enumerate(spatial_shapes):
-            grid_y, grid_x = torch.meshgrid(
-                torch.arange(h), torch.arange(w), indexing="ij"
-            ) if TORCH_1_11 else torch.meshgrid(torch.arange(h), torch.arange(w))
+            grid_y, grid_x = (
+                torch.meshgrid(torch.arange(h), torch.arange(w), indexing="ij")
+                if TORCH_1_11
+                else torch.meshgrid(torch.arange(h), torch.arange(w))
+            )
             grid_xy = torch.stack([grid_x, grid_y], dim=-1)
             grid_xy = (grid_xy.unsqueeze(0) + 0.5) / torch.tensor([w, h], dtype=dtype)
-            wh = torch.ones_like(grid_xy) * grid_size * (2.0 ** lvl)
+            wh = torch.ones_like(grid_xy) * grid_size * (2.0**lvl)
             lvl_anchors = torch.cat([grid_xy, wh], dim=-1).reshape(-1, h * w, 4)
             anchors.append(lvl_anchors)
 
@@ -1092,9 +1143,7 @@ class DEIMv2Decoder(nn.Module):
                 if self.training
                 else None
             )
-            topk_memory = memory.gather(
-                dim=1, index=topk_ind.unsqueeze(-1).repeat(1, 1, memory.shape[-1])
-            )
+            topk_memory = memory.gather(dim=1, index=topk_ind.unsqueeze(-1).repeat(1, 1, memory.shape[-1]))
         return topk_memory, topk_logits, topk_anchors
 
     def forward(self, x: list[torch.Tensor], batch: dict | None = None) -> tuple | torch.Tensor:
@@ -1114,27 +1163,37 @@ class DEIMv2Decoder(nn.Module):
         # Prepare denoising training
         if self.training and self.num_denoising > 0 and batch is not None:
             targets = self._prepare_targets(batch)
-            denoising_logits, denoising_bbox_unact, attn_mask, dn_meta = (
-                get_contrastive_denoising_training_group(
-                    targets, self.nc, self.num_queries, self.denoising_class_embed,
-                    num_denoising=self.num_denoising,
-                    label_noise_ratio=self.label_noise_ratio,
-                    box_noise_scale=1.0,
-                )
+            denoising_logits, denoising_bbox_unact, attn_mask, dn_meta = get_contrastive_denoising_training_group(
+                targets,
+                self.nc,
+                self.num_queries,
+                self.denoising_class_embed,
+                num_denoising=self.num_denoising,
+                label_noise_ratio=self.label_noise_ratio,
+                box_noise_scale=1.0,
             )
         else:
             denoising_logits, denoising_bbox_unact, attn_mask, dn_meta = None, None, None, None
 
-        init_ref_contents, init_ref_points_unact, enc_topk_bboxes_list, enc_topk_logits_list = (
-            self._get_decoder_input(memory, spatial_shapes, denoising_logits, denoising_bbox_unact)
+        init_ref_contents, init_ref_points_unact, enc_topk_bboxes_list, enc_topk_logits_list = self._get_decoder_input(
+            memory, spatial_shapes, denoising_logits, denoising_bbox_unact
         )
 
         # Decoder
         out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits = self.decoder(
-            init_ref_contents, init_ref_points_unact, memory, spatial_shapes,
-            self.dec_bbox_head, self.dec_score_head, self.query_pos_head,
-            self.pre_bbox_head, self.integral, self.up, self.reg_scale_param,
-            attn_mask=attn_mask, dn_meta=dn_meta,
+            init_ref_contents,
+            init_ref_points_unact,
+            memory,
+            spatial_shapes,
+            self.dec_bbox_head,
+            self.dec_score_head,
+            self.query_pos_head,
+            self.pre_bbox_head,
+            self.integral,
+            self.up,
+            self.reg_scale_param,
+            attn_mask=attn_mask,
+            dn_meta=dn_meta,
         )
 
         if self.training and dn_meta is not None:
@@ -1157,14 +1216,17 @@ class DEIMv2Decoder(nn.Module):
             if self.aux_loss:
                 out["aux_outputs"] = [
                     {
-                        "pred_logits": a, "pred_boxes": b, "pred_corners": c, "ref_points": d,
-                        "teacher_corners": out_corners[-1], "teacher_logits": out_logits[-1],
+                        "pred_logits": a,
+                        "pred_boxes": b,
+                        "pred_corners": c,
+                        "ref_points": d,
+                        "teacher_corners": out_corners[-1],
+                        "teacher_logits": out_logits[-1],
                     }
                     for a, b, c, d in zip(out_logits[:-1], out_bboxes[:-1], out_corners[:-1], out_refs[:-1])
                 ]
                 out["enc_aux_outputs"] = [
-                    {"pred_logits": a, "pred_boxes": b}
-                    for a, b in zip(enc_topk_logits_list, enc_topk_bboxes_list)
+                    {"pred_logits": a, "pred_boxes": b} for a, b in zip(enc_topk_logits_list, enc_topk_bboxes_list)
                 ]
                 out["pre_outputs"] = {"pred_logits": pre_logits, "pred_boxes": pre_bboxes}
                 out["enc_meta"] = {"class_agnostic": self.query_select_method == "agnostic"}
@@ -1172,8 +1234,12 @@ class DEIMv2Decoder(nn.Module):
                 if dn_meta is not None:
                     out["dn_outputs"] = [
                         {
-                            "pred_logits": a, "pred_boxes": b, "pred_corners": c, "ref_points": d,
-                            "teacher_corners": dn_out_corners[-1], "teacher_logits": dn_out_logits[-1],
+                            "pred_logits": a,
+                            "pred_boxes": b,
+                            "pred_corners": c,
+                            "ref_points": d,
+                            "teacher_corners": dn_out_corners[-1],
+                            "teacher_logits": dn_out_logits[-1],
                         }
                         for a, b, c, d in zip(dn_out_logits, dn_out_bboxes, dn_out_corners, dn_out_refs)
                     ]
@@ -1196,8 +1262,10 @@ class DEIMv2Decoder(nn.Module):
         targets = []
         for i in range(bs):
             mask = batch_idx == i
-            targets.append({
-                "labels": batch["cls"][mask].to(torch.long).view(-1),
-                "boxes": batch["bboxes"][mask],
-            })
+            targets.append(
+                {
+                    "labels": batch["cls"][mask].to(torch.long).view(-1),
+                    "boxes": batch["bboxes"][mask],
+                }
+            )
         return targets

@@ -79,9 +79,9 @@ from ultralytics.utils.torch_utils import (
 def _apply_groups_override(data: dict, groups: dict) -> dict:
     """Merge several original classes into named groups in-memory.
 
-    Labels with class ids not appearing in any group are dropped at load time. The original data.yaml and label
-    files are untouched -- the resolved remap is stashed on the data dict under 'groups_remap' for the dataset to
-    apply in `YOLODataset.update_labels`.
+    Labels with class ids not appearing in any group are dropped at load time. The original data.yaml and label files
+    are untouched -- the resolved remap is stashed on the data dict under 'groups_remap' for the dataset to apply in
+    `YOLODataset.update_labels`.
 
     Args:
         data (dict): Dataset dict from `check_det_dataset`, containing at least 'names'.
@@ -120,7 +120,7 @@ def _apply_groups_override(data: dict, groups: dict) -> dict:
     data["groups_remap"] = remap
     data["names"] = new_names
     data["nc"] = len(new_names)
-    dropped = sorted({int(i) for i in orig_names.keys()} - set(remap.keys()))
+    dropped = sorted({int(i) for i in orig_names} - set(remap.keys()))
     LOGGER.info(
         f"groups: collapsed {len(remap)} original classes into {len(new_names)} groups "
         f"({', '.join(new_names.values())}). "
