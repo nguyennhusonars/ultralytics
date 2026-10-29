@@ -359,7 +359,7 @@ class Bottleneck_DySnakeConv(Bottleneck):
         super().__init__(c1, c2, shortcut, g, k, e)
         c_ = int(c2 * e)  # hidden channels
         self.cv2 = DySnakeConv(c_, c2, k[1])
-        self.cv3 = Conv(c2 * 3, c2, k=1)
+        self.cv3 = Conv(c2, c2, k=1)  # DySnakeConv already fuses its 3 branches to c2 (conv_1x1)
  
     def forward(self, x):
         """'forward()' applies the YOLOv5 FPN to input data."""

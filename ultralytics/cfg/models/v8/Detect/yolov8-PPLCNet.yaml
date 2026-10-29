@@ -35,11 +35,11 @@ backbone:
 # YOLOv8.0n head
 head:
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
-  - [[-1, 9], 1, Concat, [1]]  # cat backbone P4
+  - [[-1, 7], 1, Concat, [1]]  # cat backbone P4
   - [-1, 3, C2f, [512]]  # 13
 
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
-  - [[-1, 7], 1, Concat, [1]]  # cat backbone P3
+  - [[-1, 5], 1, Concat, [1]]  # cat backbone P3
   - [-1, 3, C2f, [256]]  # 16 (P3/8-small)
 
   - [-1, 1, Conv, [256, 3, 2]]

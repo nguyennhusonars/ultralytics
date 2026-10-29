@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 
 from ultralytics.nn.autobackend import check_class_names
+from ultralytics.nn.modules.block import OREPA as OREPA_block  # separate copy used by OREPANBottleneck
+from ultralytics.nn.modules.REPVGGOREPA import RepVGGBlock_OREPA
 from ultralytics.nn.modules import (
     C3k2UltraPro,
     OptimizedMOE,
@@ -1302,7 +1304,7 @@ class BaseModel(torch.nn.Module):
                     m.switch_to_deploy()
                 if isinstance(m, (OverLoCK)):
                     m.reparm()
-                if isinstance(m, (OREPA, OREPA_2, VanillaStem, VanillaBlock, DilatedReparamBlock, UniRepLKNetBlock, RepViT, VanillaNet)):
+                if isinstance(m, (OREPA, OREPA_block, RepVGGBlock_OREPA, OREPA_2, VanillaStem, VanillaBlock, DilatedReparamBlock, UniRepLKNetBlock, RepViT, VanillaNet)):
                     m.switch_to_deploy()
                 if isinstance(m, UniRepLKNetBlock_pro):
                     m.reparameterize()
@@ -2723,7 +2725,8 @@ def parse_model(d, ch, verbose=True):
             ResXCSPC,
             ES_Bottleneck,
             MobileOneBlock,
-            HorBlock,
+            OREPA,  # conv-style (c1, c2, k, s); the only config uses it as the stride-2 downsample
+            C2f_SCConv,
             EffectiveSE,
             CAConv,
             C2f_TripletAt,
@@ -2882,6 +2885,7 @@ def parse_model(d, ch, verbose=True):
             C3k2_UIB,
             RepHDW,
             RepHMS,
+            ConvMS,
             MANet,
             HyperComputeModule_11,
             ALSS,
@@ -2950,6 +2954,11 @@ def parse_model(d, ch, verbose=True):
             C3k2UltraPro,
             C3k2MA,
             C3k2MA_Lite,
+            RepBlock,  # these take (c1, c2, n): n built inside, not as n stacked copies
+            C2f_SCConv,
+            CNeB,
+            C3C2,
+            C3_TripletAt,
             
             BottleneckCSP, 
             BottleneckCSP2, 
@@ -2976,7 +2985,6 @@ def parse_model(d, ch, verbose=True):
             ResXCSPA, 
             ResXCSPB, 
             ResXCSPC, 
-            HorBlock,
             SPPCSP,
             SPPCSPC, 
             CSPStage, 
@@ -3111,6 +3119,8 @@ def parse_model(d, ch, verbose=True):
             if m is C2fAttn:  # set 1) embed channels and 2) num heads
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
+            if m is nn.ConvTranspose2d and len(args) > 5 and args[5] == args[0]:  # depthwise (groups == c2): scale groups too
+                args[5] = c2
 
             args = [c1, c2, *args[1:]]
             if m in repeat_modules:
@@ -3134,7 +3144,7 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
         elif m in {SegNext_Attention, DAttention, DAttentionBaseline, TripletAttention, deformable_LKA_Attention, 
                    ContextGuidedBlock_Down, MultiDilatelocalAttention, BiLevelRoutingAttention,
-                   SEAM, MultiSEAM, FFA, HAT, OREPA, IAT, SELayerV1, SELayerV2, LSKA, RIDNET,
+                   SEAM, MultiSEAM, FFA, HAT, IAT, SELayerV1, SELayerV2, LSKA, RIDNET,
                    ADNet, FocalModulation, EMA, LAE, LocalWindowAttention, DiTBlock}:
             c2 = ch[f]
             args = [c2, *args]
@@ -3162,8 +3172,11 @@ def parse_model(d, ch, verbose=True):
             args = [c1, *args[0:]]
         elif m is AVG:
             c2 = ch[f]
-        elif m in (Concat, SimFusion_4in, AdvPoolFusion, Concat_BiFPN, LCA_Concat, LCA_DynamicTanh_Concat, MyConcat4, MyConcat6):
+        elif m in (Concat, SimFusion_4in, AdvPoolFusion, Concat_BiFPN, LCA_Concat, MyConcat4, MyConcat6):
             c2 = sum(ch[x] for x in f)
+        elif m is LCA_DynamicTanh_Concat:  # fuses to `out` channels via conv_down; dim = the wider input
+            c2 = make_divisible(min(args[1], max_channels) * width, 8)
+            args = [max(ch[x] for x in f), c2, *args[2:]]
         elif m is DASI:
             # 假设DASI的from参数为[f_low, f_mid, f_high]，对应低、中、高分辨率特征
             f_high, f_low, f_mid =  f  # 解包三个索引
@@ -3210,12 +3223,13 @@ def parse_model(d, ch, verbose=True):
             c2 = ch[f] * 4
         elif m is Transpose:
             c1 = ch[f]
-            c2 = args[0]
+            c2 = make_divisible(min(args[0], max_channels) * width, 8)
             args = [c1, c2, *args[1:]]
         elif m in (MobileOne, MobileOne_origin, MobileOneBlock_origin):
             c1, c2 = ch[f], args[0]
             c2 = make_divisible(min(c2, max_channels) * width, 8)
-            args = [c1, c2, n, *args[1:]]   
+            args = [c1, c2, n, *args[1:]]
+            n = 1  # n is built inside the module
         elif m is Zoom_cat:
             c2 = sum(ch[x] for x in f)
         elif m is Add:
@@ -3243,8 +3257,11 @@ def parse_model(d, ch, verbose=True):
             args = [ch[f], c2]
         elif m in (CSPResNet_CBS, CSPResNet, ConvBNLayer, ResSPP):
             c2 = args[1]
+        elif m is HorBlock:  # HorBlock(dim) keeps its channels; n repeats are n stacked blocks
+            c2 = ch[f]
+            args = [c2, *args[1:]]
         elif m is SNI:
-            c1, c2, up_f = ch[f], make_divisible(args[0] * width, 8), args[1]
+            c1, c2, up_f = ch[f], ch[f], args[1]  # SNI only upsamples: channels pass through
             args = [c1, c2, up_f]
         elif m in frozenset(
             {
@@ -3310,9 +3327,7 @@ def parse_model(d, ch, verbose=True):
         elif m is F2SoftHG:
             c1 = ch[f[1]]
             c2 = c1
-            args = [c1, c2, *args]
-            if scale in "m":  
-                args.append(False)
+            args = [c1, c2, *args, sum(ch[x] for x in f) == 4 * c1]  # adjust_channels: fused input is 4C, or 3C when max_channels caps P5
         elif m is DownsampleConv:
             c1 = ch[f]
             c2 = c1 * 2
@@ -3320,12 +3335,9 @@ def parse_model(d, ch, verbose=True):
             if scale in "lx":  # for L/X sizes
                 args.append(False)
                 c2 =c1
-        elif m is ShapeAlignConv:
-            c2 = ch[f] * 2
-            args = [ch[f]]
-            if scale in "m": 
-                c2 = ch[f]
-                args.append(False)
+        elif m is ShapeAlignConv:  # match P5, which is 2x P4 unless max_channels caps it
+            c2 = ch[f] * 2 if 2 * ch[f] <= max_channels * width else ch[f]
+            args = [ch[f], c2 != ch[f]]
         elif m is FullPAD_Tunnel:
             c2 = ch[f[0]]
         elif m is MergeConv:

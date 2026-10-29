@@ -118,7 +118,7 @@ class GaborSingle(nn.Module):
 
     def forward(self, x):
         out = self.gabor(self.t)
-        out = F.conv2d(x, out, stride=1, padding=(out.shape[-2] - 1) // 2)
+        out = F.conv2d(x, out, stride=1, padding=int(out.shape[-2] - 1) // 2)
         out = self.relu(out)
         out = F.dropout(out, 0.3)
         out = F.pad(out, (1, 0, 1, 0), mode="constant", value=0)  # Padding on the left and top
@@ -207,7 +207,7 @@ class FrFTSingle(nn.Module):
 
     def forward(self, x):
         out = self.fft(self.t)
-        out = F.conv2d(x, out, stride=1, padding=(out.shape[-2] - 1) // 2)
+        out = F.conv2d(x, out, stride=1, padding=int(out.shape[-2] - 1) // 2)
         out = self.relu(out)
         out = F.dropout(out, 0.3)
         out = F.pad(out, (1, 0, 1, 0), mode="constant", value=0)

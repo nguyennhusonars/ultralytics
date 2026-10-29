@@ -33,11 +33,11 @@ head:
     [ -1, 1, C2f, [ 64 ] ],  # 12 (P3/8-small)
 
     [ -1, 1, Conv, [ 64, 3, 2 ] ],
-    [ [ -1, 12 ], 1, Concat, [ 1 ] ],  # cat head P4
+    [ [ -1, 9 ], 1, Concat, [ 1 ] ],  # cat head P4
     [ -1, 1, C2f, [ 128 ] ],  # 15 (P4/16-medium)
 
     [ -1, 1, Conv, [ 128, 3, 2 ] ],
-    [ [ -1, 9 ], 1, Concat, [ 1 ] ],  # cat head P5
+    [ [ -1, 6 ], 1, Concat, [ 1 ] ],  # cat head P5
     [ -1, 1, C2f, [ 256 ] ],  # 18 (P5/32-large)
 
     [ [ 12, 15, 18 ], 1, Detect, [ nc ] ],  # Detect(P3, P4, P5)

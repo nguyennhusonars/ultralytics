@@ -4437,38 +4437,38 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training)
 
 
-# class Attention(torch.nn.Module):
-#     def __init__(self, dim, key_dim, num_heads, attn_ratio=4):
-#         super().__init__()
-#         self.num_heads = num_heads
-#         self.scale = key_dim ** -0.5
-#         self.key_dim = key_dim
-#         self.nh_kd = nh_kd = key_dim * num_heads  # num_head key_dim
-#         self.d = int(attn_ratio * key_dim)
-#         self.dh = int(attn_ratio * key_dim) * num_heads
-#         self.attn_ratio = attn_ratio
+class GoldAttention(torch.nn.Module):  # GOLD-YOLO attention; the name `Attention` now belongs to the Ultralytics PSA one
+    def __init__(self, dim, key_dim, num_heads, attn_ratio=4):
+        super().__init__()
+        self.num_heads = num_heads
+        self.scale = key_dim ** -0.5
+        self.key_dim = key_dim
+        self.nh_kd = nh_kd = key_dim * num_heads  # num_head key_dim
+        self.d = int(attn_ratio * key_dim)
+        self.dh = int(attn_ratio * key_dim) * num_heads
+        self.attn_ratio = attn_ratio
         
-#         self.to_q = Conv(dim, nh_kd, 1, act=False)
-#         self.to_k = Conv(dim, nh_kd, 1, act=False)
-#         self.to_v = Conv(dim, self.dh, 1, act=False)
+        self.to_q = Conv(dim, nh_kd, 1, act=False)
+        self.to_k = Conv(dim, nh_kd, 1, act=False)
+        self.to_v = Conv(dim, self.dh, 1, act=False)
         
-#         self.proj = torch.nn.Sequential(nn.ReLU6(), Conv(self.dh, dim, act=False))
+        self.proj = torch.nn.Sequential(nn.ReLU6(), Conv(self.dh, dim, act=False))
     
-#     def forward(self, x):  # x (B,N,C)
-#         B, C, H, W = get_shape(x)
+    def forward(self, x):  # x (B,N,C)
+        B, C, H, W = get_shape(x)
         
-#         qq = self.to_q(x).reshape(B, self.num_heads, self.key_dim, H * W).permute(0, 1, 3, 2)
-#         kk = self.to_k(x).reshape(B, self.num_heads, self.key_dim, H * W)
-#         vv = self.to_v(x).reshape(B, self.num_heads, self.d, H * W).permute(0, 1, 3, 2)
+        qq = self.to_q(x).reshape(B, self.num_heads, self.key_dim, H * W).permute(0, 1, 3, 2)
+        kk = self.to_k(x).reshape(B, self.num_heads, self.key_dim, H * W)
+        vv = self.to_v(x).reshape(B, self.num_heads, self.d, H * W).permute(0, 1, 3, 2)
         
-#         attn = torch.matmul(qq, kk)
-#         attn = attn.softmax(dim=-1)  # dim = k
+        attn = torch.matmul(qq, kk)
+        attn = attn.softmax(dim=-1)  # dim = k
         
-#         xx = torch.matmul(attn, vv)
+        xx = torch.matmul(attn, vv)
         
-#         xx = xx.permute(0, 1, 3, 2).reshape(B, self.dh, H, W)
-#         xx = self.proj(xx)
-#         return xx
+        xx = xx.permute(0, 1, 3, 2).reshape(B, self.dh, H, W)
+        xx = self.proj(xx)
+        return xx
 
 class Attention(nn.Module):
     """Attention module that performs self-attention on the input tensor.
@@ -4539,7 +4539,7 @@ class top_Block(nn.Module):
         self.num_heads = num_heads
         self.mlp_ratio = mlp_ratio
         
-        self.attn = Attention(dim, key_dim=key_dim, num_heads=num_heads, attn_ratio=attn_ratio)
+        self.attn = GoldAttention(dim, key_dim=key_dim, num_heads=num_heads, attn_ratio=attn_ratio)
         
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -5847,7 +5847,7 @@ class MobileOne(nn.Module):
     def __init__(self, in_channels, out_channels, n, k,
                  stride=1, dilation=1, padding_mode='zeros', deploy=False, use_se=False):
         super().__init__()
-        self.m = nn.Sequential(*(MobileOneBlock(in_channels, out_channels, k, stride, deploy) for _ in range(n)))
+        self.m = nn.Sequential(*(MobileOneBlock(in_channels if i == 0 else out_channels, out_channels, k, stride, deploy) for i in range(n)))
 
     def forward(self, x):
         x = self.m(x)
