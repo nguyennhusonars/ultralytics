@@ -15,6 +15,7 @@ import torch
 from torch import nn
 
 from ultralytics.nn.autobackend import check_class_names
+from ultralytics.nn import zoo
 from ultralytics.nn.modules import (
     AIFI,
     C1,
@@ -276,6 +277,7 @@ class BaseModel(torch.nn.Module):
                     m.forward = m.forward_fuse
                 if isinstance(m, Detect):
                     m.fuse()  # remove the unused detection branch
+            zoo.fuse(self.model)
             self.info(verbose=verbose, imgsz=imgsz)
 
         return self
@@ -1418,9 +1420,9 @@ class YOLOEModel(DetectionModel):
             names (list[str]): List of class names.
             embeddings (torch.Tensor): Embeddings tensor.
         """
-        assert not hasattr(self.model[-1], "lrpc"), (
-            "Prompt-free model does not support setting classes. Please try with Text/Visual prompt models."
-        )
+        assert not hasattr(
+            self.model[-1], "lrpc"
+        ), "Prompt-free model does not support setting classes. Please try with Text/Visual prompt models."
         assert embeddings.ndim == 3
         names = check_class_names(names)  # validate before any state is written
         if self.model[-1].is_fused:  # validators drop "/" synonyms
@@ -2091,7 +2093,7 @@ def parse_model(d, ch, verbose=True):
         if not scale:
             scale = next(iter(scales.keys()))
             LOGGER.warning(f"no model scale passed. Assuming scale='{scale}'.")
-        depth, width, max_channels = scales[scale]
+        depth, width, max_channels = scales[scale][:3]  # zoo YAMLs add a 4th value, the HyperComputeModule threshold
 
     restricted = _SafeLoad.restricted()
     default_act = Conv.default_act  # restore before returning: Conv.default_act is process-wide state
@@ -2163,15 +2165,26 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
         }
     )
-    for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
+    zoo_ctx = {
+        "nc": nc,
+        "width": width,
+        "max_channels": max_channels,
+        "scale": scale,
+        "reg_max": reg_max,
+        "end2end": end2end,
+        "threshold": scales[scale][3] if scales and len(scales[scale]) > 3 else 0,
+    }
+    for i, (f, n, m, args) in enumerate(zoo.expand(d["backbone"] + d["head"])):  # from, number, module, args
         m = (
             getattr(torch.nn, m[3:])
             if m.startswith("nn.")
             else getattr(__import__("torchvision").ops, m[16:])
             if m.startswith("torchvision.ops.")
             else globals()[m]
+            if m in globals()
+            else zoo.resolve(m)
         )  # get module
-        if restricted and not (isinstance(m, type) and issubclass(m, torch.nn.Module)):
+        if restricted and not (isinstance(m, type) and issubclass(m, torch.nn.Module)) and not zoo.handles(m):
             # Under restricted loading, only known model layers may be named here.
             raise TypeError(emojis(f"ERROR ❌️ module '{m}' is not a permitted model layer under restricted loading."))
         for j, a in enumerate(args):
@@ -2179,7 +2192,11 @@ def parse_model(d, ch, verbose=True):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
-        if m in base_modules:
+        if zoo.handles(m):
+            zoo_ctx["legacy"] = legacy
+            m, c2, args, n = zoo.parse(m, f, n, args, ch, zoo_ctx)
+            legacy = zoo_ctx["legacy"]
+        elif m in base_modules:
             c1, c2 = ch[f], args[0]
             if m is not Classify:  # Classify() output must stay at nc; every other layer scales by width
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
@@ -2264,11 +2281,17 @@ def parse_model(d, ch, verbose=True):
         else:
             c2 = ch[f]
 
-        m_ = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+        m_ = (
+            m
+            if isinstance(m, torch.nn.Module)
+            else torch.nn.Sequential(*(m(*args) for _ in range(n)))
+            if n > 1
+            else m(*args)
+        )
         if m is SPPF and len(args) <= 3:  # Legacy YAML rows predate the unactivated YOLO26 SPPF.
             for block in m_ if n > 1 else [m_]:
                 block.cv1.act = Conv.default_act
-        t = str(m)[8:-2].replace("__main__.", "")  # module type
+        t = type(m).__name__ if isinstance(m, torch.nn.Module) else str(m)[8:-2].replace("__main__.", "")  # module type
         m_.np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type = i, f, t  # attach index, 'from' index, type
         if verbose:
