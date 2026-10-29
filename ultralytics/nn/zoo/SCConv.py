@@ -187,6 +187,20 @@ class C2f_SCConv(nn.Module):
         return self.cv2(torch.cat(y, 1))
 
 
+class SCConv(nn.Module):
+    """Self-calibrated convolution (SCNet, CVPR 2020) with stride, as the fork's YAMLs use `SCConv` (c1, c2, s)."""
+
+    def __init__(self, c1, c2, s=1, d=1, g=1, pooling_r=4):
+        super().__init__()
+        self.k2 = nn.Sequential(nn.AvgPool2d(kernel_size=pooling_r, stride=pooling_r), Conv(c1, c1, k=3, d=d, g=g, act=False))
+        self.k3 = Conv(c1, c1, k=3, d=d, g=g, act=False)
+        self.k4 = Conv(c1, c2, k=3, s=s, d=d, g=g, act=False)
+
+    def forward(self, x):
+        out = torch.sigmoid(x + F.interpolate(self.k2(x), x.shape[2:]))  # sigmoid(identity + k2)
+        return self.k4(self.k3(x) * out)
+
+
 class ScConv(nn.Module):
     def __init__(
         self,

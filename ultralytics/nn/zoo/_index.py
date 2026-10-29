@@ -223,7 +223,7 @@ INDEX = {
     "ResSPP": ("ppyolo", "ResSPP"),
     "ResXCSPB": ("block", "ResXCSPB"),
     "ResXCSPC": ("block", "ResXCSPC"),
-    "SCConv": ("SCConv", "ScConv"),
+    "SCConv": ("SCConv", "SCConv"),
     "SEAM": ("SEAM", "SEAM"),
     "SEAttention": ("block", "SEAttention"),
     "SELayerV2": ("SENetV2", "SELayerV2"),

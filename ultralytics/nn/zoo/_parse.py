@@ -211,7 +211,6 @@ BASE = frozenset(
         "Partial_PatchEmbed",
         "PatchEmbed",
         "PatchEmbed_Faster",
-        "PatchMerging",
         "PatchMerging_Faster",
         "Pzconv",
         "RBFKANConv2d",
@@ -232,7 +231,6 @@ BASE = frozenset(
         "RepNCSP_AKConv",
         "RepVGG",
         "RepVGGBlock",
-        "RepViTBlock",
         "ResCSPA",
         "ResCSPB",
         "ResCSPC",
@@ -253,7 +251,6 @@ BASE = frozenset(
         "StackConvPatchEmbed",
         "StripBlock",
         "StripDownsample",
-        "SwinStage",
         "UPA",
         "UltimateOptimizedMoE",
         "UltraOptimizedMoE",
@@ -1066,6 +1063,9 @@ OTHER = frozenset(
         "MSCAMv3",
         "MSCAMv4",
         "MSCAMv5",
+        "RepViTBlock",
+        "PatchMerging",
+        "SwinStage",
         FEATURE,
     }
 )
@@ -1108,7 +1108,15 @@ def parse(m, f, n, args, ch, ctx):
                 args[3:4] = [True]
         if name == "A2C2fMoE":
             ctx["legacy"] = False
+        if name == "MobileNetV3_BLOCK" and len(args) > 3 and args[3] is not None:  # expansion scales like c2
+            args[3] = scaled(args[3])
         return m, c2, args, n
+    if name == "RepViTBlock":  # (in1, inp, hidden_dim, oup, ...): the block requires hidden_dim == 2 * inp
+        return m, ch[f], [ch[f], ch[f], 2 * ch[f], ch[f], *args], n
+    if name == "PatchMerging":  # Swin merging always doubles the width, max_channels or not
+        return m, 2 * ch[f], [ch[f], 2 * ch[f]], n
+    if name == "SwinStage":  # (dim, c2, depth, heads, window): keeps its width
+        return m, ch[f], [ch[f], ch[f], *args[1:]], n
     if name in SAME_CH:
         return m, ch[f], [ch[f], *args], n
     if name in ATTN_C1:

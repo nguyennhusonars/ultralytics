@@ -98,7 +98,7 @@ def fuse(model):
         if not type(m).__module__.startswith(__name__):
             continue
         name = type(m).__name__
-        if name == "FDConv_cfg" and hasattr(m, "bn"):
+        if name == "FDConv_cfg" and hasattr(m, "bn") and not m.conv.dynamic:  # a per-sample kernel cannot absorb BN
             m.conv = fuse_conv_and_bn(m.conv, m.bn)
             delattr(m, "bn")
             m.forward = m.forward_fuse

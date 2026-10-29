@@ -82,11 +82,11 @@ class GPSA(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, x):
+    def forward(self, x, hw):
         B, N, C = x.shape
-        if self.rel_indices is None or self._last_N_for_rel_indices != N:
-            self.get_rel_indices(N, x.device)
-            self._last_N_for_rel_indices = N
+        if self.rel_indices is None or self._last_N_for_rel_indices != hw:
+            self.get_rel_indices(*hw, x.device)
+            self._last_N_for_rel_indices = hw
 
         if self.rel_indices.device != x.device:
             self.rel_indices = self.rel_indices.to(x.device)
@@ -118,9 +118,10 @@ class GPSA(nn.Module):
 
     def get_attention_map(self, x, return_map=False):
         B, N, C = x.shape
-        if self.rel_indices is None or self._last_N_for_rel_indices != N:
-            self.get_rel_indices(N, x.device)
-            self._last_N_for_rel_indices = N
+        side = int(N**0.5)
+        if self.rel_indices is None or self._last_N_for_rel_indices != (side, side):
+            self.get_rel_indices(side, side, x.device)
+            self._last_N_for_rel_indices = (side, side)
         if self.rel_indices.device != x.device:
             self.rel_indices = self.rel_indices.to(x.device)
 
@@ -151,19 +152,11 @@ class GPSA(nn.Module):
                         -2.0 * (h2_idx - center) * locality_distance * locality_strength
                     )
 
-    def get_rel_indices(self, num_patches, device):
-        img_size_float = num_patches**0.5
-        img_size = int(img_size_float)
-
-        if abs(img_size_float - img_size) > 1e-6:  # Check if not a perfect square more robustly
-            raise ValueError(
-                f"GPSA.get_rel_indices: num_patches ({num_patches}) must be a perfect square "
-                f"to compute relative spatial indices. Got img_size_float={img_size_float}."
-            )
-
+    def get_rel_indices(self, h, w, device):
+        num_patches = h * w  # an h x w patch grid: rectangular (letterboxed) inputs work too
         rel_indices_tensor = torch.zeros(1, num_patches, num_patches, 3, device=device)
-        patch_row_coords = torch.arange(img_size, device=device).repeat_interleave(img_size)
-        patch_col_coords = torch.arange(img_size, device=device).repeat(img_size)
+        patch_row_coords = torch.arange(h, device=device).repeat_interleave(w)
+        patch_col_coords = torch.arange(w, device=device).repeat(h)
         rel_idx_x = patch_col_coords.view(-1, 1) - patch_col_coords.view(1, -1)
         rel_idx_y = patch_row_coords.view(-1, 1) - patch_row_coords.view(1, -1)
         rel_idx_dist_sq = rel_idx_x.pow(2) + rel_idx_y.pow(2)
@@ -276,9 +269,9 @@ class Block(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-    def forward(self, x):
+    def forward(self, x, hw):
         x_norm1 = self.norm1(x)
-        x = x + self.drop_path(self.attn(x_norm1))
+        x = x + self.drop_path(self.attn(x_norm1, hw) if self.use_gpsa else self.attn(x_norm1))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
@@ -517,7 +510,7 @@ class VisionTransformer(nn.Module):
         for i, blk in enumerate(self.blocks):
             if i == self.local_up_to_layer:
                 current_x = torch.cat((cls_tokens, current_x), dim=1)
-            current_x = blk(current_x)
+            current_x = blk(current_x, (current_H_patch, current_W_patch))
 
             if i in self.out_indices:
                 feature_map_tokens = (
@@ -547,6 +540,8 @@ class VisionTransformer(nn.Module):
                 outs.append(out_tensor)
 
         if self.out_indices:
+            if len(outs) == 3:  # plain ViT, every output is stride 16: rescale to a P3-P5 pyramid (ViTDet-style)
+                outs = [F.interpolate(outs[0], scale_factor=2.0), outs[1], F.max_pool2d(outs[2], 2)]
             return outs
 
         current_x = self.norm(current_x)

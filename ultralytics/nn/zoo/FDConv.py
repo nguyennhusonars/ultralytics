@@ -1,5 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-"""Ported from ultralytics_sonnn nn/modules/FDConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
+"""FDConv (Frequency Dynamic Convolution, CVPR 2025), ported from https://github.com/Linwei-Chen/FDConv (MIT).
+
+The fork's own rewrite (ultralytics_sonnn nn/modules/FDConv.py) could not run once channels exceeded 16; this follows
+FDConv_detection/mmdet_custom/FDConv.py with mmcv, plotting and dead options removed.
+"""
+
+import math
 
 import torch
 import torch.nn as nn
@@ -7,41 +13,38 @@ import torch.nn.functional as F
 
 
 class StarReLU(nn.Module):
-    """
-    StarReLU: s * relu(x) ** 2 + b
-    """
+    """StarReLU: s * relu(x) ** 2 + b."""
 
-    def __init__(self, scale_value=1.0, bias_value=0.0, scale_learnable=True, bias_learnable=True, inplace=False):
+    def __init__(self, scale_value=1.0, bias_value=0.0):
         super().__init__()
-        self.relu = nn.ReLU(inplace=inplace)
-        self.scale = nn.Parameter(torch.tensor(scale_value), requires_grad=scale_learnable)
-        self.bias = nn.Parameter(torch.tensor(bias_value), requires_grad=bias_learnable)
+        self.relu = nn.ReLU()
+        self.scale = nn.Parameter(scale_value * torch.ones(1))
+        self.bias = nn.Parameter(bias_value * torch.ones(1))
 
     def forward(self, x):
-        return self.scale * self.relu(x).pow(2) + self.bias
+        return self.scale * self.relu(x) ** 2 + self.bias
 
 
 def get_fft2freq(d1, d2, use_rfft=False):
+    """Coordinates (2, d1 * d2') of a (d1, d2) spectrum sorted from low to high frequency, and the frequency grid."""
     freq_h = torch.fft.fftfreq(d1)
     freq_w = torch.fft.rfftfreq(d2) if use_rfft else torch.fft.fftfreq(d2)
-    grid = torch.stack(torch.meshgrid(freq_h, freq_w), dim=-1)
-    dist = torch.norm(grid, dim=-1)
-    flat = dist.view(-1)
-    _, idx = torch.sort(flat)
+    freq_hw = torch.stack(torch.meshgrid(freq_h, freq_w, indexing="ij"), dim=-1)
+    _, indices = torch.sort(torch.norm(freq_hw, dim=-1).view(-1))
     if use_rfft:
-        d2_ = d2 // 2 + 1
-    else:
-        d2_ = d2
-    coords = torch.stack([idx // d2_, idx % d2_], dim=1)
-    return coords.t(), grid
+        d2 = d2 // 2 + 1
+    return torch.stack([indices // d2, indices % d2], dim=-1).permute(1, 0), freq_hw
 
 
 class KernelSpatialModulation_Global(nn.Module):
+    """Channel, filter, spatial and kernel attentions from the pooled input (KSM global branch)."""
+
     def __init__(
         self,
         in_planes,
         out_planes,
         kernel_size,
+        groups=1,
         reduction=0.0625,
         kernel_num=4,
         min_channel=16,
@@ -55,281 +58,333 @@ class KernelSpatialModulation_Global(nn.Module):
     ):
         super().__init__()
         attention_channel = max(int(in_planes * reduction), min_channel)
+        self.act_type = act_type
         self.kernel_size = kernel_size
         self.temperature = temp
         self.kernel_temp = kernel_temp
         self.att_multi = att_multi
-        self.ksm_only_kernel_att = ksm_only_kernel_att
-        self.act_type = act_type
 
         self.fc = nn.Conv2d(in_planes, attention_channel, 1, bias=False)
         self.bn = nn.BatchNorm2d(attention_channel)
         self.relu = StarReLU()
 
-        # Channel
         if ksm_only_kernel_att:
-            self.func_channel = lambda x: 1.0
+            self.func_channel = self.skip
         else:
-            out_c = in_planes * 2 if spatial_freq_decompose and kernel_size > 1 else in_planes
-            self.channel_fc = nn.Conv2d(attention_channel, out_c, 1)
-            self.func_channel = self._get_channel
-        # Filter
-        if in_planes == out_planes or ksm_only_kernel_att:
-            self.func_filter = lambda x: 1.0
+            c = in_planes * 2 if spatial_freq_decompose and kernel_size > 1 else in_planes
+            self.channel_fc = nn.Conv2d(attention_channel, c, 1, bias=True)
+            self.func_channel = self.get_channel_attention
+
+        if (in_planes == groups and in_planes == out_planes) or ksm_only_kernel_att:  # depth-wise convolution
+            self.func_filter = self.skip
         else:
-            out_f = out_planes * 2 if spatial_freq_decompose and stride > 1 else out_planes
-            self.filter_fc = nn.Conv2d(attention_channel, out_f, 1, stride=stride)
-            self.func_filter = self._get_filter
-        # Spatial
-        if kernel_size == 1 or ksm_only_kernel_att:
-            self.func_spatial = lambda x: 1.0
+            c = out_planes * 2 if spatial_freq_decompose else out_planes
+            self.filter_fc = nn.Conv2d(attention_channel, c, 1, stride=stride, bias=True)
+            self.func_filter = self.get_filter_attention
+
+        if kernel_size == 1 or ksm_only_kernel_att:  # point-wise convolution
+            self.func_spatial = self.skip
         else:
-            self.spatial_fc = nn.Conv2d(attention_channel, kernel_size * kernel_size, 1)
-            self.func_spatial = self._get_spatial
-        # Kernel mixing
+            self.spatial_fc = nn.Conv2d(attention_channel, kernel_size * kernel_size, 1, bias=True)
+            self.func_spatial = self.get_spatial_attention
+
         if kernel_num == 1:
-            self.func_kernel = lambda x: 1.0
+            self.func_kernel = self.skip
         else:
-            self.kernel_fc = nn.Conv2d(attention_channel, kernel_num, 1)
-            self.func_kernel = self._get_kernel
+            self.kernel_fc = nn.Conv2d(attention_channel, kernel_num, 1, bias=True)
+            self.func_kernel = self.get_kernel_attention
 
-    def _get_channel(self, x):
-        att = self.channel_fc(x).view(x.size(0), 1, 1, -1, 1, 1)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            if isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        for name in ("spatial_fc", "kernel_fc", "channel_fc"):  # near-zero init: attentions start neutral
+            if hasattr(self, name):
+                nn.init.normal_(getattr(self, name).weight, std=1e-6)
+
+    @staticmethod
+    def skip(_):
+        return 1.0
+
+    def _act(self, att):
         if self.act_type == "sigmoid":
             return torch.sigmoid(att / self.temperature) * self.att_multi
-        elif self.act_type == "tanh":
+        if self.act_type == "tanh":
             return 1 + torch.tanh(att / self.temperature)
-        raise
+        raise NotImplementedError(self.act_type)
 
-    def _get_filter(self, x):
-        att = self.filter_fc(x).view(x.size(0), 1, -1, 1, 1, 1)
-        if self.act_type == "sigmoid":
-            return torch.sigmoid(att / self.temperature) * self.att_multi
-        elif self.act_type == "tanh":
-            return 1 + torch.tanh(att / self.temperature)
-        raise
+    def get_channel_attention(self, x):
+        return self._act(self.channel_fc(x).view(x.size(0), 1, 1, -1, x.size(-2), x.size(-1)))
 
-    def _get_spatial(self, x):
-        att = self.spatial_fc(x).view(x.size(0), 1, 1, 1, self.kernel_size, self.kernel_size)
-        if self.act_type == "sigmoid":
-            return torch.sigmoid(att / self.temperature) * self.att_multi
-        elif self.act_type == "tanh":
-            return 1 + torch.tanh(att / self.temperature)
-        raise
+    def get_filter_attention(self, x):
+        return self._act(self.filter_fc(x).view(x.size(0), 1, -1, 1, x.size(-2), x.size(-1)))
 
-    def _get_kernel(self, x):
+    def get_spatial_attention(self, x):
+        return self._act(self.spatial_fc(x).view(x.size(0), 1, 1, 1, self.kernel_size, self.kernel_size))
+
+    def get_kernel_attention(self, x):
         att = self.kernel_fc(x).view(x.size(0), -1, 1, 1, 1, 1)
-        return F.softmax(att / self.kernel_temp, dim=1)
+        if self.act_type == "softmax":
+            return F.softmax(att / self.kernel_temp, dim=1)
+        if self.act_type == "sigmoid":
+            return torch.sigmoid(att / self.kernel_temp) * 2 / att.size(1)
+        if self.act_type == "tanh":
+            return (1 + torch.tanh(att / self.kernel_temp)) / att.size(1)
+        raise NotImplementedError(self.act_type)
 
     def forward(self, x):
-        g = self.relu(self.bn(self.fc(x)))
-        return self.func_channel(g), self.func_filter(g), self.func_spatial(g), self.func_kernel(g)
+        avg_x = self.relu(self.bn(self.fc(x)))
+        return self.func_channel(avg_x), self.func_filter(avg_x), self.func_spatial(avg_x), self.func_kernel(avg_x)
 
 
 class KernelSpatialModulation_Local(nn.Module):
-    def __init__(self, channel, kernel_num=1, out_n=1, k_size=3, use_global=False):
+    """ECA-style 1D conv over the pooled channels giving a per-weight attention (KSM local branch)."""
+
+    def __init__(self, channel, kernel_num=1, out_n=1, use_global=False):
         super().__init__()
-        self.kn, self.out_n, self.use_global = kernel_num, out_n, use_global
-        self.conv1d = nn.Conv1d(1, kernel_num * out_n, k_size, padding=(k_size - 1) // 2)
-        self.norm = nn.LayerNorm(channel)
+        self.kn = kernel_num
+        self.out_n = out_n
+        k_size = round((math.log2(channel) / 2) + 0.5) // 2 * 2 + 1
+        self.conv = nn.Conv1d(1, kernel_num * out_n, kernel_size=k_size, padding=(k_size - 1) // 2, bias=False)
+        nn.init.constant_(self.conv.weight, 1e-6)
+        self.use_global = use_global
         if use_global:
-            self.complex_w = nn.Parameter(torch.randn(1, channel // 2 + 1, 2) * 1e-6)
+            self.complex_weight = nn.Parameter(torch.randn(1, channel // 2 + 1, 2) * 1e-6)
+        self.norm = nn.LayerNorm(channel)
 
     def forward(self, x):
-        y = x.mean(-1, keepdim=True).transpose(-1, -2)
+        x = x.squeeze(-1).transpose(-1, -2)  # b, c, 1, 1 -> b, 1, c
+        c = x.shape[-1]
         if self.use_global:
-            fft = torch.fft.rfft(y.float(), dim=-1)
-            real = fft.real * self.complex_w[..., 0]
-            imag = fft.imag * self.complex_w[..., 1]
-            y = y + torch.fft.irfft(torch.complex(real, imag), dim=-1)
-        y = self.norm(y)
-        att = self.conv1d(y).reshape(y.size(0), self.kn, self.out_n, -1)
-        return att.permute(0, 1, 3, 2)
+            x_rfft = torch.fft.rfft(x.float(), dim=-1)
+            x_real = x_rfft.real * self.complex_weight[..., 0][None]
+            x_imag = x_rfft.imag * self.complex_weight[..., 1][None]
+            x = x + torch.fft.irfft(torch.view_as_complex(torch.stack([x_real, x_imag], dim=-1)), dim=-1)
+        att_logit = self.conv(self.norm(x)).reshape(x.size(0), self.kn, self.out_n, c)
+        return att_logit.permute(0, 1, 3, 2)  # b, kn, cin, out_n
 
 
 class FrequencyBandModulation(nn.Module):
+    """Split the input into frequency bands and reweight each high band with a spatial attention."""
+
     def __init__(
         self,
         in_channels,
-        k_list=[2, 4, 8],
+        k_list=(2, 4, 8),
         lowfreq_att=False,
-        fs_feat="feat",
         act="sigmoid",
-        spatial="conv",
         spatial_group=1,
         spatial_kernel=3,
-        init="zero",
+        max_size=(64, 64),
     ):
         super().__init__()
-        self.k_list, self.lowfreq_att, self.act = k_list, lowfreq_att, act
-        # n_freq_groups used here
-        self.spatial_group = spatial_group
-        self.convs = nn.ModuleList()
+        self.k_list = k_list
+        self.lowfreq_att = lowfreq_att
+        self.act = act
+        self.spatial_group = in_channels if spatial_group > 64 else spatial_group
+        self.freq_weight_conv_list = nn.ModuleList()
         for _ in range(len(k_list) + int(lowfreq_att)):
             conv = nn.Conv2d(
                 in_channels, self.spatial_group, spatial_kernel, padding=spatial_kernel // 2, groups=self.spatial_group
             )
-            if init == "zero":
-                nn.init.normal_(conv.weight, std=1e-6)
-                nn.init.zeros_(conv.bias)
-            self.convs.append(conv)
+            nn.init.normal_(conv.weight, std=1e-6)
+            conv.bias.data.zero_()
+            self.freq_weight_conv_list.append(conv)
+        _, freq = get_fft2freq(*max_size, use_rfft=True)
+        freq = freq.abs().max(dim=-1)[0]
+        masks = torch.stack([freq < 0.5 / f + 1e-8 for f in k_list]).unsqueeze(1)  # n, 1, max_h, max_w // 2 + 1
+        self.register_buffer("cached_masks", masks, persistent=False)
+
+    def sp_act(self, w):
+        if self.act == "sigmoid":
+            return w.sigmoid() * 2
+        if self.act == "tanh":
+            return 1 + w.tanh()
+        if self.act == "softmax":
+            return w.softmax(dim=1) * w.shape[1]
+        raise NotImplementedError(self.act)
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        att_feat = x
+        x = x.float()
+        pre_x = x.clone()
+        b, _, h, w = x.shape
         x_fft = torch.fft.rfft2(x, norm="ortho")
-        out = 0
-        for i, f in enumerate(self.k_list):
-            mask = torch.zeros_like(x_fft[:, :1])
-            coords, _ = get_fft2freq(h, w, use_rfft=True)
-            mask[:, :, coords.max(-1)[0] < 0.5 / f] = 1
-            low = torch.fft.irfft2(x_fft * mask, s=(h, w), norm="ortho")
-            high = x - low
-            x = low
-            w_att = self.convs[i](x)
-            w_att = (w_att.sigmoid() * 2) if self.act == "sigmoid" else (1 + w_att.tanh())
-            out += (
-                w_att.reshape(b, self.spatial_group, -1, h, w) * high.reshape(b, self.spatial_group, -1, h, w)
-            ).reshape(b, -1, h, w)
+        masks = F.interpolate(self.cached_masks.float(), size=(h, w // 2 + 1), mode="nearest")
+        x_list = []
+        for idx in range(len(self.k_list)):
+            low_part = torch.fft.irfft2(x_fft * masks[idx], s=(h, w), norm="ortho")
+            high_part = pre_x - low_part
+            pre_x = low_part
+            att = self.sp_act(self.freq_weight_conv_list[idx](att_feat))
+            tmp = att.reshape(b, self.spatial_group, -1, h, w) * high_part.reshape(b, self.spatial_group, -1, h, w)
+            x_list.append(tmp.reshape(b, -1, h, w))
         if self.lowfreq_att:
-            w_att = self.convs[-1](x)
-            w_att = (w_att.sigmoid() * 2) if self.act == "sigmoid" else (1 + w_att.tanh())
-            out += (
-                w_att.reshape(b, self.spatial_group, -1, h, w) * x.reshape(b, self.spatial_group, -1, h, w)
-            ).reshape(b, -1, h, w)
+            att = self.sp_act(self.freq_weight_conv_list[len(self.k_list)](att_feat))
+            tmp = att.reshape(b, self.spatial_group, -1, h, w) * pre_x.reshape(b, self.spatial_group, -1, h, w)
+            x_list.append(tmp.reshape(b, -1, h, w))
         else:
-            out += x
-        return out
+            x_list.append(pre_x)
+        return sum(x_list)
 
 
 class FDConv(nn.Conv2d):
+    """Conv2d whose kernel is rebuilt per sample from kernel_num frequency-disjoint weight groups.
+
+    Falls back to a plain Conv2d when min(in, out) <= use_fdconv_if_c_gt or the kernel size is not 1 or 3.
+    """
+
     def __init__(
         self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=None,
-        dilation=1,
-        groups=1,
-        bias=True,
+        *args,
         reduction=0.0625,
         kernel_num=4,
-        n_freq_groups=1,
+        use_fdconv_if_c_gt=16,
+        use_fdconv_if_k_in=(1, 3),
+        use_fbm_if_k_in=(3,),
+        use_fbm_for_stride=False,
         kernel_temp=1.0,
         temp=None,
         att_multi=2.0,
         param_ratio=1,
         param_reduction=1.0,
         ksm_only_kernel_att=False,
-        spatial_freq_decompose=False,
         use_ksm_local=True,
         ksm_local_act="sigmoid",
         ksm_global_act="sigmoid",
-        fbm_cfg=None,
+        spatial_freq_decompose=False,
+        n_freq_groups=1,
+        **kwargs,
     ):
-        padding = (kernel_size - 1) // 2 if padding is None else padding
-        super().__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        super().__init__(*args, **kwargs)
+        self.use_fdconv_if_c_gt = use_fdconv_if_c_gt
+        self.use_fdconv_if_k_in = use_fdconv_if_k_in
         self.kernel_num = kernel_num
-        self.att_multi = att_multi
         self.param_ratio = param_ratio
         self.param_reduction = param_reduction
-        self.n_freq_groups = n_freq_groups
-
-        # 全域調製模組
+        self.use_ksm_local = use_ksm_local
+        self.att_multi = att_multi
+        self.ksm_local_act = ksm_local_act
+        assert ksm_local_act in {"sigmoid", "tanh"}
+        assert ksm_global_act in {"softmax", "sigmoid", "tanh"}
         if temp is None:
             temp = kernel_temp
-        self.KSMG = KernelSpatialModulation_Global(
-            in_planes=in_channels,
-            out_planes=out_channels,
-            kernel_size=kernel_size,
-            reduction=reduction,
-            kernel_num=kernel_num,
+        if not self.dynamic:
+            return
+        self.alpha = min(self.out_channels, self.in_channels) // 2 * kernel_num * param_ratio / param_reduction
+        self.KSM_Global = KernelSpatialModulation_Global(
+            self.in_channels,
+            self.out_channels,
+            self.kernel_size[0],
+            groups=self.groups,
             temp=temp,
             kernel_temp=kernel_temp,
+            reduction=reduction,
+            kernel_num=kernel_num * param_ratio,
             att_multi=att_multi,
             ksm_only_kernel_att=ksm_only_kernel_att,
-            spatial_freq_decompose=spatial_freq_decompose,
             act_type=ksm_global_act,
+            stride=self.stride,
+            spatial_freq_decompose=spatial_freq_decompose,
+        )
+        if self.kernel_size[0] in use_fbm_if_k_in or (use_fbm_for_stride and self.stride[0] > 1):
+            self.FBM = FrequencyBandModulation(self.in_channels, spatial_group=n_freq_groups)
+        if use_ksm_local:
+            self.KSM_Local = KernelSpatialModulation_Local(
+                self.in_channels, kernel_num=1, out_n=self.out_channels * self.kernel_size[0] * self.kernel_size[1]
+            )
+        self.convert2dftweight()
+
+    @property
+    def dynamic(self):
+        """Whether this layer runs the frequency-dynamic path (otherwise it is a plain Conv2d)."""
+        return (
+            min(self.in_channels, self.out_channels) > self.use_fdconv_if_c_gt
+            and self.kernel_size[0] in self.use_fdconv_if_k_in
         )
 
-        # 局部調製模組
-        self.use_local = use_ksm_local
-        if use_ksm_local:
-            self.KSML = KernelSpatialModulation_Local(
-                channel=in_channels, kernel_num=1, out_n=out_channels * kernel_size * kernel_size
-            )
-
-        # 頻帶調製模組
-        if fbm_cfg is None:
-            fbm_cfg = {}
-        fbm_cfg["spatial_group"] = n_freq_groups
-        self.FBM = FrequencyBandModulation(in_channels, **fbm_cfg)
-
-        # 準備 DFT 權重
-        self._prepare_dft()
-
-    def _prepare_dft(self):
-        # 1) 計算 out×in 大矩陣的 DFT
-        d1, d2 = self.out_channels, self.in_channels
-        k = self.kernel_size[0]
-        flat = self.weight.permute(0, 2, 1, 3).reshape(d1 * k, d2 * k)
-        freq = torch.fft.rfft2(flat, dim=(0, 1))
-        w = torch.stack([freq.real, freq.imag], dim=-1)  # shape = (d1*k, d2*k, 2)
-
-        # 2) 將它做成可訓練參數
-        #    shape → (param_ratio, d1*k, d2*k, 2)
-        self.dft_weight = nn.Parameter(w[None].repeat(self.param_ratio, 1, 1, 1) // (min(d1, d2) // 2))
-
-        # **不要再刪除 self.weight**
-        # if self.bias is not None:
-        #     self.bias = nn.Parameter(torch.zeros_like(self.bias))
+    def convert2dftweight(self):
+        """Replace self.weight by its 2D rFFT, split into kernel_num groups of frequency coordinates."""
+        d1, d2, k1, k2 = self.out_channels, self.in_channels, self.kernel_size[0], self.kernel_size[1]
+        freq_indices, _ = get_fft2freq(d1 * k1, d2 * k2, use_rfft=True)
+        weight_rfft = torch.fft.rfft2(self.weight.permute(0, 2, 1, 3).reshape(d1 * k1, d2 * k2), dim=(0, 1))
+        weight_rfft = torch.stack([weight_rfft.real, weight_rfft.imag], dim=-1)
+        if self.param_reduction < 1:  # keep only the lowest frequencies
+            freq_indices = freq_indices[:, : int(freq_indices.size(1) * self.param_reduction)]
+            weight_rfft = weight_rfft[freq_indices[0, :], freq_indices[1, :]].reshape(-1, 2)
+        weight_rfft = weight_rfft[None].repeat(self.param_ratio, *[1] * weight_rfft.dim()) / (min(d1, d2) // 2)
+        self.dft_weight = nn.Parameter(weight_rfft)
+        del self.weight
+        indices = freq_indices.reshape(2, self.kernel_num, -1)
+        self.register_buffer("indices", torch.stack([indices] * self.param_ratio), persistent=False)
 
     def forward(self, x):
-        # fallback to plain conv if小channel 或 非1/3kernel
-        if min(self.in_channels, self.out_channels) <= 16 or self.kernel_size[0] not in [1, 3]:
-            # 這裡 super().forward 會呼叫 nn.Conv2d.forward，必須有 self.weight
+        if not self.dynamic:
             return super().forward(x)
-
-        b, _, h, w = x.shape
-        # 計算各種 attention map
-        ch, fl, sp, kn = self.KSMG(F.adaptive_avg_pool2d(x, 1))
-        hr = 1
-        if self.use_local:
-            local = self.KSML(F.adaptive_avg_pool2d(x, 1))
-            hr = (local.sigmoid() * self.att_multi) if self.KSML.use_global else (1 + local.tanh())
-
-        # 建 DFT map 並還原到 spatial domain
-        coords, _ = get_fft2freq(
-            self.out_channels * self.kernel_size[0], self.in_channels * self.kernel_size[1], use_rfft=True
-        )
-        DFTmap = torch.zeros(
+        global_x = F.adaptive_avg_pool2d(x, 1)
+        channel_attention, filter_attention, spatial_attention, kernel_attention = self.KSM_Global(global_x)
+        b, in_planes, height, width = x.size()
+        if self.use_ksm_local:
+            hr_att_logit = self.KSM_Local(global_x).reshape(
+                b, 1, self.in_channels, self.out_channels, self.kernel_size[0], self.kernel_size[1]
+            )
+            hr_att_logit = hr_att_logit.permute(0, 1, 3, 2, 4, 5)
+            hr_att = (
+                hr_att_logit.sigmoid() * self.att_multi if self.ksm_local_act == "sigmoid" else 1 + hr_att_logit.tanh()
+            )
+        else:
+            hr_att = 1
+        dft_map = torch.zeros(
             (b, self.out_channels * self.kernel_size[0], self.in_channels * self.kernel_size[1] // 2 + 1, 2),
             device=x.device,
         )
+        kernel_attention = kernel_attention.reshape(b, self.param_ratio, self.kernel_num, -1)
         for i in range(self.param_ratio):
-            w = self.dft_weight[i][coords[0], coords[1]][None]
-            DFTmap[..., 0] += w[..., 0] * kn[:, i]
-            DFTmap[..., 1] += w[..., 1] * kn[:, i]
-
-        adapt = torch.fft.irfft2(torch.view_as_complex(DFTmap), dim=(1, 2))
-        adapt = adapt.reshape(
+            indices = self.indices[i]
+            if self.param_reduction < 1:
+                w = self.dft_weight[i].reshape(self.kernel_num, -1, 2)[None]
+            else:
+                w = self.dft_weight[i][indices[0, :, :], indices[1, :, :]][None] * self.alpha  # 1, kernel_num, -1, 2
+            dft_map[:, indices[0, :, :], indices[1, :, :]] += torch.stack(
+                [w[..., 0] * kernel_attention[:, i], w[..., 1] * kernel_attention[:, i]], dim=-1
+            )
+        adaptive_weights = torch.fft.irfft2(torch.view_as_complex(dft_map), dim=(1, 2)).reshape(
             b, 1, self.out_channels, self.kernel_size[0], self.in_channels, self.kernel_size[1]
-        ).permute(0, 1, 2, 4, 3, 5)
+        )
+        adaptive_weights = adaptive_weights.permute(0, 1, 2, 4, 3, 5)
+        if hasattr(self, "FBM"):
+            x = self.FBM(x)
 
-        # 頻帶模組
-        x_fbm = self.FBM(x)
-        x_in = x_fbm if hasattr(self, "FBM") else x
-
-        # 聚合所有 attention
-        agg = sp * ch * fl * adapt * hr
-        agg = agg.sum(1).view(-1, self.in_channels // self.groups, self.kernel_size[0], self.kernel_size[1])
-
-        # Depthwise batch conv trick
-        xcat = x_in.reshape(1, -1, h, w)
-        out = F.conv2d(xcat, agg, None, self.stride, self.padding, self.dilation, self.groups * b)
-        out = out.view(b, self.out_channels, out.size(-2), out.size(-1))
-
+        # attentions folded into the kernel when it is cheaper than applying them to the feature maps
+        fold_all = (
+            self.out_channels * self.in_channels * self.kernel_size[0] * self.kernel_size[1]
+            < (in_planes + self.out_channels) * height * width
+        )
+        if fold_all:
+            aggregate_weight = spatial_attention * channel_attention * filter_attention * adaptive_weights * hr_att
+        else:
+            aggregate_weight = spatial_attention * adaptive_weights * hr_att
+            if not isinstance(channel_attention, float):
+                x = x * channel_attention.view(b, -1, 1, 1)
+        aggregate_weight = torch.sum(aggregate_weight, dim=1).view(
+            -1, self.in_channels // self.groups, self.kernel_size[0], self.kernel_size[1]
+        )
+        output = F.conv2d(
+            x.reshape(1, -1, height, width),
+            weight=aggregate_weight,
+            bias=None,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups * b,
+        )
+        output = output.view(b, self.out_channels, output.size(-2), output.size(-1))
+        if not fold_all and not isinstance(filter_attention, float):
+            output = output * filter_attention.view(b, -1, 1, 1)
         if self.bias is not None:
-            out += self.bias.view(1, -1, 1, 1)
-
-        return out
+            output = output + self.bias.view(1, -1, 1, 1)
+        return output

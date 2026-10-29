@@ -1497,6 +1497,7 @@ class ResCSPC(BottleneckCSPC):
 class ResXCSPB(ResCSPB):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=32, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        g = math.gcd(g, int(c2) // 2)  # narrow scales: groups must divide the parent's half-width Res
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2)  # hidden channels
         self.m = nn.Sequential(*(Res(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
@@ -1505,6 +1506,7 @@ class ResXCSPB(ResCSPB):
 class ResXCSPC(ResCSPC):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=32, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        g = math.gcd(g, int(c2 * e) // 2)  # narrow scales: groups must divide the parent's half-width Res
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)  # hidden channels
         self.m = nn.Sequential(*(Res(c_, c_, shortcut, g, e=1.0) for _ in range(n)))

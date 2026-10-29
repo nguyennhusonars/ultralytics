@@ -58,7 +58,7 @@ class ScalSeq(nn.Module):
         self.conv0 = Conv(inc[0], channel, 1)
         self.conv1 = Conv(inc[1], channel, 1)
         self.conv2 = Conv(inc[2], channel, 1)
-        self.conv3d = nn.Conv3d(channel, channel, kernel_size=(1, 1, 1))
+        self.conv3d = nn.Conv2d(channel, channel, 1)  # the 1x1x1 Conv3d as a 4D weight: channels_last training works
         self.bn = nn.BatchNorm3d(channel)
         self.act = nn.LeakyReLU(0.1)
         self.pool_3d = nn.MaxPool3d(kernel_size=(3, 1, 1))
@@ -70,11 +70,8 @@ class ScalSeq(nn.Module):
         p4_2 = F.interpolate(p4_2, p3.size()[2:], mode="nearest")
         p5_2 = self.conv2(p5)
         p5_2 = F.interpolate(p5_2, p3.size()[2:], mode="nearest")
-        p3_3d = torch.unsqueeze(p3, -3)
-        p4_3d = torch.unsqueeze(p4_2, -3)
-        p5_3d = torch.unsqueeze(p5_2, -3)
-        combine = torch.cat([p3_3d, p4_3d, p5_3d], dim=2)
-        conv_3d = self.conv3d(combine)
+        combine = torch.cat([p3, p4_2, p5_2], dim=2)  # b, c, 3h, w
+        conv_3d = self.conv3d(combine).unflatten(2, (3, -1))  # b, c, 3, h, w
         bn = self.bn(conv_3d)
         act = self.act(bn)
         x = self.pool_3d(act)

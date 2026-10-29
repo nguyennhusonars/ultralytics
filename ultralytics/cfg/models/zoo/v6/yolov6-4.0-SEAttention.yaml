@@ -47,7 +47,7 @@ head:
   - [-1, 1, SimConv, [256, 3, 2]]
   - [[-1, 10], 1, Concat, [1]]  # cat head P5
   - [-1, 12, RepBlock, [512]] # 23
-  - [-1, 1, SEAttention, [1024]]
+  - [-1, 1, SEAttention, [512]]
 
   - [17, 1, Conv, [128, 3, 1]]    #if use_dfl is False, please set reg_max to 0
   - [20, 1, Conv, [256, 3, 1]]
