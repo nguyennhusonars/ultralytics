@@ -6,6 +6,7 @@ import math
 from itertools import repeat
 
 import torch.nn as nn
+import torch.nn.functional as F
 
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
@@ -75,6 +76,128 @@ def lecun_normal_(tensor):
     return trunc_normal_(tensor, std=math.sqrt(1.0 / fan_in) / 0.87962566103423978)
 
 
+_ACT = {
+    "sigmoid": nn.Sigmoid,
+    "hard_sigmoid": nn.Hardsigmoid,
+    "relu": nn.ReLU,
+    "relu6": nn.ReLU6,
+    "gelu": nn.GELU,
+    "silu": nn.SiLU,
+    "swish": nn.SiLU,
+    "hard_swish": nn.Hardswish,
+    "tanh": nn.Tanh,
+    "mish": nn.Mish,
+    "elu": nn.ELU,
+    "leaky_relu": nn.LeakyReLU,
+    "prelu": nn.PReLU,
+    "identity": nn.Identity,
+}
+
+
+def create_act_layer(name, inplace=None, **kwargs):
+    """Activation module from a timm name or class (timm.layers.create_act_layer)."""
+    if name is None:
+        return None
+    layer = _ACT[name] if isinstance(name, str) else name
+    if inplace is not None:
+        try:
+            return layer(inplace=inplace, **kwargs)
+        except TypeError:  # activation without an inplace option (GELU, Sigmoid, ...)
+            pass
+    return layer(**kwargs)
+
+
+def make_divisible(v, divisor=8, min_value=None, round_limit=0.9):
+    min_value = min_value or divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    return new_v + divisor if new_v < round_limit * v else new_v
+
+
+class SEModule(nn.Module):
+    """Squeeze-and-excitation (timm.layers.SEModule, alias SqueezeExcite)."""
+
+    def __init__(
+        self,
+        channels,
+        rd_ratio=1.0 / 16,
+        rd_channels=None,
+        rd_divisor=8,
+        add_maxpool=False,
+        bias=True,
+        act_layer=nn.ReLU,
+        norm_layer=None,
+        gate_layer="sigmoid",
+    ):
+        super().__init__()
+        self.add_maxpool = add_maxpool
+        rd_channels = rd_channels or make_divisible(channels * rd_ratio, rd_divisor, round_limit=0.0)
+        self.fc1 = nn.Conv2d(channels, rd_channels, kernel_size=1, bias=bias)
+        self.bn = norm_layer(rd_channels) if norm_layer else nn.Identity()
+        self.act = create_act_layer(act_layer, inplace=True)
+        self.fc2 = nn.Conv2d(rd_channels, channels, kernel_size=1, bias=bias)
+        self.gate = create_act_layer(gate_layer)
+
+    def forward(self, x):
+        x_se = x.mean((2, 3), keepdim=True)
+        if self.add_maxpool:
+            x_se = 0.5 * x_se + 0.5 * x.amax((2, 3), keepdim=True)
+        return x * self.gate(self.fc2(self.act(self.bn(self.fc1(x_se)))))
+
+
+SqueezeExcite = SEModule
+
+
+class EffectiveSEModule(nn.Module):
+    """Effective squeeze-excitation (timm.layers.EffectiveSEModule)."""
+
+    def __init__(self, channels, add_maxpool=False, gate_layer="hard_sigmoid", **_):
+        super().__init__()
+        self.add_maxpool = add_maxpool
+        self.fc = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
+        self.gate = create_act_layer(gate_layer)
+
+    def forward(self, x):
+        x_se = x.mean((2, 3), keepdim=True)
+        if self.add_maxpool:
+            x_se = 0.5 * x_se + 0.5 * x.amax((2, 3), keepdim=True)
+        return x * self.gate(self.fc(x_se))
+
+
+class LayerNorm2d(nn.LayerNorm):
+    """LayerNorm over channels of NCHW tensors (timm.layers.LayerNorm2d)."""
+
+    def __init__(self, num_channels, eps=1e-6, affine=True):
+        super().__init__(num_channels, eps=eps, elementwise_affine=affine)
+
+    def forward(self, x):
+        return F.layer_norm(x.permute(0, 2, 3, 1), self.normalized_shape, self.weight, self.bias, self.eps).permute(
+            0, 3, 1, 2
+        )
+
+
+def named_apply(fn, module, name="", depth_first=True, include_root=False):
+    """Apply fn(module=, name=) to every submodule (timm.models.named_apply)."""
+    if not depth_first and include_root:
+        fn(module=module, name=name)
+    for child_name, child in module.named_children():
+        named_apply(fn, child, f"{name}.{child_name}" if name else child_name, depth_first, include_root=True)
+    if depth_first and include_root:
+        fn(module=module, name=name)
+    return module
+
+
+def checkpoint_seq(functions, x, every=1, flatten=False, skip_last=False, preserve_rng_state=True):
+    """Run modules in sequence with activation checkpointing (timm.models.checkpoint_seq).
+
+    shortcut: checkpoints every module (ignores every/flatten/skip_last); only runs when a model enables grad checkpointing.
+    """
+    from torch.utils.checkpoint import checkpoint
+
+    for f in functions:
+        x = checkpoint(f, x, use_reentrant=False, preserve_rng_state=preserve_rng_state)
+    return x
+
+
 def register_model(fn):
     """timm's model registry is not used here: return the factory unchanged."""
     return fn
@@ -85,13 +208,21 @@ def _cfg(url="", **kwargs):
 
 
 __all__ = (
+    "DropPath",
+    "EffectiveSEModule",
     "IMAGENET_DEFAULT_MEAN",
     "IMAGENET_DEFAULT_STD",
-    "DropPath",
+    "LayerNorm2d",
     "Mlp",
+    "SEModule",
+    "SqueezeExcite",
     "_cfg",
+    "checkpoint_seq",
+    "create_act_layer",
     "drop_path",
     "lecun_normal_",
+    "make_divisible",
+    "named_apply",
     "register_model",
     "to_2tuple",
     "to_3tuple",

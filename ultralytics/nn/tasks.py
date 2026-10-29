@@ -256,6 +256,7 @@ class BaseModel(torch.nn.Module):
         # convs have no such rescale for their ranges, so they stay as trained
         skip = (Conv2, ConvTranspose, RepConv, RepVGGDW) if is_qat(self) else ()
         if not self.is_fused():
+            zoo.fuse(self.model)  # before Conv+BN fusion: zoo reparameterizations read their branches' BNs
             for m in self.model.modules():
                 if isinstance(m, skip):
                     continue
@@ -277,7 +278,6 @@ class BaseModel(torch.nn.Module):
                     m.forward = m.forward_fuse
                 if isinstance(m, Detect):
                     m.fuse()  # remove the unused detection branch
-            zoo.fuse(self.model)
             self.info(verbose=verbose, imgsz=imgsz)
 
         return self
