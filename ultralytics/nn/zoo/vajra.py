@@ -1,6 +1,8 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/vajra.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from ultralytics.nn.modules.block import Bottleneck
 from ultralytics.nn.modules.block import RepBottleneck
 from ultralytics.nn.modules.block import SPPELAN
