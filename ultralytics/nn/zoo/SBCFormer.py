@@ -1,20 +1,20 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SBCFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
 import itertools
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, trunc_normal_
 
 
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
-        super(h_sigmoid, self).__init__()
+        super().__init__()
         self.relu = nn.ReLU6(inplace=inplace)
 
     def forward(self, x):
@@ -127,9 +127,7 @@ class Attention(torch.nn.Module):
             self.ab = self.attention_biases[:, self.attention_bias_idxs]
 
     def forward(self, x, h, w):
-        """
-        Modified forward to accept h, w explicitly.
-        This handles rectangular inputs correctly.
+        """Modified forward to accept h, w explicitly. This handles rectangular inputs correctly.
         """
         B, N, C = x.shape
 
@@ -221,12 +219,14 @@ class SBCFormerBlock(nn.Module):  # building block
         attn_ratio=2,
         drop=0.0,
         attn_drop=0.0,
-        drop_paths=[],
+        drop_paths=None,
         act_layer=nn.GELU,
         pool_ratio=1,
         invres_ratio=1,
         resolution=7,
     ):
+        if drop_paths is None:
+            drop_paths = []
         super().__init__()
         self.resolution = resolution
         self.dim = dim
@@ -238,7 +238,7 @@ class SBCFormerBlock(nn.Module):  # building block
         self.invres_blocks = nn.Sequential()
         for k in range(self.depth_invres):
             self.invres_blocks.add_module(
-                "InvRes_{0}".format(k),
+                f"InvRes_{k}",
                 InvertResidualBlock(
                     in_features=dim,
                     hidden_features=int(dim * invres_ratio),
@@ -261,7 +261,7 @@ class SBCFormerBlock(nn.Module):  # building block
         self.mixer = nn.Sequential()
         for k in range(self.depth_mixer):
             self.mixer.add_module(
-                "Mixer_{0}".format(k),
+                f"Mixer_{k}",
                 InvertResidualBlock(
                     in_features=dim, hidden_features=dim * 2, out_features=dim, kernel_size=3, drop_path=0.0
                 ),
@@ -288,7 +288,7 @@ class SBCFormerBlock(nn.Module):  # building block
         self.proj_fuse = Conv2d_BN(self.dim * 2, self.dim, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        B, C, _H, _W = x.shape
 
         x = self.invres_blocks(x)
         local_fea = x
@@ -361,21 +361,33 @@ class SBCFormer(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[128, 320, 512],
+        embed_dims=None,
         key_dim=32,
-        num_heads=[2, 4, 8],
+        num_heads=None,
         attn_ratio=2,
         mlp_ratio=4,
         invres_ratio=2,
         drop_rate=0.0,
         attn_drop_rate=0.0,
         drop_path_rate=0.0,
-        depths_invres=[2, 2, 1],
-        depths_mattn=[1, 4, 3],
-        depths_mixer=[2, 2, 2],
-        pool_ratios=[4, 2, 1],
+        depths_invres=None,
+        depths_mattn=None,
+        depths_mixer=None,
+        pool_ratios=None,
         **kwargs,
     ):
+        if pool_ratios is None:
+            pool_ratios = [4, 2, 1]
+        if depths_mixer is None:
+            depths_mixer = [2, 2, 2]
+        if depths_mattn is None:
+            depths_mattn = [1, 4, 3]
+        if depths_invres is None:
+            depths_invres = [2, 2, 1]
+        if num_heads is None:
+            num_heads = [2, 4, 8]
+        if embed_dims is None:
+            embed_dims = [128, 320, 512]
         super().__init__()
         self.num_classes = num_classes
         self.embed_dims = embed_dims
@@ -486,7 +498,7 @@ SBCFormer_xs_cfg = {
 def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)

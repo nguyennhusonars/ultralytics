@@ -2,11 +2,11 @@
 """Ported from ultralytics_sonnn nn/modules/EViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class BFFN(nn.Module):
@@ -30,7 +30,7 @@ class BFFN(nn.Module):
         x = self.fc1(x)
         x = self.drop(x)
 
-        B, N, C = x.shape
+        B, _N, C = x.shape
         x = x.permute(0, 2, 1).reshape(B, C, H, W)
 
         x_1 = self.dwconv_1(x)
@@ -159,7 +159,7 @@ class Block(nn.Module):
         self.proj = nn.Conv2d(dim, dim, 3, 1, 1, groups=dim)
 
     def forward(self, x, H, W):
-        B, N, C = x.shape
+        B, _N, C = x.shape
         cnn_feat = x.permute(0, 2, 1).reshape(B, C, H, W)
         x_proj = self.proj(cnn_feat) + cnn_feat
         x_proj = x_proj.flatten(2).permute(0, 2, 1)
@@ -170,7 +170,7 @@ class Block(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Image to Patch Embedding."""
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
         super().__init__()
@@ -178,9 +178,9 @@ class PatchEmbed(nn.Module):
         patch_size = to_2tuple(patch_size)
         num_patches = (img_size[1] // patch_size[1]) * (img_size[0] // patch_size[0])
 
-        assert (
-            img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0
-        ), f"img_size {img_size} should be divided by patch_size {patch_size}."
+        assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, (
+            f"img_size {img_size} should be divided by patch_size {patch_size}."
+        )
 
         self.img_size = img_size
         self.patch_size = patch_size
@@ -190,7 +190,7 @@ class PatchEmbed(nn.Module):
         self.norm = nn.LayerNorm(embed_dim)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         x = self.proj(x)
         H_new, W_new = H // self.patch_size[0], W // self.patch_size[1]
         x = x.flatten(2).transpose(1, 2)
@@ -204,21 +204,31 @@ class EViT(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[46, 92, 184, 368],
+        embed_dims=None,
         stem_channel=16,
-        num_heads=[1, 2, 4, 8],
-        mlp_ratios=[3.6, 3.6, 3.6, 3.6],
+        num_heads=None,
+        mlp_ratios=None,
         qkv_bias=True,
         qk_scale=None,
         drop_rate=0.0,
         attn_drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=None,
-        depths=[2, 2, 10, 2],
+        depths=None,
         qk_ratio=1,
-        sr_ratios=[8, 4, 2, 1],
+        sr_ratios=None,
         dp=0.1,
     ):
+        if sr_ratios is None:
+            sr_ratios = [8, 4, 2, 1]
+        if depths is None:
+            depths = [2, 2, 10, 2]
+        if mlp_ratios is None:
+            mlp_ratios = [3.6, 3.6, 3.6, 3.6]
+        if num_heads is None:
+            num_heads = [1, 2, 4, 8]
+        if embed_dims is None:
+            embed_dims = [46, 92, 184, 368]
         super().__init__()
         self.num_classes = num_classes
         self.embed_dims = embed_dims
@@ -363,10 +373,7 @@ class EViT(nn.Module):
             nn.init.kaiming_normal_(m.weight, mode="fan_out")
             if isinstance(m, nn.Conv2d) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.BatchNorm2d):
+        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm2d)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 

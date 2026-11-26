@@ -1,17 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/LWGANet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import List
-from typing import Tuple
-from typing import Type
-from typing import Union
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+from __future__ import annotations
+
+import warnings
+from typing import Type, Union
+
 import antialiased_cnns
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import warnings
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 def update_weight(model_dict, weight_dict):
@@ -25,7 +25,7 @@ def update_weight(model_dict, weight_dict):
         if k.startswith("module."):
             model_key = k[len("module.") :]
 
-        if model_key in model_dict.keys() and model_dict[model_key].shape == v.shape:
+        if model_key in model_dict and model_dict[model_key].shape == v.shape:
             temp_dict[model_key] = v
             matched_keys_in_model.add(model_key)
             idx += 1
@@ -40,7 +40,7 @@ def update_weight(model_dict, weight_dict):
     model_dict.update(temp_dict)
 
     # Find missing and unexpected keys
-    missing_keys = [k for k in model_dict.keys() if k not in matched_keys_in_model]
+    missing_keys = [k for k in model_dict if k not in matched_keys_in_model]
     # Unexpected keys are those in the checkpoint but not matched to the model state dict
     unexpected_keys = list(
         original_checkpoint_keys
@@ -226,7 +226,7 @@ class GA(nn.Module):
         self,
         dim: int,
         head_dim: int = 64,
-        num_heads: int = None,
+        num_heads: int | None = None,
         qkv_bias: bool = False,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
@@ -247,7 +247,6 @@ class GA(nn.Module):
                 f"GA calculated attention dim ({self.attention_dim}) != input dim ({dim}). Mismatch can occur if dim not divisible by head_dim."
             )
             # Proj layer below handles mapping back to `dim`
-            pass
 
         self.qkv = nn.Linear(dim, self.attention_dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -331,7 +330,7 @@ class LWGA_Block(nn.Module):
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         mlp_hidden_dim = int(dim * mlp_ratio)
-        mlp_layer: List[nn.Module] = [
+        mlp_layer: list[nn.Module] = [
             nn.Conv2d(dim, mlp_hidden_dim, 1, bias=False),
             norm_layer(mlp_hidden_dim),
             act_layer(),
@@ -388,7 +387,7 @@ class BasicStage(nn.Module):
         depth: int,
         att_kernel: int,
         mlp_ratio: float,
-        drop_path: Union[List[float], float],
+        drop_path: list[float] | float,
         norm_layer: NormLayerType,
         act_layer: ActLayerType,
     ):
@@ -428,9 +427,8 @@ class Stem(nn.Module):
 
 
 class LWGANet(nn.Module):
-    """
-    LWGANet model implementation supporting both classification and feature extraction.
-    Includes `width_list` calculation for compatibility with detection frameworks.
+    """LWGANet model implementation supporting both classification and feature extraction. Includes `width_list`
+    calculation for compatibility with detection frameworks.
     """
 
     def __init__(
@@ -438,8 +436,8 @@ class LWGANet(nn.Module):
         in_chans: int = 3,
         num_classes: int = 1000,  # Used only if fork_feat=False
         stem_dim: int = 64,
-        depths: Tuple[int, ...] = (1, 2, 4, 2),
-        att_kernel: Tuple[int, ...] = (11, 11, 11, 11),
+        depths: tuple[int, ...] = (1, 2, 4, 2),
+        att_kernel: tuple[int, ...] = (11, 11, 11, 11),
         norm_layer: NormLayerType = nn.BatchNorm2d,
         act_layer: ActLayerType = nn.GELU,
         mlp_ratio: float = 2.0,
@@ -447,7 +445,7 @@ class LWGANet(nn.Module):
         feature_dim: int = 1280,  # Dim before final classifier head
         drop_path_rate: float = 0.1,
         fork_feat: bool = True,  # Set default to True for YOLO compatibility
-        pretrained: str = None,  # Path to pretrained weights
+        pretrained: str | None = None,  # Path to pretrained weights
         **kwargs,
     ):
         super().__init__()
@@ -549,11 +547,7 @@ class LWGANet(nn.Module):
 
     def cls_init_weights(self, m):
         """Initialize weights."""
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, (nn.Conv1d, nn.Conv2d)):
+        if isinstance(m, (nn.Linear, nn.Conv1d, nn.Conv2d)):
             trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
@@ -584,7 +578,7 @@ class LWGANet(nn.Module):
                 adapted_state_dict, missing_keys, unexpected_keys = update_weight(model_dict, state_dict)
                 self.load_state_dict(adapted_state_dict, strict=False)
 
-                print(f"Pretrained weights loaded.")
+                print("Pretrained weights loaded.")
                 if missing_keys:
                     print("Missing keys:", missing_keys)
                 if unexpected_keys:
@@ -595,7 +589,7 @@ class LWGANet(nn.Module):
         else:
             print("No pretrained weights path provided.")
 
-    def _forward_det_impl(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def _forward_det_impl(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Internal implementation for feature extraction used by forward_det and width_list calc."""
         x = self.stem(x)
         outs = []
@@ -610,7 +604,7 @@ class LWGANet(nn.Module):
                 outs.append(x_out)
         return outs
 
-    def forward_det(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward_det(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass for feature extraction (detection/segmentation)."""
         return self._forward_det_impl(x)
 
@@ -629,9 +623,9 @@ class LWGANet(nn.Module):
 
 
 def LWGANet_L0_1242_e32_k11_GELU(
-    num_classes: int = 1000, pretrained: str = None, fork_feat: bool = True, **kwargs
+    num_classes: int = 1000, pretrained: str | None = None, fork_feat: bool = True, **kwargs
 ) -> LWGANet:
-    """LWGANet-L0 variant: stem=32, depths=(1,2,4,2), act=GELU"""
+    """LWGANet-L0 variant: stem=32, depths=(1,2,4,2), act=GELU."""
     model = LWGANet(
         in_chans=3,
         num_classes=num_classes,

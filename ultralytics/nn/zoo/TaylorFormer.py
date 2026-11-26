@@ -1,13 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/TaylorFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from torchvision.ops.deform_conv import DeformConv2d
 import math
 import numbers
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+from torchvision.ops.deform_conv import DeformConv2d
 
 
 def to_3d(x):
@@ -20,7 +21,7 @@ def to_4d(x, h, w):
 
 class BiasFree_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
-        super(BiasFree_LayerNorm, self).__init__()
+        super().__init__()
         if isinstance(normalized_shape, numbers.Integral):
             normalized_shape = (normalized_shape,)
         normalized_shape = torch.Size(normalized_shape)
@@ -37,7 +38,7 @@ class BiasFree_LayerNorm(nn.Module):
 
 class WithBias_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
-        super(WithBias_LayerNorm, self).__init__()
+        super().__init__()
         if isinstance(normalized_shape, numbers.Integral):
             normalized_shape = (normalized_shape,)
         normalized_shape = torch.Size(normalized_shape)
@@ -56,7 +57,7 @@ class WithBias_LayerNorm(nn.Module):
 
 class LayerNorm(nn.Module):
     def __init__(self, dim, LayerNorm_type):
-        super(LayerNorm, self).__init__()
+        super().__init__()
         if LayerNorm_type == "BiasFree":
             self.body = BiasFree_LayerNorm(dim)
         else:
@@ -69,7 +70,7 @@ class LayerNorm(nn.Module):
 
 class FeedForward(nn.Module):
     def __init__(self, dim, ffn_expansion_factor, bias):
-        super(FeedForward, self).__init__()
+        super().__init__()
 
         hidden_features = int(dim * ffn_expansion_factor)
 
@@ -129,14 +130,13 @@ class refine_att(nn.Module):
         self.channel_splits = [x * Ch * 2 for x in self.head_splits]
 
     def forward(self, q, k, v, size):
-        """foward function"""
-        B, h, N, Ch = q.shape
+        """Forward function."""
+        _B, h, _N, _Ch = q.shape
         H, W = size
 
         # We don't use CLS_TOKEN
         q_img = q
         k_img = k
-        v_img = v
         # Shape: [B, h, H*W, Ch] -> [B, h*Ch, H, W].
         q_img = rearrange(q_img, "B h (H W) Ch -> B h Ch H W", H=H, W=W)
         k_img = rearrange(k_img, "B h Ch (H W) -> B h Ch H W", H=H, W=W)
@@ -153,7 +153,7 @@ class refine_att(nn.Module):
 
 class Attention(nn.Module):
     def __init__(self, dim, num_heads, bias, shared_refine_att=None, qk_norm=1):
-        super(Attention, self).__init__()
+        super().__init__()
         self.norm = qk_norm
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
@@ -180,7 +180,7 @@ class Attention(nn.Module):
         self.refine_att = refine_att(Ch=dim // num_heads, h=num_heads, window=crpe_window)
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        _b, c, h, w = x.shape
         qkv = self.qkv_dwconv(self.qkv(x))
         q, k, v = qkv.chunk(3, dim=1)
         q = rearrange(q, "b (head c) h w -> b head (h w) c", head=self.num_heads)
@@ -214,7 +214,7 @@ class Attention(nn.Module):
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, ffn_expansion_factor, bias, LayerNorm_type, shared_refine_att=None, qk_norm=1):
-        super(TransformerBlock, self).__init__()
+        super().__init__()
         self.norm1 = LayerNorm(dim, LayerNorm_type)
         self.attn = Attention(dim, num_heads, bias, shared_refine_att=shared_refine_att, qk_norm=qk_norm)
         self.norm2 = LayerNorm(dim, LayerNorm_type)
@@ -227,8 +227,8 @@ class TransformerBlock(nn.Module):
 
 
 class MHCAEncoder(nn.Module):
-    """Multi-Head Convolutional self-Attention Encoder comprised of `MHCA`
-    blocks."""
+    """Multi-Head Convolutional self-Attention Encoder comprised of `MHCA` blocks.
+    """
 
     def __init__(
         self,
@@ -257,7 +257,7 @@ class MHCAEncoder(nn.Module):
         )
 
     def forward(self, x, size):
-        """foward function"""
+        """Forward function."""
         H, W = size
         B = x.shape[0]
         # return x's shape : [B, N, C] -> [B, C, H, W]
@@ -270,8 +270,8 @@ class MHCAEncoder(nn.Module):
 
 
 class MHCA_stage(nn.Module):
-    """Multi-Head Convolutional self-Attention stage comprised of `MHCAEncoder`
-    layers."""
+    """Multi-Head Convolutional self-Attention stage comprised of `MHCAEncoder` layers.
+    """
 
     def __init__(
         self,
@@ -311,7 +311,7 @@ class MHCA_stage(nn.Module):
     #                           act_layer=nn.Hardswish)
 
     def forward(self, inputs):
-        """foward function"""
+        """Forward function."""
         # att_outputs = [self.InvRes(inputs[0])]
         att_outputs = []
 
@@ -329,7 +329,7 @@ class MHCA_stage(nn.Module):
 
 class SKFF(nn.Module):
     def __init__(self, in_channels, height=2, reduction=8, bias=False):
-        super(SKFF, self).__init__()
+        super().__init__()
 
         self.height = height
         d = max(int(in_channels / reduction), 4)
@@ -436,8 +436,8 @@ class DWConv2d_BN(nn.Module):
 
 
 class DWCPatchEmbed(nn.Module):
-    """Depthwise Convolutional Patch Embedding layer Image to Patch
-    Embedding."""
+    """Depthwise Convolutional Patch Embedding layer Image to Patch Embedding.
+    """
 
     def __init__(
         self, in_chans=3, embed_dim=768, patch_size=16, stride=1, idx=0, act_layer=nn.Hardswish, offset_clamp=(-1, 1)
@@ -458,18 +458,18 @@ class DWCPatchEmbed(nn.Module):
         """
 
     def forward(self, x):
-        """foward function"""
+        """Forward function."""
         x = self.patch_conv(x)
 
         return x
 
 
 class Patch_Embed_stage(nn.Module):
-    """Depthwise Convolutional Patch Embedding stage comprised of
-    `DWCPatchEmbed` layers."""
+    """Depthwise Convolutional Patch Embedding stage comprised of `DWCPatchEmbed` layers.
+    """
 
     def __init__(self, in_chans, embed_dim, num_path=4, isPool=False, offset_clamp=(-1, 1)):
-        super(Patch_Embed_stage, self).__init__()
+        super().__init__()
 
         self.patch_embeds = nn.ModuleList(
             [
@@ -486,7 +486,7 @@ class Patch_Embed_stage(nn.Module):
         )
 
     def forward(self, x):
-        """foward function"""
+        """Forward function."""
         att_inputs = []
         for pe in self.patch_embeds:
             x = pe(x)
@@ -497,7 +497,7 @@ class Patch_Embed_stage(nn.Module):
 
 class OverlapPatchEmbed(nn.Module):
     def __init__(self, in_c=3, embed_dim=48, bias=False):
-        super(OverlapPatchEmbed, self).__init__()
+        super().__init__()
         self.proj = nn.Conv2d(in_c, embed_dim, kernel_size=3, stride=1, padding=1, bias=bias)
         # self.proj_dw = nn.Conv2d(in_c, in_c, kernel_size=3, stride=1, padding=1,groups=in_c, bias=bias)
         # self.proj_pw = nn.Conv2d(in_c, embed_dim, kernel_size=1, stride=1, padding=0, bias=bias)
@@ -516,7 +516,7 @@ class OverlapPatchEmbed(nn.Module):
 
 class Downsample(nn.Module):
     def __init__(self, input_feat, out_feat):
-        super(Downsample, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(  # nn.Conv2d(n_feat, n_feat // 2, kernel_size=3, stride=1, padding=1, bias=False),
             # dw
@@ -542,7 +542,7 @@ class Downsample(nn.Module):
 
 class Upsample(nn.Module):
     def __init__(self, input_feat, out_feat):
-        super(Upsample, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(  # nn.Conv2d(n_feat, n_feat*2, kernel_size=3, stride=1, padding=1, bias=False),
             # dw
@@ -570,16 +570,24 @@ class MB_TaylorFormer(nn.Module):
     def __init__(
         self,
         inp_channels=3,
-        dim=[6, 12, 24, 36],
-        num_blocks=[1, 1, 1, 1],
-        heads=[1, 1, 1, 1],
+        dim=None,
+        num_blocks=None,
+        heads=None,
         bias=False,
         dual_pixel_task=True,
-        num_path=[1, 1, 1, 1],  ## True for dual-pixel defocus deblurring only. Also set inp_channels=6
+        num_path=None,  ## True for dual-pixel defocus deblurring only. Also set inp_channels=6
         qk_norm=1,
         offset_clamp=(-1, 1),
     ):
-        super(MB_TaylorFormer, self).__init__()
+        if num_path is None:
+            num_path = [1, 1, 1, 1]
+        if heads is None:
+            heads = [1, 1, 1, 1]
+        if num_blocks is None:
+            num_blocks = [1, 1, 1, 1]
+        if dim is None:
+            dim = [6, 12, 24, 36]
+        super().__init__()
 
         self.patch_embed = OverlapPatchEmbed(inp_channels, dim[0])
         self.patch_embed_encoder_level1 = Patch_Embed_stage(

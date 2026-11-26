@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/CPA.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+import numbers
+
+import torch
+import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
-import numbers
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
 
 
 class RFAConv(nn.Module):  # 基于Group Conv实现的RFAConv
@@ -58,7 +59,7 @@ class RFAConv(nn.Module):  # 基于Group Conv实现的RFAConv
 
 class Downsample(nn.Module):
     def __init__(self, n_feat):
-        super(Downsample, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(
             nn.Conv2d(n_feat, n_feat // 2, kernel_size=3, stride=1, padding=1, bias=False), nn.PixelUnshuffle(2)
@@ -70,7 +71,7 @@ class Downsample(nn.Module):
 
 class Upsample(nn.Module):
     def __init__(self, n_feat):
-        super(Upsample, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(
             nn.Conv2d(n_feat, n_feat * 2, kernel_size=3, stride=1, padding=1, bias=False), nn.PixelShuffle(2)
@@ -82,7 +83,7 @@ class Upsample(nn.Module):
 
 class SpatialAttention(nn.Module):
     def __init__(self):
-        super(SpatialAttention, self).__init__()
+        super().__init__()
         self.sa = nn.Conv2d(2, 1, 7, padding=3, padding_mode="reflect", bias=True)
 
     def forward(self, x):  # x:[b,c,h,w]
@@ -95,7 +96,7 @@ class SpatialAttention(nn.Module):
 
 class ChannelAttention(nn.Module):
     def __init__(self, dim, reduction=8):
-        super(ChannelAttention, self).__init__()
+        super().__init__()
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.ca = nn.Sequential(
             nn.Conv2d(dim, dim // reduction, 1, padding=0, bias=True),
@@ -111,7 +112,7 @@ class ChannelAttention(nn.Module):
 
 class Channel_Shuffle(nn.Module):
     def __init__(self, num_groups):
-        super(Channel_Shuffle, self).__init__()
+        super().__init__()
         self.num_groups = num_groups
 
     def forward(self, x):
@@ -126,7 +127,7 @@ class Channel_Shuffle(nn.Module):
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, ffn_expansion_factor, bias, LayerNorm_type):
-        super(TransformerBlock, self).__init__()
+        super().__init__()
 
         self.norm1 = LayerNorm(dim, LayerNorm_type)
         self.attn = Attention(dim, num_heads, bias)
@@ -149,7 +150,7 @@ def to_4d(x, h, w):
 
 class BiasFree_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
-        super(BiasFree_LayerNorm, self).__init__()
+        super().__init__()
         if isinstance(normalized_shape, numbers.Integral):
             normalized_shape = (normalized_shape,)
         normalized_shape = torch.Size(normalized_shape)
@@ -166,7 +167,7 @@ class BiasFree_LayerNorm(nn.Module):
 
 class WithBias_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
-        super(WithBias_LayerNorm, self).__init__()
+        super().__init__()
         if isinstance(normalized_shape, numbers.Integral):
             normalized_shape = (normalized_shape,)
         normalized_shape = torch.Size(normalized_shape)
@@ -187,7 +188,7 @@ class WithBias_LayerNorm(nn.Module):
 
 class LayerNorm(nn.Module):
     def __init__(self, dim, LayerNorm_type):
-        super(LayerNorm, self).__init__()
+        super().__init__()
         if LayerNorm_type == "BiasFree":
             self.body = BiasFree_LayerNorm(dim)
         else:
@@ -200,7 +201,7 @@ class LayerNorm(nn.Module):
 
 class FeedForward(nn.Module):
     def __init__(self, dim, ffn_expansion_factor, bias):
-        super(FeedForward, self).__init__()
+        super().__init__()
 
         hidden_features = int(dim * ffn_expansion_factor)
 
@@ -232,7 +233,7 @@ class FeedForward(nn.Module):
 
 class Attention(nn.Module):
     def __init__(self, dim, num_heads, bias):
-        super(Attention, self).__init__()
+        super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1, dtype=torch.float32), requires_grad=True)
         self.qkv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
@@ -240,7 +241,7 @@ class Attention(nn.Module):
         self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        _b, _c, h, w = x.shape
         device = x.device
         self.qkv = self.qkv.to(device)
         self.qkv_dwconv = self.qkv_dwconv.to(device)
@@ -269,7 +270,7 @@ class Attention(nn.Module):
 
 class CotPromptParaGen(nn.Module):
     def __init__(self, prompt_inch, prompt_size, num_path=3):
-        super(CotPromptParaGen, self).__init__()
+        super().__init__()
 
         # (128,32,32)->(64,64,64)->(32,128,128)
         self.chain_prompts = nn.ModuleList(
@@ -296,7 +297,7 @@ class CotPromptParaGen(nn.Module):
 
 class ContentDrivenPromptBlock(nn.Module):
     def __init__(self, dim, prompt_dim, reduction=8, num_splits=4):
-        super(ContentDrivenPromptBlock, self).__init__()
+        super().__init__()
         self.dim = dim
         self.num_splits = num_splits
         self.pa2 = nn.Conv2d(2 * dim, dim, 7, padding=3, padding_mode="reflect", groups=dim, bias=True)
@@ -319,7 +320,7 @@ class ContentDrivenPromptBlock(nn.Module):
     def forward(self, x, prompt_param):
         # latent: (b,dim*8,h/8,w/8)  prompt_param3: (1, 256, 16, 16)
         x_ = x
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         cattn = self.ca(x)  # channel-wise attn
         sattn = self.sa(x)  # spatial-wise attn
         pattn1 = sattn + cattn
@@ -351,7 +352,7 @@ class ContentDrivenPromptBlock(nn.Module):
 
 class CPA_arch(nn.Module):
     def __init__(self, c_in=3, c_out=3, dim=4, prompt_inch=128, prompt_size=32):
-        super(CPA_arch, self).__init__()
+        super().__init__()
         self.conv0 = RFAConv(c_in, dim)
         self.conv1 = RFAConv(dim, dim)
         self.conv2 = RFAConv(dim * 2, dim * 2)

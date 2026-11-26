@@ -1,13 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MLLA_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class Mlp(nn.Module):
@@ -44,7 +43,7 @@ class ConvLayer(nn.Module):
         norm=nn.BatchNorm2d,
         act_func=nn.ReLU,
     ):
-        super(ConvLayer, self).__init__()
+        super().__init__()
         self.dropout = nn.Dropout2d(dropout, inplace=False) if dropout > 0 else None
         self.conv = nn.Conv2d(
             in_channels,
@@ -71,13 +70,12 @@ class ConvLayer(nn.Module):
 
 
 class RoPE(torch.nn.Module):
-    r"""Rotary Positional Embedding.
-    Generates rotations dynamically based on H, W passed in forward.
-    Handles AMP by promoting ComplexHalf to ComplexFloat for internal computations.
+    r"""Rotary Positional Embedding. Generates rotations dynamically based on H, W passed in forward. Handles AMP by
+    promoting ComplexHalf to ComplexFloat for internal computations.
     """
 
     def __init__(self, feature_dim, base=10000):
-        super(RoPE, self).__init__()
+        super().__init__()
         self.feature_dim = feature_dim
         self.base = base
         self._cached_rotations = None
@@ -139,7 +137,7 @@ class RoPE(torch.nn.Module):
         if C != self.feature_dim:
             raise ValueError(f"Input feature dim {C} does not match RoPE configured dim {self.feature_dim}")
         if N != H * W:
-            raise ValueError(f"Input N={N} does not match H*W={H*W}")
+            raise ValueError(f"Input N={N} does not match H*W={H * W}")
 
         current_key = (H, W, x.dtype, x.device)
         if current_key != self._cached_hw_dtype_device:
@@ -431,8 +429,8 @@ class MLLA(nn.Module):
         in_chans=3,
         num_classes=1000,
         embed_dim=96,
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
+        depths=None,
+        num_heads=None,
         mlp_ratio=4.0,
         qkv_bias=True,
         drop_rate=0.0,
@@ -442,6 +440,10 @@ class MLLA(nn.Module):
         use_checkpoint=False,
         out_indices=(0, 1, 2, 3),
     ):
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
         super().__init__()
 
         self.num_classes = num_classes

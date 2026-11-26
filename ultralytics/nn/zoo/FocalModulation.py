@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/FocalModulation.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class FocalModulation(nn.Module):
@@ -52,7 +52,7 @@ class FocalModulation(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: input features with shape of (B, H, W, C)
+            x: input features with shape of (B, H, W, C).
         """
         C = x.shape[1]
 
@@ -60,7 +60,7 @@ class FocalModulation(nn.Module):
         x = self.f_linear(x).contiguous()
         q, ctx, gates = torch.split(x, (C, C, self.focal_level + 1), 1)
 
-        # context aggreation
+        # context aggregation
         ctx_all = 0.0
         for l in range(self.focal_level):
             ctx = self.focal_layers[l](ctx)
@@ -78,7 +78,7 @@ class FocalModulation(nn.Module):
         if self.use_postln_in_modulation:
             x_out = self.ln(x_out)
 
-        # post linear porjection
+        # post linear projection
         x_out = self.proj(x_out)
         x_out = self.proj_drop(x_out)
         return x_out

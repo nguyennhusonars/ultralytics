@@ -1,14 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SENetV1.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
-from ultralytics.nn.modules.conv import Conv
 import torch
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv
 
 
 class SELayerV1(nn.Module):
     def __init__(self, channel, reduction=16):
-        super(SELayerV1, self).__init__()
+        super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),

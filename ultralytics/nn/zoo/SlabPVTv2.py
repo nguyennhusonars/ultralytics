@@ -1,20 +1,20 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SlabPVTv2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class RepBN(nn.Module):
     def __init__(self, channels):
-        super(RepBN, self).__init__()
+        super().__init__()
         self.alpha = nn.Parameter(torch.ones(1))
         if channels == 0:
             self.bn = nn.Identity()
@@ -32,7 +32,7 @@ class RepBN(nn.Module):
 
 class LinearNorm(nn.Module):
     def __init__(self, dim, norm1_class, norm2_class, warm=0, step=300000, r0=1.0):
-        super(LinearNorm, self).__init__()
+        super().__init__()
         self.register_buffer("warm", torch.tensor(warm).float())
         self.register_buffer("iter", torch.tensor(step).float())
         self.register_buffer("total_step", torch.tensor(step).float())
@@ -78,7 +78,7 @@ linearnorm_partial = partial(LinearNorm, norm1_class=ln_partial, norm2_class=Rep
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         if dim == 0:
             self.dwconv = nn.Identity()
         else:
@@ -87,7 +87,7 @@ class DWConv(nn.Module):
     def forward(self, x, H, W):
         if isinstance(self.dwconv, nn.Identity):
             return x
-        B, N, C = x.shape
+        B, _N, C = x.shape
         x = x.transpose(1, 2).view(B, C, H, W)
         x = self.dwconv(x)
         x = x.flatten(2).transpose(1, 2)
@@ -410,12 +410,11 @@ class SimplifiedLinearAttention(nn.Module):
         k_full = kv_full[..., 0, :].contiguous()  # (B_orig, N_kv_eff, self.dim)
         v_full = kv_full[..., 1, :].contiguous()  # (B_orig, N_kv_eff, self.dim)
 
-        if isinstance(self.positional_encoding, nn.Parameter):
-            if (
-                self.positional_encoding.shape[1] == k_full.shape[1]
-                and self.positional_encoding.shape[2] == k_full.shape[2]
-            ):
-                k_full = k_full + self.positional_encoding
+        if isinstance(self.positional_encoding, nn.Parameter) and (
+            self.positional_encoding.shape[1] == k_full.shape[1]
+            and self.positional_encoding.shape[2] == k_full.shape[2]
+        ):
+            k_full = k_full + self.positional_encoding
 
         kernel_function = F.relu  # Using F.relu to avoid creating an nn.Module here
 
@@ -778,10 +777,10 @@ class SlabPyramidVisionTransformerV2(nn.Module):
 
         # Assertions for config consistency
         for config_list in [self.embed_dims, self.num_heads, self.mlp_ratios, self.sr_ratios, self.la_sr_ratios]:
-            assert (
-                len(config_list) == self.num_stages
-            ), f"Config list length mismatch: {config_list} vs num_stages {self.num_stages}"
-        assert len(self.attn_type_str) == self.num_stages, f"attn_type_str length mismatch"
+            assert len(config_list) == self.num_stages, (
+                f"Config list length mismatch: {config_list} vs num_stages {self.num_stages}"
+            )
+        assert len(self.attn_type_str) == self.num_stages, "attn_type_str length mismatch"
 
         if self.fork_feat:
             self.width_list = [e for e in self.embed_dims if e > 0]
@@ -886,9 +885,13 @@ class SlabPyramidVisionTransformerV2(nn.Module):
         param_names = set()
         for n, p in self.named_parameters():
             param_names.add(n)
-            if ".bias" in n or "norm" in n.lower() or "bn" in n.lower() or ".alpha" in n:
-                nwd.add(n)
-            elif "positional_encoding" in n and isinstance(p, nn.Parameter):  # Check if it's a Parameter
+            if (
+                ".bias" in n
+                or "norm" in n.lower()
+                or "bn" in n.lower()
+                or ".alpha" in n
+                or ("positional_encoding" in n and isinstance(p, nn.Parameter))
+            ):
                 nwd.add(n)
             elif p.ndim < 2:
                 if "weight" not in n or "norm" in n.lower() or "bn" in n.lower():  # Be more specific for 1D weights
@@ -927,7 +930,7 @@ class SlabPyramidVisionTransformerV2(nn.Module):
                 # This can happen if embed_dim is 0, but that's handled above.
                 # If not handled, it's a mismatch.
                 raise ValueError(
-                    f"Stage {i+1} output C dimension {current_x.shape[2]} ({current_x.shape}) "
+                    f"Stage {i + 1} output C dimension {current_x.shape[2]} ({current_x.shape}) "
                     f"!= expected embed_dim {self.embed_dims[i]}"
                 )
 
@@ -945,21 +948,18 @@ class SlabPyramidVisionTransformerV2(nn.Module):
                     current_x = reshaped_x  # For classifier, use the (B,C,H,W) format for GAP
 
         if self.fork_feat:
-            if self.width_list is not None:
-                if len(outs) != len(self.width_list):
-                    # This might indicate an issue with how width_list is constructed vs. how outs are collected
-                    # especially with zero-dim stages.
-                    # print(f"Warning: SlabPVTv2 features len {len(outs)} != width_list len {len(self.width_list)}")
-                    # print(f"  outs channels: {[o.shape[1] for o in outs]}")
-                    # print(f"  width_list: {self.width_list}")
-                    pass  # Potentially adjust width_list or outs logic if mismatch is problematic
+            if self.width_list is not None and len(outs) != len(self.width_list):
+                # This might indicate an issue with how width_list is constructed vs. how outs are collected
+                # especially with zero-dim stages.
+                # print(f"Warning: SlabPVTv2 features len {len(outs)} != width_list len {len(self.width_list)}")
+                # print(f"  outs channels: {[o.shape[1] for o in outs]}")
+                # print(f"  width_list: {self.width_list}")
+                pass  # Potentially adjust width_list or outs logic if mismatch is problematic
             return outs
         else:
             # Classification path, current_x is the output of the last stage, reshaped to (B,C,H,W)
             if current_x.shape[1] == 0:  # Last stage had 0 channels
-                return torch.zeros(
-                    (B, self.num_classes if self.num_classes > 0 else 0), device=current_x.device, dtype=current_x.dtype
-                )
+                return torch.zeros((B, max(0, self.num_classes)), device=current_x.device, dtype=current_x.dtype)
 
             pooled_x = F.adaptive_avg_pool2d(current_x, 1).flatten(1)
             final_output = self.head(pooled_x)

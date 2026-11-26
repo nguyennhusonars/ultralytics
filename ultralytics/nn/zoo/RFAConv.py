@@ -2,8 +2,9 @@
 """Ported from ultralytics_sonnn nn/modules/RFAConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from einops import rearrange
+from torch import nn
+
 from ultralytics.nn.modules.conv import Conv
-import torch.nn as nn
 
 
 class RFAConv(nn.Module):

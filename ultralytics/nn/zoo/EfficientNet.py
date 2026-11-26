@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/EfficientNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class SeBlock(nn.Module):
@@ -20,8 +20,8 @@ class SeBlock(nn.Module):
 
     def forward(self, x):
         y = self.Squeeze(x)
-        ouput = self.Excitation(y)
-        return x * (ouput.expand_as(x))
+        output = self.Excitation(y)
+        return x * (output.expand_as(x))
 
 
 class drop_connect:
@@ -54,7 +54,7 @@ class stem(nn.Module):
 
 class MBConvBlock(nn.Module):
     def __init__(self, inp, final_oup, k, s, expand_ratio, drop_connect_rate, has_se=False):
-        super(MBConvBlock, self).__init__()
+        super().__init__()
 
         self._momentum = 0.01
         self._epsilon = 1e-3
@@ -86,7 +86,7 @@ class MBConvBlock(nn.Module):
 
         # Squeeze and Excitation layer, if desired
         if self.has_se:
-            num_squeezed_channels = max(1, int(inp * se_ratio))
+            max(1, int(inp * se_ratio))
             self.se = SeBlock(oup, 4)
 
         # Output phase
@@ -102,7 +102,6 @@ class MBConvBlock(nn.Module):
         :param drop_connect_rate: drop connect rate (float, between 0 and 1)
         :return: output of block
         """
-
         # Expansion and Depthwise Convolution
         identity = x
         if self.expand_ratio != 1:

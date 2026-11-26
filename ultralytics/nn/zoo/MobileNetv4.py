@@ -1,11 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MobileNetv4.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Optional
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from __future__ import annotations
 
+import torch
+import torch.nn.functional as F
+from torch import nn
 
 MNV4ConvSmall_BLOCK_SPECS = {
     "conv0": {"block_name": "convbn", "num_blocks": 1, "block_specs": [[3, 32, 3, 2]]},
@@ -258,19 +258,19 @@ MODEL_SPECS = {
 def make_divisible(
     value: float,
     divisor: int,
-    min_value: Optional[float] = None,
+    min_value: float | None = None,
     round_down_protect: bool = True,
 ) -> int:
-    """
-    This function is copied from here
-    "https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_layers.py"
-    This is to ensure that all layers have channels that are divisible by 8.
+    """This function is copied from here
+    "https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_layers.py" This is to
+    ensure that all layers have channels that are divisible by 8.
+
     Args:
         value: A `float` of original value.
         divisor: An `int` of the divisor that need to be checked upon.
-        min_value: A `float` of  minimum value threshold.
-        round_down_protect: A `bool` indicating whether round down more than 10%
-        will be allowed.
+        min_value: A `float` of minimum value threshold.
+        round_down_protect: A `bool` indicating whether round down more than 10% will be allowed.
+
     Returns:
         The adjusted value in `int` that is divisible against divisor.
     """
@@ -296,10 +296,10 @@ def conv_2d(inp, oup, kernel_size=3, stride=1, groups=1, bias=False, norm=True, 
 
 class InvertedResidual(nn.Module):
     def __init__(self, inp, oup, stride, expand_ratio, act=False, squeeze_excitation=False):
-        super(InvertedResidual, self).__init__()
+        super().__init__()
         self.stride = stride
         assert stride in [1, 2]
-        hidden_dim = int(round(inp * expand_ratio))
+        hidden_dim = round(inp * expand_ratio)
         self.block = nn.Sequential()
         if expand_ratio != 1:
             self.block.add_module("exp_1x1", conv_2d(inp, hidden_dim, kernel_size=3, stride=stride))
@@ -321,8 +321,8 @@ class UniversalInvertedBottleneckBlock(nn.Module):
     def __init__(
         self, inp, oup, start_dw_kernel_size, middle_dw_kernel_size, middle_dw_downsample, stride, expand_ratio
     ):
-        """An inverted bottleneck block with optional depthwises.
-        Referenced from here https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py
+        """An inverted bottleneck block with optional depthwises. Referenced from here
+        https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py.
         """
         super().__init__()
         # Starting depthwise conv.
@@ -375,15 +375,12 @@ class MultiQueryAttentionLayerWithDownSampling(nn.Module):
         dw_kernel_size=3,
         dropout=0.0,
     ):
-        """Multi Query Attention with spatial downsampling.
-        Referenced from here https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py
-        3 parameters are introduced for the spatial downsampling:
-        1. kv_strides: downsampling factor on Key and Values only.
-        2. query_h_strides: vertical strides on Query only.
-        3. query_w_strides: horizontal strides on Query only.
-        This is an optimized version.
-        1. Projections in Attention is explict written out as 1x1 Conv2D.
-        2. Additional reshapes are introduced to bring a up to 3x speed up.
+        """Multi Query Attention with spatial downsampling. Referenced from here
+        https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py 3
+        parameters are introduced for the spatial downsampling: 1. kv_strides: downsampling factor on Key and
+        Values only. 2. query_h_strides: vertical strides on Query only. 3. query_w_strides: horizontal strides
+        on Query only. This is an optimized version. 1. Projections in Attention is explicit written out as 1x1
+        Conv2D. 2. Additional reshapes are introduced to bring a up to 3x speed up.
         """
         super().__init__()
         self.num_heads = num_heads
@@ -411,7 +408,7 @@ class MultiQueryAttentionLayerWithDownSampling(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
-        batch_size, seq_length, _, _ = x.size()
+        batch_size, _seq_length, _, _ = x.size()
         if self.query_h_strides > 1 or self.query_w_strides > 1:
             q = F.avg_pool2d(self.query_h_stride, self.query_w_stride)
             q = self._query_downsampling_norm(q)
@@ -445,9 +442,10 @@ class MultiQueryAttentionLayerWithDownSampling(nn.Module):
 
 class MNV4LayerScale(nn.Module):
     def __init__(self, init_value):
-        """LayerScale as introduced in CaiT: https://arxiv.org/abs/2103.17239
-        Referenced from here https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py
-        As used in MobileNetV4.
+        """LayerScale as introduced in CaiT: https://arxiv.org/abs/2103.17239 Referenced from here
+        https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py As used
+        in MobileNetV4.
+
         Attributes:
             init_value (float): value to initialize the diagonal matrix of LayerScale.
         """
@@ -556,7 +554,7 @@ def build_blocks(layer_spec, factor=0.25):
                     "use_residual",
                 ]
                 args["inp"] = int(args["inp"] * factor)
-                args = dict(zip(msha_schema_, [args["oup"]] + (msha)))
+                args = dict(zip(msha_schema_, [args["oup"], *msha]))
 
                 layers.add_module(f"msha_{i}", MultiHeadSelfAttentionBlock(**args))
     elif block_names == "fused_ib":
@@ -575,13 +573,14 @@ class MobileNetV4(nn.Module):
     def __init__(self, model, factor=0.25):
         # MobileNetV4ConvSmall  MobileNetV4ConvMedium  MobileNetV4ConvLarge
         # MobileNetV4HybridMedium  MobileNetV4HybridLarge
-        """Params to initiate MobilenNetV4
+        """Params to initiate MobilenNetV4.
+
         Args:
-            model : support 5 types of models as indicated in
-            "https://github.com/tensorflow/models/blob/master/official/vision/modeling/backbones/mobilenet.py"
+            model: support 5 types of models as indicated in
+            "https: //github.com/tensorflow/models/blob/master/official/vision/modeling/backbones/mobilenet.py".
         """
         super().__init__()
-        assert model in MODEL_SPECS.keys()
+        assert model in MODEL_SPECS
         self.model = model
         self.spec = MODEL_SPECS[self.model]
 

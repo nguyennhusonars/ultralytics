@@ -1,18 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/iFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from torch.nn.init import _calculate_fan_in_and_fan_out
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import Mlp
-from ultralytics.nn.zoo._timm import to_2tuple
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import warnings
+from functools import partial
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.nn.init import _calculate_fan_in_and_fan_out
+
+from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, DropPath, Mlp, to_2tuple
 
 
 def _cfg(url="", **kwargs):
@@ -94,21 +92,21 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
 
 def trunc_normal_(tensor, mean=0.0, std=1.0, a=-2.0, b=2.0):
     # type: (torch.Tensor, float, float, float, float) -> torch.Tensor
-    r"""Fills the input Tensor with values drawn from a truncated
-    normal distribution. The values are effectively drawn from the
-    normal distribution :math:`\mathcal{N}(\text{mean}, \text{std}^2)`
-    with values outside :math:`[a, b]` redrawn until they are within
-    the bounds. The method used for generating the random values works
-    best when :math:`a \leq \text{mean} \leq b`.
+    r"""Fills the input Tensor with values drawn from a truncated normal distribution. The values are effectively drawn
+    from the normal distribution :math:`\mathcal{N}(\text{mean}, \text{std}^2)` with values outside :math:`[a, b]`
+    redrawn until they are within the bounds. The method used for generating the random values works best when
+    :math:`a \leq \text{mean} \leq b`.
+
     Args:
         tensor: an n-dimensional `torch.Tensor`
         mean: the mean of the normal distribution
         std: the standard deviation of the normal distribution
         a: the minimum cutoff value
         b: the maximum cutoff value
+
     Examples:
         >>> w = torch.empty(3, 5)
-        >>> nn.init.trunc_normal_(w)
+        >>> nn.init.trunc_normal_(w).
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
@@ -141,7 +139,7 @@ def lecun_normal_(tensor):
 
 
 class PatchEmbed(nn.Module):
-    """2D Image to Patch Embedding"""
+    """2D Image to Patch Embedding."""
 
     def __init__(self, img_size=224, kernel_size=16, stride=16, padding=0, in_chans=3, embed_dim=768):
         super().__init__()
@@ -161,7 +159,7 @@ class PatchEmbed(nn.Module):
 
 
 class FirstPatchEmbed(nn.Module):
-    """2D Image to Patch Embedding"""
+    """2D Image to Patch Embedding."""
 
     def __init__(self, kernel_size=3, stride=2, padding=1, in_chans=3, embed_dim=768):
         super().__init__()
@@ -317,7 +315,7 @@ class Mixer(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        B, H, W, C = x.shape
+        _B, _H, _W, _C = x.shape
         x = x.permute(0, 3, 1, 2)
 
         hx = x[:, : self.high_dim, :, :].contiguous()
@@ -373,8 +371,8 @@ class Block(nn.Module):
         self.use_layer_scale = use_layer_scale
         if self.use_layer_scale:
             # print('use layer scale init value {}'.format(layer_scale_init_value))
-            self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-            self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+            self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
 
     def forward(self, x):
         if self.use_layer_scale:
@@ -450,7 +448,7 @@ class InceptionTransformer(nn.Module):
                     use_layer_scale=use_layer_scale,
                     layer_scale_init_value=layer_scale_init_value,
                 )
-                for i in range(0, st2_idx)
+                for i in range(st2_idx)
             ]
         )
 
@@ -612,7 +610,7 @@ class InceptionTransformer(nn.Module):
 
         # Stage 4
         x = self.patch_embed4(x)
-        B, H, W, C = x.shape
+        _B, H, W, _C = x.shape
         x = x + self._get_pos_embed(self.pos_embed4, self.num_patches4, H, W)
         x = self.blocks4(x)
         x = x.permute(0, 3, 1, 2).contiguous()
@@ -627,7 +625,7 @@ class InceptionTransformer(nn.Module):
 
 
 def _init_vit_weights(module: nn.Module, name: str = "", head_bias: float = 0.0):
-    """ViT weight initialization"""
+    """ViT weight initialization."""
     if isinstance(module, nn.Linear):
         if name.startswith("head"):
             nn.init.zeros_(module.weight)
@@ -649,9 +647,7 @@ def _init_vit_weights(module: nn.Module, name: str = "", head_bias: float = 0.0)
 
 
 def iformer_small(pretrained=False, img_size=224, **kwargs):
-    """
-    Inception Transformer-Small model
-    """
+    """Inception Transformer-Small model."""
     depths = [3, 3, 9, 3]
     embed_dims = [96, 192, 320, 384]
     num_heads = [3, 6, 10, 12]

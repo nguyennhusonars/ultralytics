@@ -1,17 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RDNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from functools import partial
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import EffectiveSEModule
-from ultralytics.nn.zoo._timm import LayerNorm2d
-from ultralytics.nn.zoo._timm import named_apply
+from typing import Any, List
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, EffectiveSEModule, LayerNorm2d, named_apply
 
 
 class RDNetClassifierHead(nn.Module):
@@ -58,7 +56,7 @@ class PatchifyStem(nn.Module):
 
 
 class Block(nn.Module):
-    """D == Dw conv, N == Norm, F == Feed Forward, A == Activation"""
+    """D == Dw conv, N == Norm, F == Feed Forward, A == Activation."""
 
     def __init__(self, in_chs, inter_chs, out_chs):
         super().__init__()
@@ -75,7 +73,7 @@ class Block(nn.Module):
 
 
 class BlockESE(nn.Module):
-    """D == Dw conv, N == Norm, F == Feed Forward, A == Activation"""
+    """D == Dw conv, N == Norm, F == Feed Forward, A == Activation."""
 
     def __init__(self, in_chs, inter_chs, out_chs):
         super().__init__()
@@ -185,11 +183,10 @@ class DenseStage(nn.Sequential):
 
 
 class RDNet(nn.Module):
-    """
-    Refactored RDNet Feature Extractor Backbone.
+    """Refactored RDNet Feature Extractor Backbone.
 
-    Outputs a list of feature maps from specified stages.
-    Includes `width_list` attribute similar to the provided MobileNetV4 example.
+    Outputs a list of feature maps from specified stages. Includes `width_list` attribute similar to the provided
+    MobileNetV4 example.
     """
 
     def __init__(
@@ -207,9 +204,9 @@ class RDNet(nn.Module):
         transition_compression_ratio: float = 0.5,
         ls_init_value: float = 1e-6,
         is_downsample_block: tuple = (None, True, True, False, False, False, True),
-        block_type: str or List[str] = "Block",
+        block_type: str or list[str] = "Block",
         head_init_scale: float = 1.0,
-        output_stages: Optional[List[int]] = None,  # Specify which stages to output (0-indexed)
+        output_stages: list[int] | None = None,  # Specify which stages to output (0-indexed)
         input_size: tuple = (224, 224),  # For width_list calculation
         **kwargs,  # Consume potential extra kwargs
     ):
@@ -274,12 +271,12 @@ class RDNet(nn.Module):
             is_feature_stage = (i + 1 == self.num_stages) or (i + 1 != self.num_stages and is_downsample_block[i + 1])
             if is_feature_stage:
                 self.feature_info.append(
-                    dict(
-                        num_chs=num_features,
-                        reduction=curr_stride,
-                        module=f"stages.{i}",  # Adjusted module path
-                        stage_index=i,
-                    )
+                    {
+                        "num_chs": num_features,
+                        "reduction": curr_stride,
+                        "module": f"stages.{i}",  # Adjusted module path
+                        "stage_index": i,
+                    }
                 )
 
             self.stages.append(stage_layers)  # Add the ModuleDict for this stage
@@ -291,7 +288,7 @@ class RDNet(nn.Module):
             # Alternative Default: Output from *all* stages
             # self.output_stage_indices = list(range(self.num_stages))
         else:
-            self.output_stage_indices = sorted(list(set(output_stages)))
+            self.output_stage_indices = sorted(set(output_stages))
             # Validate indices
             if not all(0 <= idx < self.num_stages for idx in self.output_stage_indices):
                 raise ValueError(f"Invalid output_stages. Must be between 0 and {self.num_stages - 1}")
@@ -302,11 +299,10 @@ class RDNet(nn.Module):
 
         # --- Initialize Weights ---
         named_apply(partial(_init_weights, head_init_scale=head_init_scale), self)
-        if zero_head:
-            if hasattr(self.head, "fc") and isinstance(self.head.fc, nn.Linear):
-                nn.init.zeros_(self.head.fc.weight)
-                if self.head.fc.bias is not None:
-                    nn.init.zeros_(self.head.fc.bias)
+        if zero_head and hasattr(self.head, "fc") and isinstance(self.head.fc, nn.Linear):
+            nn.init.zeros_(self.head.fc.weight)
+            if self.head.fc.bias is not None:
+                nn.init.zeros_(self.head.fc.bias)
 
         # --- Calculate Output Width List (like MobileNetV4) ---
         self.eval()  # Set to eval mode for dummy pass (disables dropout, etc.)
@@ -322,7 +318,7 @@ class RDNet(nn.Module):
                 self.width_list = []  # Set empty list on failure
         self.train()  # Set back to train mode
 
-    def _forward_features_list(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def _forward_features_list(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Internal method to forward through stages and collect specified outputs."""
         x = self.stem(x)
         output_features = []
@@ -352,10 +348,9 @@ class RDNet(nn.Module):
 
         return output_features
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Forward pass for feature extraction. Returns a list of feature maps
-        from the stages specified in `output_stages` during initialization.
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Forward pass for feature extraction. Returns a list of feature maps from the stages specified in
+        `output_stages` during initialization.
         """
         return self._forward_features_list(x)
 
@@ -371,11 +366,9 @@ class RDNet(nn.Module):
         self.head.reset(num_classes)
 
     def forward_head(self, x: torch.Tensor, pre_logits: bool = False):
-        """
-        Forward pass through the classifier head.
-        Assumes x is the output of the final feature stage.
-        You might need to select the last element from the list returned by forward().
-        e.g., model.forward_head(model(input)[-1])
+        """Forward pass through the classifier head. Assumes x is the output of the final feature stage. You might need
+        to select the last element from the list returned by forward().
+        e.g., model.forward_head(model(input)[-1]).
         """
         return self.head(x, pre_logits=pre_logits)
 
@@ -399,9 +392,9 @@ def _init_weights(module, name=None, head_init_scale=1.0):
 
 
 def rdnet_tiny(**kwargs: Any) -> RDNet:
-    """RDNet-Tiny"""
+    """RDNet-Tiny."""
     n_layer = 7
-    model_args: Dict[str, Any] = {
+    model_args: dict[str, Any] = {
         "num_init_features": 64,
         "growth_rates": tuple([64] + [104] + [128] * 4 + [224]),
         "num_blocks_list": tuple([3] * n_layer),

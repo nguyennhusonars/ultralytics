@@ -1,15 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FasterNet_modular.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath
 
 
 class Partial_conv3(nn.Module):
-    """
-    FasterNet 的核心卷積組件 PConv
-    """
+    """FasterNet 的核心卷積組件 PConv."""
 
     def __init__(self, dim, n_div=4, forward="split_cat"):
         super().__init__()
@@ -39,9 +38,7 @@ class Partial_conv3(nn.Module):
 
 
 class FasterNetBlock(nn.Module):
-    """
-    單個 FasterNet Block (對應原代碼中的 MLPBlock)
-    """
+    """單個 FasterNet Block (對應原代碼中的 MLPBlock)."""
 
     def __init__(
         self,
@@ -80,9 +77,8 @@ class FasterNetBlock(nn.Module):
 
 
 class PatchEmbed_Faster(nn.Module):
-    """
-    對應 FasterNet 的 PatchEmbed
-    在 YOLO yaml 中使用: [-1, 1, PatchEmbed_Faster, [96, 4, 4]]  # [out_channels, patch_size, stride]
+    """對應 FasterNet 的 PatchEmbed 在 YOLO yaml 中使用: [-1, 1, PatchEmbed_Faster, [96, 4, 4]] # [out_channels, patch_size,
+    stride].
     """
 
     def __init__(self, c1, c2, patch_size=4, patch_stride=4, norm_layer=nn.BatchNorm2d):
@@ -99,9 +95,7 @@ class PatchEmbed_Faster(nn.Module):
 
 
 class PatchMerging_Faster(nn.Module):
-    """
-    對應 FasterNet 的 PatchMerging (下採樣層)
-    在 YOLO yaml 中使用: [-1, 1, PatchMerging_Faster, [out_channels]]
+    """對應 FasterNet 的 PatchMerging (下採樣層) 在 YOLO yaml 中使用: [-1, 1, PatchMerging_Faster, [out_channels]].
     """
 
     def __init__(self, c1, c2, patch_size2=2, patch_stride2=2, norm_layer=nn.BatchNorm2d):
@@ -119,11 +113,8 @@ class PatchMerging_Faster(nn.Module):
 
 
 class FasterNetLayer(nn.Module):
-    """
-    FasterNet 的 Stage 層 (包含多個 FasterNetBlock)
-    YAML args: [out_channels, number_of_blocks]
-    例如: [-1, 1, FasterNetLayer, [96, 2]]
-    意思: 輸入自動獲取, 輸出96通道, 重複2次 Block
+    """FasterNet 的 Stage 層 (包含多個 FasterNetBlock) YAML args: [out_channels, number_of_blocks] 例如: [-1, 1, FasterNetLayer,
+    [96, 2]] 意思: 輸入自動獲取, 輸出96通道, 重複2次 Block.
     """
 
     def __init__(self, c1, c2, n=1, mlp_ratio=2.0, n_div=4, drop_path=0.0):

@@ -1,14 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FasterNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from torch import Tensor
-from typing import List
-from ultralytics.nn.zoo._timm import DropPath
-import numpy as np
+from __future__ import annotations
+
 import os
+from functools import partial
+
+import numpy as np
 import torch
-import torch.nn as nn
+from torch import Tensor, nn
+
+from ultralytics.nn.zoo._timm import DropPath
 
 
 class Partial_conv3(nn.Module):
@@ -51,7 +53,7 @@ class MLPBlock(nn.Module):
 
         mlp_hidden_dim = int(dim * mlp_ratio)
 
-        mlp_layer: List[nn.Module] = [
+        mlp_layer: list[nn.Module] = [
             nn.Conv2d(dim, mlp_hidden_dim, 1, bias=False),
             norm_layer(mlp_hidden_dim),
             act_layer(),
@@ -63,7 +65,7 @@ class MLPBlock(nn.Module):
         self.spatial_mixing = Partial_conv3(dim, n_div, pconv_fw_type)
 
         if layer_scale_init_value > 0:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             self.forward = self.forward_layer_scale
         else:
             self.forward = self.forward
@@ -250,7 +252,7 @@ class FasterNet(nn.Module):
 def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)

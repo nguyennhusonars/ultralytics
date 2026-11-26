@@ -1,13 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/DySnakeConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import C3
+import torch
+from torch import nn
+
+from ultralytics.nn.modules.block import C3, Bottleneck, C2f
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.zoo.block import RepNCSP
-import torch
-import torch.nn as nn
 
 
 class DySnakeConv(nn.Module):
@@ -33,9 +32,9 @@ class DSConv(nn.Module):
         :param extend_scope: the range to expand (default 1 for this method)
         :param morph: the morphology of the convolution kernel is mainly divided into two types
                         along the x-axis (0) and the y-axis (1) (see the paper for details)
-        :param if_offset: whether deformation is required, if it is False, it is the standard convolution kernel
+        :param if_offset: whether deformation is required, if it is False, it is the standard convolution kernel.
         """
-        super(DSConv, self).__init__()
+        super().__init__()
         # use the <offset_conv> to learn the deformable offset
         self.offset_conv = nn.Conv2d(in_ch, 2 * kernel_size, 3, padding=1)
         self.bn = nn.BatchNorm2d(2 * kernel_size)
@@ -84,7 +83,7 @@ class DSConv(nn.Module):
             return x
 
 
-class DSC(object):
+class DSC:
     def __init__(self, input_shape, kernel_size, extend_scope, morph):
         self.num_points = kernel_size
         self.width = input_shape[2]

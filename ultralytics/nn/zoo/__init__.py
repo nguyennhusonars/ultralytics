@@ -26,7 +26,7 @@ def resolve(name):
     if name == FEATURE:
         return ZooFeature
     if name not in INDEX:
-        import ultralytics.nn.modules as modules  # upstream layers tasks.py does not import, e.g. CBAM
+        from ultralytics.nn import modules  # upstream layers tasks.py does not import, e.g. CBAM
 
         if hasattr(modules, name):
             return getattr(modules, name)
@@ -91,7 +91,7 @@ _FUSE = {
 
 
 def fuse(model):
-    """Reparameterise zoo layers in place (called from BaseModel.fuse before the upstream Conv/BN fusion)."""
+    """Reparameterize zoo layers in place (called from BaseModel.fuse before the upstream Conv/BN fusion)."""
     from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
     for m in model.modules():

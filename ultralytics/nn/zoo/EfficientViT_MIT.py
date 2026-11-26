@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 from inspect import signature
-from torch.cuda.amp import autocast
 from typing import Any
-from typing import Optional
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+from torch.cuda.amp import autocast
 
 
 def val2list(x: list | tuple | Any, repeat_time=1) -> list:
@@ -31,12 +31,12 @@ def val2tuple(x: list | tuple | Any, min_len: int = 1, idx_repeat: int = -1) -> 
 class ResidualBlock(nn.Module):
     def __init__(
         self,
-        main: Optional[nn.Module],
-        shortcut: Optional[nn.Module],
+        main: nn.Module | None,
+        shortcut: nn.Module | None,
         post_act=None,
-        pre_norm: Optional[nn.Module] = None,
+        pre_norm: nn.Module | None = None,
     ):
-        super(ResidualBlock, self).__init__()
+        super().__init__()
 
         self.pre_norm = pre_norm
         self.main = main
@@ -96,7 +96,7 @@ class DSConv(nn.Module):
         norm=("bn2d", "bn2d"),
         act_func=("relu6", None),
     ):
-        super(DSConv, self).__init__()
+        super().__init__()
 
         use_bias = val2tuple(use_bias, 2)
         norm = val2tuple(norm, 2)
@@ -140,7 +140,7 @@ class MBConv(nn.Module):
         norm=("bn2d", "bn2d", "bn2d"),
         act_func=("relu6", "relu6", None),
     ):
-        super(MBConv, self).__init__()
+        super().__init__()
 
         use_bias = val2tuple(use_bias, 3)
         norm = val2tuple(norm, 3)
@@ -192,7 +192,7 @@ class EfficientViTBlock(nn.Module):
         norm="bn2d",
         act_func="hswish",
     ):
-        super(EfficientViTBlock, self).__init__()
+        super().__init__()
         self.context_module = ResidualBlock(
             LiteMLA(
                 in_channels=in_channels,
@@ -220,7 +220,7 @@ class EfficientViTBlock(nn.Module):
 
 
 class LiteMLA(nn.Module):
-    r"""Lightweight multi-scale linear attention"""
+    r"""Lightweight multi-scale linear attention."""
 
     def __init__(
         self,
@@ -236,7 +236,7 @@ class LiteMLA(nn.Module):
         scales: tuple[int, ...] = (5,),
         eps=1.0e-15,
     ):
-        super(LiteMLA, self).__init__()
+        super().__init__()
         self.eps = eps
         heads = heads or int(in_channels // dim * heads_ratio)
 
@@ -341,9 +341,8 @@ class LiteMLA(nn.Module):
     def configure_litemla(model: nn.Module, **kwargs) -> None:
         eps = kwargs.get("eps", None)
         for m in model.modules():
-            if isinstance(m, LiteMLA):
-                if eps is not None:
-                    m.eps = eps
+            if isinstance(m, LiteMLA) and eps is not None:
+                m.eps = eps
 
 
 def build_kwargs_from_config(config: dict, target_func: callable) -> dict[str, any]:
@@ -399,7 +398,7 @@ class ConvLayer(nn.Module):
         norm="bn2d",
         act_func="relu",
     ):
-        super(ConvLayer, self).__init__()
+        super().__init__()
 
         padding = get_same_padding(kernel_size)
         padding *= dilation
@@ -443,7 +442,7 @@ class IdentityLayer(nn.Module):
 
 class OpSequential(nn.Module):
     def __init__(self, op_list: list[nn.Module or None]):
-        super(OpSequential, self).__init__()
+        super().__init__()
         valid_op_list = []
         for op in op_list:
             if op is not None:

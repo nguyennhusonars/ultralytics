@@ -1,13 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FlashInternImage.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
 import DCNv4
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class to_channels_first(nn.Module):
@@ -57,16 +57,14 @@ def build_act_layer(act_layer):
 
 
 class CrossAttention(nn.Module):
-    r"""Cross Attention Module
+    r"""Cross Attention Module.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads. Default: 8
-        qkv_bias (bool, optional):  If True, add a learnable bias to q, k, v.
-            Default: False.
-        qk_scale (float | None, optional): Override default qk scale of
-            head_dim ** -0.5 if set. Default: None.
-        attn_drop (float, optional): Dropout ratio of attention weight.
-            Default: 0.0
+        qkv_bias (bool, optional): If True, add a learnable bias to q, k, v. Default: False.
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set. Default: None.
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
         attn_head_dim (int, optional): Dimension of attention head.
         out_dim (int, optional): Dimension of output.
@@ -112,7 +110,7 @@ class CrossAttention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, k=None, v=None):
-        B, N, C = x.shape
+        B, N, _C = x.shape
         N_k = k.shape[1]
         N_v = v.shape[1]
 
@@ -145,19 +143,17 @@ class CrossAttention(nn.Module):
 
 
 class AttentiveBlock(nn.Module):
-    r"""Attentive Block
+    r"""Attentive Block.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads. Default: 8
-        qkv_bias (bool, optional):  If True, add a learnable bias to q, k, v.
-            Default: False.
-        qk_scale (float | None, optional): Override default qk scale of
-            head_dim ** -0.5 if set. Default: None.
+        qkv_bias (bool, optional): If True, add a learnable bias to q, k, v. Default: False.
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set. Default: None.
         drop (float, optional): Dropout rate. Default: 0.0.
         attn_drop (float, optional): Attention dropout rate. Default: 0.0.
-        drop_path (float | tuple[float], optional): Stochastic depth rate.
-            Default: 0.0.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm.
+        drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0.
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
         attn_head_dim (int, optional): Dimension of attention head. Default: None.
         out_dim (int, optional): Dimension of output. Default: None.
     """
@@ -214,12 +210,13 @@ class AttentionPoolingBlock(AttentiveBlock):
 
 
 class StemLayer(nn.Module):
-    r"""Stem layer of InternImage
+    r"""Stem layer of InternImage.
+
     Args:
         in_chans (int): number of input channels
         out_chans (int): number of output channels
         act_layer (str): activation layer
-        norm_layer (str): normalization layer
+        norm_layer (str): normalization layer.
     """
 
     def __init__(self, in_chans=3, out_chans=96, act_layer="GELU", norm_layer="BN"):
@@ -240,10 +237,11 @@ class StemLayer(nn.Module):
 
 
 class DownsampleLayer(nn.Module):
-    r"""Downsample layer of InternImage
+    r"""Downsample layer of InternImage.
+
     Args:
         channels (int): number of input channels
-        norm_layer (str): normalization layer
+        norm_layer (str): normalization layer.
     """
 
     def __init__(self, channels, norm_layer="LN"):
@@ -253,7 +251,7 @@ class DownsampleLayer(nn.Module):
 
     def forward(self, x, shape=None):
         H, W = shape
-        N, HW, C = x.shape
+        N, _HW, C = x.shape
         x = x.view(N, H, W, C)
         x = self.conv(x.permute(0, 3, 1, 2))
         x = self.norm(x)  # B C H W
@@ -264,13 +262,14 @@ class DownsampleLayer(nn.Module):
 
 
 class MLPLayer(nn.Module):
-    r"""MLP layer of InternImage
+    r"""MLP layer of InternImage.
+
     Args:
         in_features (int): number of input features
         hidden_features (int): number of hidden features
         out_features (int): number of output features
         act_layer (str): activation layer
-        drop (float): dropout rate
+        drop (float): dropout rate.
     """
 
     def __init__(
@@ -294,7 +293,8 @@ class MLPLayer(nn.Module):
 
 
 class InternImageLayer(nn.Module):
-    r"""Basic layer of InternImage
+    r"""Basic layer of InternImage.
+
     Args:
         core_op (nn.Module): core operation of InternImage
         channels (int): number of input channels
@@ -307,7 +307,7 @@ class InternImageLayer(nn.Module):
         post_norm (bool): whether to use post normalization
         layer_scale (float): layer scale
         offset_scale (float): offset scale
-        with_cp (bool): whether to use checkpoint
+        with_cp (bool): whether to use checkpoint.
     """
 
     def __init__(
@@ -369,11 +369,9 @@ class InternImageLayer(nn.Module):
             # ========== START: Code Modification ======================
             # ==========================================================
             def dcn_call(tensor, shape):
-                """
-                Helper function to safely call DCNv4.
-                If the input tensor is on the CPU, it returns the tensor as is,
-                effectively bypassing the DCNv4 operation which lacks a CPU implementation.
-                This is crucial for CPU-based model initialization or analysis.
+                """Helper function to safely call DCNv4. If the input tensor is on the CPU, it returns the tensor as is,
+                effectively bypassing the DCNv4 operation which lacks a CPU implementation. This is
+                crucial for CPU-based model initialization or analysis.
                 """
                 if tensor.device.type == "cpu":
                     return tensor
@@ -411,7 +409,8 @@ class InternImageLayer(nn.Module):
 
 
 class InternImageBlock(nn.Module):
-    r"""Block of InternImage
+    r"""Block of InternImage.
+
     Args:
         core_op (nn.Module): core operation of InternImage
         channels (int): number of input channels
@@ -425,7 +424,7 @@ class InternImageBlock(nn.Module):
         post_norm (bool): whether to use post normalization
         layer_scale (float): layer scale
         offset_scale (float): offset scale
-        with_cp (bool): whether to use checkpoint
+        with_cp (bool): whether to use checkpoint.
     """
 
     def __init__(
@@ -514,11 +513,9 @@ class InternImageBlock(nn.Module):
 
 
 class FlashInternImage(nn.Module):
-    r"""FlashInternImage
-        A PyTorch impl based on :
-            `InternImage: Exploring Large-Scale Vision Foundation Models with Deformable Convolutions`  -
-            https://arxiv.org/pdf/2103.14030
-            'DCNv4': TODO: add arxiv
+    r"""FlashInternImage A PyTorch impl based on : `InternImage: Exploring Large-Scale Vision Foundation Models with
+    Deformable Convolutions` - https://arxiv.org/pdf/2103.14030 'DCNv4': TODO: add arxiv.
+
     Args:
         core_op (str): Core operator. Default: 'DCNv4'
         channels (int): Number of the first stage. Default: 64
@@ -538,15 +535,15 @@ class FlashInternImage(nn.Module):
         level2_post_norm (bool): Whether to use level2 post norm. Default: False
         level2_post_norm_block_ids (list): Indexes of post norm blocks. Default: None
         res_post_norm (bool): Whether to use res post norm. Default: False
-        center_feature_scale (bool): Whether to use center feature scale. Default: False
+        center_feature_scale (bool): Whether to use center feature scale. Default: False.
     """
 
     def __init__(
         self,
         core_op="DCNv4",
         channels=64,
-        depths=[3, 4, 18, 5],
-        groups=[3, 6, 12, 24],
+        depths=None,
+        groups=None,
         num_classes=1000,
         mlp_ratio=4.0,
         drop_rate=0.0,
@@ -569,6 +566,10 @@ class FlashInternImage(nn.Module):
         center_feature_scale=False,  # for InternImage-H/G
         **kwargs,
     ):
+        if groups is None:
+            groups = [3, 6, 12, 24]
+        if depths is None:
+            depths = [3, 4, 18, 5]
         super().__init__()
         self.core_op = core_op
         self.num_classes = num_classes
@@ -667,7 +668,7 @@ class FlashInternImage(nn.Module):
                 features = self.forward(dummy_input)
             self.width_list = [f.size(1) for f in features]
             self.train()
-        except Exception as e:
+        except Exception:
             # Fallback for CPU-only environments or other errors during dummy pass
             # print(f"Could not perform dummy forward pass for width_list: {e}")
             fallback_dims = [self.channels * (2**i) for i in range(self.num_levels)]
@@ -698,7 +699,7 @@ class FlashInternImage(nn.Module):
             layer_num = 3 - i  # 3 2 1 0
             for j in range(self.depths[layer_num]):
                 block_num = self.depths[layer_num] - j - 1
-                tag = "levels.{}.blocks.{}.".format(layer_num, block_num)
+                tag = f"levels.{layer_num}.blocks.{block_num}."
                 decay = 1.0 * (decay_ratio**idx)
                 lr_ratios[tag] = decay
                 idx += 1
@@ -746,7 +747,7 @@ class FlashInternImage(nn.Module):
 
     def forward_clip_projector(self, x):  # for InternImage-H/G
         xs = self.forward_features_seq_out(x)
-        x1, x2, x3, x4 = xs
+        _x1, _x2, x3, x4 = xs
 
         # Note: forward_features_seq_out already returns in NCHW format
         x3 = self.dcnv3_head_x3(x3)
@@ -760,16 +761,13 @@ class FlashInternImage(nn.Module):
         return x
 
     def forward(self, x):
-        """
-        This forward method is designed for object detection backbones.
-        It returns a list of feature maps from each stage.
+        """This forward method is designed for object detection backbones. It returns a list of feature maps from each
+        stage.
         """
         return self.forward_features_seq_out(x)
 
     def forward_cls(self, x):
-        """
-        This method retains the original classification logic.
-        """
+        """This method retains the original classification logic."""
         if self.use_clip_projector:  # for InternImage-H/G
             x = self.forward_clip_projector(x)
         else:  # for InternImage-T/S/B/L/XL

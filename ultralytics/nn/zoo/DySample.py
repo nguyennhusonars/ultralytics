@@ -2,8 +2,8 @@
 """Ported from ultralytics_sonnn nn/modules/DySample.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def normal_init(module, mean=0, std=1, bias=0):

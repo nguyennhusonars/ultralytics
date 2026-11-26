@@ -8,8 +8,8 @@ FDConv_detection/mmdet_custom/FDConv.py with mmcv, plotting and dead options rem
 import math
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class StarReLU(nn.Module):

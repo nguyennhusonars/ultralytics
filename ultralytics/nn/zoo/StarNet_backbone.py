@@ -1,10 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/StarNet_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class ConvBN(torch.nn.Sequential):
@@ -52,7 +52,9 @@ class Block(nn.Module):
 
 
 class StarNet(nn.Module):
-    def __init__(self, base_dim=32, depths=[3, 3, 12, 5], mlp_ratio=4, drop_path_rate=0.0, num_classes=1000, **kwargs):
+    def __init__(self, base_dim=32, depths=None, mlp_ratio=4, drop_path_rate=0.0, num_classes=1000, **kwargs):
+        if depths is None:
+            depths = [3, 3, 12, 5]
         super().__init__()
         self.num_classes = num_classes
         self.in_channel = 32

@@ -1,15 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/PolaFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from functools import partial
 
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 PVT_MODEL_SPECS = {
     "pola_pvt_tiny": {
@@ -348,7 +347,7 @@ class Block(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Image to Patch Embedding."""
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
         super().__init__()
@@ -365,7 +364,7 @@ class PatchEmbed(nn.Module):
         self.norm = nn.LayerNorm(embed_dim)
 
     def forward(self, x):
-        B, C, H_in, W_in = x.shape
+        _B, _C, H_in, W_in = x.shape
         # Dynamically calculate H, W based on actual input size
         H, W = H_in // self.patch_size[0], W_in // self.patch_size[1]
 
@@ -509,7 +508,7 @@ class PyramidVisionTransformer(nn.Module):
             self.width_list = self.embed_dims  # Fallback
 
     def _apply_init_weights(self):
-        """Applies weight initialization"""
+        """Applies weight initialization."""
         for i in range(self.num_stages):
             pos_embed = getattr(self, f"pos_embed{i + 1}")
             trunc_normal_(pos_embed, std=0.02)

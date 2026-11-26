@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.nn.modules.head import Detect
 from ultralytics.nn.zoo.conv import ImplicitA, ImplicitM

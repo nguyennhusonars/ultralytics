@@ -1,18 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/ResNet_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Type
-from typing import Union
+
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
-    """3x3 convolution with padding"""
+    """3x3 convolution with padding."""
     return nn.Conv2d(
         in_planes,
         out_planes,
@@ -26,7 +24,7 @@ def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, d
 
 
 def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
-    """1x1 convolution"""
+    """1x1 convolution."""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
@@ -38,11 +36,11 @@ class BasicBlock(nn.Module):
         inplanes: int,
         planes: int,
         stride: int = 1,
-        downsample: Optional[nn.Module] = None,
+        downsample: nn.Module | None = None,
         groups: int = 1,
         base_width: int = 64,
         dilation: int = 1,
-        norm_layer: Optional[Type[nn.Module]] = None,
+        norm_layer: type[nn.Module] | None = None,
     ) -> None:
         super().__init__()
         if norm_layer is None:
@@ -87,11 +85,11 @@ class Bottleneck(nn.Module):
         inplanes: int,
         planes: int,
         stride: int = 1,
-        downsample: Optional[nn.Module] = None,
+        downsample: nn.Module | None = None,
         groups: int = 1,
         base_width: int = 64,
         dilation: int = 1,
-        norm_layer: Optional[Type[nn.Module]] = None,
+        norm_layer: type[nn.Module] | None = None,
     ) -> None:
         super().__init__()
         if norm_layer is None:
@@ -131,7 +129,7 @@ class Bottleneck(nn.Module):
         return out
 
 
-RESNET_SPECS: Dict[str, Dict[str, Union[Type[Union[BasicBlock, Bottleneck]], List[int]]]] = {
+RESNET_SPECS: dict[str, dict[str, type[BasicBlock | Bottleneck] | list[int]]] = {
     "ResNet18": {"block": BasicBlock, "layers": [2, 2, 2, 2]},
     "ResNet34": {"block": BasicBlock, "layers": [3, 4, 6, 3]},
     "ResNet50": {"block": Bottleneck, "layers": [3, 4, 6, 3]},
@@ -150,12 +148,11 @@ class ResNet(nn.Module):
         zero_init_residual: bool = False,
         groups: int = 1,
         width_per_group: int = 64,
-        replace_stride_with_dilation: Optional[List[bool]] = None,
-        norm_layer: Optional[Type[nn.Module]] = None,
+        replace_stride_with_dilation: list[bool] | None = None,
+        norm_layer: type[nn.Module] | None = None,
         init_weights: bool = True,
     ) -> None:
-        """
-        ResNet 網絡基礎類 (模仿 MobileNetV4 結構)
+        """ResNet 網絡基礎類 (模仿 MobileNetV4 結構).
 
         Args:
             model_name (str): ResNet模型的名稱 (例如 'ResNet50').
@@ -167,11 +164,11 @@ class ResNet(nn.Module):
             init_weights (bool): 是否初始化權重.
         """
         super().__init__()
-        assert model_name in MODEL_SPECS.keys(), f"未知模型名稱: {model_name}"
+        assert model_name in MODEL_SPECS, f"未知模型名稱: {model_name}"
         self.model_name = model_name
         self.spec = MODEL_SPECS[self.model_name]
-        block: Type[Union[BasicBlock, Bottleneck]] = self.spec["block"]
-        layers: List[int] = self.spec["layers"]
+        block: type[BasicBlock | Bottleneck] = self.spec["block"]
+        layers: list[int] = self.spec["layers"]
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -185,9 +182,7 @@ class ResNet(nn.Module):
             replace_stride_with_dilation = [False, False, False]
         if len(replace_stride_with_dilation) != 3:
             raise ValueError(
-                "replace_stride_with_dilation should be None " "or a 3-element tuple, got {}".format(
-                    replace_stride_with_dilation
-                )
+                f"replace_stride_with_dilation should be None or a 3-element tuple, got {replace_stride_with_dilation}"
             )
         self.groups = groups
         self.base_width = width_per_group
@@ -234,13 +229,13 @@ class ResNet(nn.Module):
 
     def _make_layer(
         self,
-        block: Type[Union[BasicBlock, Bottleneck]],
+        block: type[BasicBlock | Bottleneck],
         planes: int,
         blocks: int,
         stride: int = 1,
         dilate: bool = False,
     ) -> nn.Sequential:
-        """構建 ResNet 的一個階段"""
+        """構建 ResNet 的一個階段."""
         norm_layer = self._norm_layer
         downsample = None
         previous_dilation = self.dilation
@@ -274,7 +269,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def _forward_impl(self, x: torch.Tensor) -> list[torch.Tensor]:
         # See note [TorchScript super()]
         x = self.conv1(x)
         x = self.bn1(x)
@@ -290,11 +285,11 @@ class ResNet(nn.Module):
         # Return list of features after each stage
         return [x1, x2, x3, x4]
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         return self._forward_impl(x)
 
     def _initialize_weights(self) -> None:
-        """初始化網絡權重"""
+        """初始化網絡權重."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -304,5 +299,5 @@ class ResNet(nn.Module):
 
 
 def ResNet34(**kwargs: Any) -> ResNet:
-    """創建 ResNet34 模型"""
+    """創建 ResNet34 模型."""
     return ResNet("ResNet34", **kwargs)

@@ -1,16 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/EfficientNetV2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from collections import OrderedDict
-from functools import partial
-from pathlib import Path
-from torch import nn
 import copy
-import numpy as np
 import os
 import re
 import subprocess
+from collections import OrderedDict
+from functools import partial
+from pathlib import Path
+
+import numpy as np
 import torch
+from torch import nn
 
 
 def get_efficientnet_v2_structure(model_name):
@@ -60,10 +61,10 @@ def get_efficientnet_v2_structure(model_name):
 
 
 class ConvBNAct(nn.Sequential):
-    """Convolution-Normalization-Activation Module"""
+    """Convolution-Normalization-Activation Module."""
 
     def __init__(self, in_channel, out_channel, kernel_size, stride, groups, norm_layer, act, conv_layer=nn.Conv2d):
-        super(ConvBNAct, self).__init__(
+        super().__init__(
             conv_layer(
                 in_channel,
                 out_channel,
@@ -79,12 +80,12 @@ class ConvBNAct(nn.Sequential):
 
 
 class SEUnit(nn.Module):
-    """Squeeze-Excitation Unit
-    paper: https://openaccess.thecvf.com/content_cvpr_2018/html/Hu_Squeeze-and-Excitation_Networks_CVPR_2018_paper
+    """Squeeze-Excitation Unit paper:
+    https://openaccess.thecvf.com/content_cvpr_2018/html/Hu_Squeeze-and-Excitation_Networks_CVPR_2018_paper.
     """
 
     def __init__(self, in_channel, reduction_ratio=4, act1=partial(nn.SiLU, inplace=True), act2=nn.Sigmoid):
-        super(SEUnit, self).__init__()
+        super().__init__()
         hidden_dim = in_channel // reduction_ratio
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc1 = nn.Conv2d(in_channel, hidden_dim, (1, 1), bias=True)
@@ -97,15 +98,12 @@ class SEUnit(nn.Module):
 
 
 class StochasticDepth(nn.Module):
-    """StochasticDepth
-    paper: https://link.springer.com/chapter/10.1007/978-3-319-46493-0_39
-    :arg
-        - prob: Probability of dying
-        - mode: "row" or "all". "row" means that each row survives with different probability
+    """StochasticDepth paper: https://link.springer.com/chapter/10.1007/978-3-319-46493-0_39 :arg - prob: Probability of
+    dying - mode: "row" or "all". "row" means that each row survives with different probability.
     """
 
     def __init__(self, prob, mode):
-        super(StochasticDepth, self).__init__()
+        super().__init__()
         self.prob = prob
         self.survival = 1.0 - prob
         self.mode = mode
@@ -119,7 +117,7 @@ class StochasticDepth(nn.Module):
 
 
 class MBConvConfig:
-    """EfficientNet Building block configuration"""
+    """EfficientNet Building block configuration."""
 
     def __init__(
         self,
@@ -154,14 +152,11 @@ class MBConvConfig:
 
 
 class MBConv(nn.Module):
-    """EfficientNet main building blocks
-    :arg
-        - c: MBConvConfig instance
-        - sd_prob: stochastic path probability
+    """EfficientNet main building blocks :arg - c: MBConvConfig instance - sd_prob: stochastic path probability.
     """
 
     def __init__(self, c, sd_prob=0.0):
-        super(MBConv, self).__init__()
+        super().__init__()
         inter_channel = c.adjust_channels(c.in_ch, c.expand_ratio)
         block = []
 
@@ -193,16 +188,11 @@ class MBConv(nn.Module):
 
 
 class EfficientNetV2(nn.Module):
-    """Pytorch Implementation of EfficientNetV2
-    paper: https://arxiv.org/abs/2104.00298
-    - reference 1 (pytorch): https://github.com/d-li14/efficientnetv2.pytorch/blob/main/effnetv2.py
-    - reference 2 (official): https://github.com/google/automl/blob/master/efficientnetv2/effnetv2_configs.py
-    :arg
-        - layer_infos: list of MBConvConfig
-        - out_channels: bottleneck channel
-        - nlcass: number of class
-        - dropout: dropout probability before classifier layer
-        - stochastic depth: stochastic depth probability
+    """Pytorch Implementation of EfficientNetV2 paper: https://arxiv.org/abs/2104.00298 - reference 1 (pytorch):
+    https://github.com/d-li14/efficientnetv2.pytorch/blob/main/effnetv2.py - reference 2 (official):
+    https://github.com/google/automl/blob/master/efficientnetv2/effnetv2_configs.py :arg - layer_infos: list of
+    MBConvConfig - out_channels: bottleneck channel - nlcass: number of class - dropout: dropout probability before
+    classifier layer - stochastic depth: stochastic depth probability.
     """
 
     def __init__(
@@ -215,7 +205,7 @@ class EfficientNetV2(nn.Module):
         act_layer=nn.SiLU,
         norm_layer=nn.BatchNorm2d,
     ):
-        super(EfficientNetV2, self).__init__()
+        super().__init__()
         self.layer_infos = layer_infos
         self.norm_layer = norm_layer
         self.act = act_layer

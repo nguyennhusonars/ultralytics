@@ -1,28 +1,29 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/UIB.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Optional
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import C3k
-import torch.nn as nn
+from __future__ import annotations
+
+from torch import nn
+
+from ultralytics.nn.modules.block import C2f, C3k
 
 
 def make_divisible(
     value: float,
     divisor: int,
-    min_value: Optional[float] = None,
+    min_value: float | None = None,
     round_down_protect: bool = True,
 ) -> int:
-    """
-    This function is copied from here
-    "https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_layers.py"
-    This is to ensure that all layers have channels that are divisible by 8.
+    """This function is copied from here
+    "https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_layers.py" This is to
+    ensure that all layers have channels that are divisible by 8.
+
     Args:
         value: A `float` of original value.
         divisor: An `int` of the divisor that need to be checked upon.
-        min_value: A `float` of  minimum value threshold.
-        round_down_protect: A `bool` indicating whether round down more than 10%
-        will be allowed.
+        min_value: A `float` of minimum value threshold.
+        round_down_protect: A `bool` indicating whether round down more than 10% will be allowed.
+
     Returns:
         The adjusted value in `int` that is divisible against divisor.
     """
@@ -57,8 +58,8 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         stride=1,
         expand_ratio=1,
     ):
-        """An inverted bottleneck block with optional depthwises.
-        Referenced from here https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py
+        """An inverted bottleneck block with optional depthwises. Referenced from here
+        https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_blocks.py.
         """
         super().__init__()
         # Starting depthwise conv.

@@ -1,15 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/VGG_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Union
+
 import torch
-import torch.nn as nn
+from torch import nn
 
-
-vgg_cfgs: Dict[str, List[Union[str, int]]] = {
+vgg_cfgs: dict[str, list[str | int]] = {
     "VGG11": [64, "M", 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
     "VGG13": [64, 64, "M", 128, 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
     "VGG16": [64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512, "M"],
@@ -25,9 +24,9 @@ MODEL_SPECS = {
 }
 
 
-def _make_layers(cfg: List[Union[str, int]], batch_norm: bool = True) -> nn.Sequential:
-    """根據配置列表構建 VGG 的卷積層和池化層"""
-    layers: List[nn.Module] = []
+def _make_layers(cfg: list[str | int], batch_norm: bool = True) -> nn.Sequential:
+    """根據配置列表構建 VGG 的卷積層和池化層."""
+    layers: list[nn.Module] = []
     in_channels = 3
     for v in cfg:
         if v == "M":
@@ -45,8 +44,7 @@ def _make_layers(cfg: List[Union[str, int]], batch_norm: bool = True) -> nn.Sequ
 
 class VGG(nn.Module):
     def __init__(self, model_name: str, batch_norm: bool = True, init_weights: bool = True):
-        """
-        VGG 網絡基礎類
+        """VGG 網絡基礎類.
 
         Args:
             model_name (str): VGG模型的名稱 (例如 'VGG16').
@@ -54,7 +52,7 @@ class VGG(nn.Module):
             init_weights (bool): 是否初始化權重.
         """
         super().__init__()
-        assert model_name in MODEL_SPECS.keys(), f"未知模型名稱: {model_name}"
+        assert model_name in MODEL_SPECS, f"未知模型名稱: {model_name}"
 
         self.model_name = model_name
         self.cfg = MODEL_SPECS[self.model_name]
@@ -90,9 +88,9 @@ class VGG(nn.Module):
         # print(f"計算得到的 width_list: {self.width_list}")
         # --- 結束模仿 MobileNetV4 計算 width_list ---
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """執行前向傳播並返回指定的中間層輸出列表"""
-        outputs: List[torch.Tensor] = []
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """執行前向傳播並返回指定的中間層輸出列表."""
+        outputs: list[torch.Tensor] = []
         current_output_idx = 0
         for i, layer in enumerate(self.features):
             x = layer(x)
@@ -109,7 +107,7 @@ class VGG(nn.Module):
         return outputs
 
     def _initialize_weights(self) -> None:
-        """初始化網絡權重"""
+        """初始化網絡權重."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -121,5 +119,5 @@ class VGG(nn.Module):
 
 
 def VGG19(batch_norm: bool = True, **kwargs: Any) -> VGG:
-    """創建 VGG19 模型"""
+    """創建 VGG19 模型."""
     return VGG("VGG19", batch_norm=batch_norm, **kwargs)

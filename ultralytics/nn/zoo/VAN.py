@@ -1,13 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/VAN.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class Mlp(nn.Module):
@@ -71,12 +71,12 @@ class Attention(nn.Module):
         self.proj_2 = nn.Conv2d(d_model, d_model, 1)
 
     def forward(self, x):
-        shorcut = x.clone()
+        shortcut = x.clone()
         x = self.proj_1(x)
         x = self.activation(x)
         x = self.spatial_gating_unit(x)
         x = self.proj_2(x)
-        x = x + shorcut
+        x = x + shortcut
         return x
 
 
@@ -91,8 +91,8 @@ class Block(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         layer_scale_init_value = 1e-2
-        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -117,7 +117,7 @@ class Block(nn.Module):
 
 
 class OverlapPatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Image to Patch Embedding."""
 
     def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768):
         super().__init__()
@@ -156,14 +156,20 @@ class VAN(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[64, 128, 256, 512],
-        mlp_ratios=[4, 4, 4, 4],
+        embed_dims=None,
+        mlp_ratios=None,
         drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=nn.LayerNorm,
-        depths=[3, 4, 6, 3],
+        depths=None,
         num_stages=4,
     ):  # Removed flag, assuming num_classes behavior is standard
+        if depths is None:
+            depths = [3, 4, 6, 3]
+        if mlp_ratios is None:
+            mlp_ratios = [4, 4, 4, 4]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
@@ -232,10 +238,7 @@ class VAN(nn.Module):
             trunc_normal_(m.weight, std=0.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.BatchNorm2d):  # Added BatchNorm2d specific init
+        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm2d)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
         elif isinstance(m, nn.Conv2d):
@@ -297,9 +300,8 @@ class VAN(nn.Module):
         return x
 
     def forward_for_classification(self, x):
-        """
-        Performs forward pass for classification, similar to original VAN.
-        This is separate from the main `forward` to keep it clean for backbone use.
+        """Performs forward pass for classification, similar to original VAN. This is separate from the main `forward`
+        to keep it clean for backbone use.
         """
         list_features = self.forward_features(x)
 
@@ -309,7 +311,7 @@ class VAN(nn.Module):
         # Apply the final norm (LayerNorm) and pooling for the head
         # The norm for the last stage's output before head
         final_norm = getattr(self, f"norm{self.num_stages}")
-        B, C, H, W = x_last_stage.shape
+        _B, _C, _H, _W = x_last_stage.shape
         x_for_head = x_last_stage.flatten(2).transpose(1, 2)  # (B, N, C)
         x_for_head = final_norm(x_for_head)  # Apply LayerNorm
         x_for_head = x_for_head.mean(dim=1)  # Global Average Pooling -> (B, C)
@@ -319,7 +321,7 @@ class VAN(nn.Module):
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
 
     def forward(self, x):

@@ -2,12 +2,12 @@
 """Ported from ultralytics_sonnn nn/modules/SEAM.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class Residual(nn.Module):
     def __init__(self, fn):
-        super(Residual, self).__init__()
+        super().__init__()
         self.fn = fn
 
     def forward(self, x):
@@ -16,7 +16,7 @@ class Residual(nn.Module):
 
 class SEAM(nn.Module):
     def __init__(self, c1, n=1, reduction=16):
-        super(SEAM, self).__init__()
+        super().__init__()
         c2 = c1
         self.DCovN = nn.Sequential(
             # nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1, groups=c1),
@@ -100,8 +100,10 @@ def DcovN(c1, c2, depth, kernel_size=3, patch_size=3):
 
 
 class MultiSEAM(nn.Module):
-    def __init__(self, c1, depth=1, kernel_size=3, patch_size=[3, 5, 7], reduction=16):
-        super(MultiSEAM, self).__init__()
+    def __init__(self, c1, depth=1, kernel_size=3, patch_size=None, reduction=16):
+        if patch_size is None:
+            patch_size = [3, 5, 7]
+        super().__init__()
         c2 = c1
         self.DCovN0 = DcovN(c1, c2, depth, kernel_size=kernel_size, patch_size=patch_size[0])
         self.DCovN1 = DcovN(c1, c2, depth, kernel_size=kernel_size, patch_size=patch_size[1])

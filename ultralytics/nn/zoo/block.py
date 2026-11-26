@@ -1,39 +1,29 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/block.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from collections import OrderedDict
-from torch.nn import Softmax
-from torch.nn import init
-from torch.nn.parameter import Parameter
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import C3
-from ultralytics.nn.modules.block import RepNCSPELAN4
-from ultralytics.nn.modules.conv import ChannelAttention
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.conv import DWConv
-from ultralytics.nn.modules.conv import GhostConv
-from ultralytics.nn.modules.conv import LightConv
-from ultralytics.nn.modules.conv import RepConv
-from ultralytics.nn.modules.conv import autopad
-from ultralytics.nn.zoo._timm import create_act_layer
-from ultralytics.nn.zoo._timm import trunc_normal_
-from ultralytics.nn.zoo.conv import AKConv
-from ultralytics.nn.zoo.conv import DSConv
-from ultralytics.nn.zoo.dcnv3 import DCNv3
-from ultralytics.nn.zoo.kagn_conv import KAGNConv2DLayer
-import einops
 import math
+from collections import OrderedDict
+
+import einops
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from torch import nn
+from torch.nn import Softmax, init
+from torch.nn.parameter import Parameter
+
+from ultralytics.nn.modules.block import C3, Bottleneck, C2f, RepNCSPELAN4
+from ultralytics.nn.modules.conv import ChannelAttention, Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from ultralytics.nn.zoo._timm import create_act_layer, trunc_normal_
+from ultralytics.nn.zoo.conv import AKConv, DSConv
+from ultralytics.nn.zoo.dcnv3 import DCNv3
+from ultralytics.nn.zoo.kagn_conv import KAGNConv2DLayer
 
 
 class MP(nn.Module):
     def __init__(self, k=2):
-        super(MP, self).__init__()
+        super().__init__()
         self.m = nn.MaxPool2d(kernel_size=k, stride=k)
 
     def forward(self, x):
@@ -42,7 +32,7 @@ class MP(nn.Module):
 
 class SP(nn.Module):
     def __init__(self, k=3, s=1):
-        super(SP, self).__init__()
+        super().__init__()
         self.m = nn.MaxPool2d(kernel_size=k, stride=s, padding=k // 2)
 
     def forward(self, x):
@@ -52,7 +42,7 @@ class SP(nn.Module):
 class SPPCSP(nn.Module):
     # CSP SPP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=(5, 9, 13)):
-        super(SPPCSP, self).__init__()
+        super().__init__()
         c_ = int(2 * c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
@@ -111,7 +101,7 @@ class CSPNeXtBlock(nn.Module):
 class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSP2, self).__init__()
+        super().__init__()
         c_ = int(c2)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
@@ -130,7 +120,7 @@ class BottleneckCSP2(nn.Module):
 class BottleneckCSPA(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSPA, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
@@ -148,7 +138,7 @@ class BottleneckCSPA(nn.Module):
 class BottleneckCSPB(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSPB, self).__init__()
+        super().__init__()
         c_ = int(c2)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
@@ -167,7 +157,7 @@ class BottleneckCSPB(nn.Module):
 class BottleneckCSPC(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSPC, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
@@ -184,8 +174,8 @@ class BottleneckCSPC(nn.Module):
 
 
 class RepConvN(nn.Module):
-    """RepConv is a basic rep-style block, including training and deploy status
-    This code is based on https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
+    """RepConv is a basic rep-style block, including training and deploy status This code is based on
+    https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py.
     """
 
     default_act = nn.SiLU()  # default activation
@@ -203,11 +193,11 @@ class RepConvN(nn.Module):
         self.conv2 = Conv(c1, c2, 1, s, p=(p - k // 2), g=g, act=False)
 
     def forward_fuse(self, x):
-        """Forward process"""
+        """Forward process."""
         return self.act(self.conv(x))
 
     def forward(self, x):
-        """Forward process"""
+        """Forward process."""
         id_out = 0 if self.bn is None else self.bn(x)
         return self.act(self.conv1(x) + self.conv2(x) + id_out)
 
@@ -365,7 +355,7 @@ class RepNCSPELAN4_high(nn.Module):
 class SPPCSPC(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=(5, 9, 13)):
-        super(SPPCSPC, self).__init__()
+        super().__init__()
         c_ = int(2 * c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -385,7 +375,7 @@ class SPPCSPC(nn.Module):
 
 class Shortcut(nn.Module):
     def __init__(self, dimension=0):
-        super(Shortcut, self).__init__()
+        super().__init__()
         self.d = dimension
 
     def forward(self, x):
@@ -395,7 +385,7 @@ class Shortcut(nn.Module):
 class DownC(nn.Module):
     # Spatial pyramid pooling layer used in YOLOv3-SPP
     def __init__(self, c1, c2, n=1, k=2):
-        super(DownC, self).__init__()
+        super().__init__()
         c_ = int(c1)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c2 // 2, 3, k)
@@ -409,8 +399,7 @@ class DownC(nn.Module):
 class SEBlock(nn.Module):
     """Squeeze and Excite module.
 
-    Pytorch implementation of `Squeeze-and-Excitation Networks` -
-    https://arxiv.org/pdf/1709.01507.pdf
+    Pytorch implementation of `Squeeze-and-Excitation Networks` - https://arxiv.org/pdf/1709.01507.pdf
     """
 
     def __init__(self, in_channels: int, rd_ratio: float = 0.0625) -> None:
@@ -419,7 +408,7 @@ class SEBlock(nn.Module):
         :param in_channels: Number of input channels.
         :param rd_ratio: Input channel reduction ratio.
         """
-        super(SEBlock, self).__init__()
+        super().__init__()
         self.reduce = nn.Conv2d(
             in_channels=in_channels, out_channels=int(in_channels * rd_ratio), kernel_size=1, stride=1, bias=True
         )
@@ -429,7 +418,7 @@ class SEBlock(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Apply forward pass."""
-        b, c, h, w = inputs.size()
+        _b, c, h, w = inputs.size()
         x = F.avg_pool2d(inputs, kernel_size=[h, w])
         x = self.reduce(x)
         x = F.relu(x)
@@ -441,7 +430,7 @@ class SEBlock(nn.Module):
 
 class DepthSepConv(nn.Module):
     def __init__(self, inp, oup, dw_size, stride, use_se):
-        super(DepthSepConv, self).__init__()
+        super().__init__()
         self.stride = stride
         self.inp = inp
         self.oup = oup
@@ -470,7 +459,7 @@ class DepthSepConv(nn.Module):
 
 class DCNv2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
-        super(DCNv2, self).__init__()
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
@@ -525,7 +514,7 @@ class DCNv2(nn.Module):
 
 
 def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1, bias=False):
-    """Basic cell for rep-style block, including conv and bn"""
+    """Basic cell for rep-style block, including conv and bn."""
     result = nn.Sequential()
     result.add_module(
         "conv",
@@ -544,8 +533,8 @@ def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1, b
 
 
 class RepVGGBlock(nn.Module):
-    """RepVGGBlock is a basic rep-style block, including training and deploy status
-    This code is based on https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
+    """RepVGGBlock is a basic rep-style block, including training and deploy status This code is based on
+    https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py.
     """
 
     def __init__(
@@ -561,7 +550,7 @@ class RepVGGBlock(nn.Module):
         deploy=False,
         use_se=False,
     ):
-        super(RepVGGBlock, self).__init__()
+        super().__init__()
         """ Initialization of the class.
         Args:
             in_channels (int): Number of channels in the input image
@@ -629,7 +618,7 @@ class RepVGGBlock(nn.Module):
             )
 
     def forward(self, inputs):
-        """Forward process"""
+        """Forward process."""
         if hasattr(self, "rbr_reparam"):
             return self.nonlinearity(self.se(self.rbr_reparam(inputs)))
 
@@ -745,7 +734,7 @@ class SimFusion_3in(nn.Module):
         self.downsample = nn.functional.adaptive_avg_pool2d
 
     def forward(self, x):
-        N, C, H, W = x[1].shape
+        _N, _C, H, W = x[1].shape
         output_size = (H, W)
 
         if torch.onnx.is_in_onnx_export():
@@ -765,7 +754,7 @@ class SimFusion_4in(nn.Module):
 
     def forward(self, x):
         x_l, x_m, x_s, x_n = x
-        B, C, H, W = x_s.shape
+        _B, _C, H, W = x_s.shape
         output_size = np.array([H, W])
 
         if torch.onnx.is_in_onnx_export():
@@ -795,7 +784,7 @@ class IFM(nn.Module):
 
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
-        super(h_sigmoid, self).__init__()
+        super().__init__()
         self.relu = nn.ReLU6(inplace=inplace)
 
     def forward(self, x):
@@ -813,13 +802,11 @@ class InjectionMultiSum_Auto_pool(nn.Module):
         self.act = h_sigmoid()
 
     def forward(self, x):
-        """
-        x_g: global features
-        x_l: local features
+        """x_g: global features x_l: local features.
         """
         x_l, x_g = x
-        B, C, H, W = x_l.shape
-        g_B, g_C, g_H, g_W = x_g.shape
+        _B, _C, H, W = x_l.shape
+        _g_B, _g_C, g_H, _g_W = x_g.shape
         use_pool = H < g_H
 
         gloabl_info = x_g.split(self.global_inp, dim=1)[self.flag]
@@ -862,7 +849,7 @@ class PyramidPoolAgg(nn.Module):
         self.conv = Conv(inc, ouc)
 
     def forward(self, inputs):
-        B, C, H, W = get_shape(inputs[-1])
+        _B, _C, H, W = get_shape(inputs[-1])
         H = (H - 1) // self.stride + 1
         W = (W - 1) // self.stride + 1
 
@@ -880,12 +867,12 @@ class PyramidPoolAgg(nn.Module):
 
 
 def drop_path(x, drop_prob: float = 0.0, training: bool = False):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
-    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
-    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
-    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
-    'survival rate' as the argument.
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks). This is the same as the
+    DropConnect impl I created for EfficientNet, etc networks, however, the original name is misleading as 'Drop
+    Connect' is a different form of dropout in a separate paper... See discussion:
+    https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for changing the layer and
+    argument names to 'drop path' rather than mix DropConnect as a layer name and use 'survival rate' as
+    the argument.
     """
     if drop_prob == 0.0 or not training:
         return x
@@ -919,10 +906,10 @@ class Mlp(nn.Module):
 
 
 class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
 
     def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
 
     def forward(self, x):
@@ -949,7 +936,7 @@ class GoldAttention(
         self.proj = torch.nn.Sequential(nn.ReLU6(), Conv(self.dh, dim, act=False))
 
     def forward(self, x):  # x (B,N,C)
-        B, C, H, W = get_shape(x)
+        B, _C, H, W = get_shape(x)
 
         qq = self.to_q(x).reshape(B, self.num_heads, self.key_dim, H * W).permute(0, 1, 3, 2)
         kk = self.to_k(x).reshape(B, self.num_heads, self.key_dim, H * W)
@@ -1032,7 +1019,7 @@ class AdvPoolFusion(nn.Module):
         else:
             self.pool = nn.functional.adaptive_avg_pool2d
 
-        N, C, H, W = x2.shape
+        _N, _C, H, W = x2.shape
         output_size = np.array([H, W])
         x1 = self.pool(x1, output_size)
 
@@ -1040,7 +1027,7 @@ class AdvPoolFusion(nn.Module):
 
 
 class SimSPPF(nn.Module):
-    """Simplified SPPF with ReLU activation"""
+    """Simplified SPPF with ReLU activation."""
 
     def __init__(self, in_channels, out_channels, kernel_size=5):
         super().__init__()
@@ -1057,7 +1044,7 @@ class SimSPPF(nn.Module):
 
 
 class SimConv(nn.Module):
-    """Normal Conv with ReLU activation"""
+    """Normal Conv with ReLU activation."""
 
     def __init__(self, in_channels, out_channels, kernel_size, stride, groups=1, bias=False):
         super().__init__()
@@ -1082,9 +1069,7 @@ class SimConv(nn.Module):
 
 
 class RepBlock(nn.Module):
-    """
-    RepBlock is a stage block with rep-style basic block
-    """
+    """RepBlock is a stage block with rep-style basic block."""
 
     def __init__(self, in_channels, out_channels, n=1):
         super().__init__()
@@ -1101,7 +1086,7 @@ class RepBlock(nn.Module):
 
 
 class Transpose(nn.Module):
-    """Normal Transpose, default for upsampling"""
+    """Normal Transpose, default for upsampling."""
 
     def __init__(self, in_channels, out_channels, kernel_size=2, stride=2):
         super().__init__()
@@ -1229,7 +1214,7 @@ def channel_shuffle(x, groups):
 
 class conv_bn_relu_maxpool(nn.Module):
     def __init__(self, c1, c2):  # ch_in, ch_out
-        super(conv_bn_relu_maxpool, self).__init__()
+        super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(c1, c2, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(c2),
@@ -1243,7 +1228,7 @@ class conv_bn_relu_maxpool(nn.Module):
 
 class Shuffle_Block(nn.Module):
     def __init__(self, inp, oup, stride):
-        super(Shuffle_Block, self).__init__()
+        super().__init__()
 
         if not (1 <= stride <= 3):
             raise ValueError("illegal stride value")
@@ -1296,10 +1281,10 @@ class Shuffle_Block(nn.Module):
 
 
 class DWConvblock(nn.Module):
-    "Depthwise conv + Pointwise conv"
+    """Depthwise conv + Pointwise conv."""
 
     def __init__(self, in_channels, out_channels, k, s):
-        super(DWConvblock, self).__init__()
+        super().__init__()
         self.p = k // 2
         self.conv1 = nn.Conv2d(
             in_channels, in_channels, kernel_size=k, stride=s, padding=self.p, groups=in_channels, bias=False
@@ -1320,7 +1305,7 @@ class DWConvblock(nn.Module):
 
 class CPCAChannelAttention(nn.Module):
     def __init__(self, input_channels, internal_neurons):
-        super(CPCAChannelAttention, self).__init__()
+        super().__init__()
         self.fc1 = nn.Conv2d(
             in_channels=input_channels, out_channels=internal_neurons, kernel_size=1, stride=1, bias=True
         )
@@ -1395,7 +1380,7 @@ class ConvNextBlock(nn.Module):
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
@@ -1434,7 +1419,7 @@ class CNeB(nn.Module):
 class GAMAttention(nn.Module):
     # https://paperswithcode.com/paper/global-attention-mechanism-retain-information
     def __init__(self, c1, c2, group=True, rate=4):
-        super(GAMAttention, self).__init__()
+        super().__init__()
 
         self.channel_attention = nn.Sequential(
             nn.Linear(c1, int(c1 / rate)), nn.ReLU(inplace=True), nn.Linear(int(c1 / rate), c1)
@@ -1467,7 +1452,7 @@ class GAMAttention(nn.Module):
 class Res(nn.Module):
     # ResNet bottleneck
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
-        super(Res, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c_, 3, 1, g=g)
@@ -1767,7 +1752,7 @@ class DAttention(nn.Module):
         out = out.reshape(B, C, H, W)
 
         y = self.proj_drop(self.proj_out(out))
-        h, w = pos.reshape(B, self.n_groups, Hk, Wk, 2), reference.reshape(B, self.n_groups, Hk, Wk, 2)
+        _h, _w = pos.reshape(B, self.n_groups, Hk, Wk, 2), reference.reshape(B, self.n_groups, Hk, Wk, 2)
 
         return y
 
@@ -1801,7 +1786,7 @@ class ShuffleAttention(nn.Module):
 
     @staticmethod
     def channel_shuffle(x, groups):
-        b, c, h, w = x.shape
+        b, _c, h, w = x.shape
         x = x.reshape(b, groups, -1, h, w)
         x = x.permute(0, 2, 1, 3, 4)
 
@@ -1811,7 +1796,7 @@ class ShuffleAttention(nn.Module):
         return x
 
     def forward(self, x):
-        b, c, h, w = x.size()
+        b, _c, h, w = x.size()
         # group into subfeatures
         x = x.view(b * self.G, -1, h, w)  # bs*G,c//G,h,w
 
@@ -1863,7 +1848,7 @@ class ES_SEModule(nn.Module):
 
 class ES_Bottleneck(nn.Module):
     def __init__(self, inp, oup, stride):
-        super(ES_Bottleneck, self).__init__()
+        super().__init__()
 
         if not (1 <= stride <= 3):
             raise ValueError("illegal stride value")
@@ -1961,7 +1946,7 @@ class MobileOneBlock(nn.Module):
     def __init__(
         self, in_channels, out_channels, k, stride=1, dilation=1, padding_mode="zeros", deploy=False, use_se=False
     ):
-        super(MobileOneBlock, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -1971,7 +1956,7 @@ class MobileOneBlock(nn.Module):
         assert kernel_size == 3
         assert padding == 1
         self.k = k
-        padding_11 = padding - kernel_size // 2
+        padding - kernel_size // 2
         self.nonlinearity = nn.ReLU()
 
         if use_se:
@@ -2045,12 +2030,9 @@ class MobileOneBlock(nn.Module):
 
 
 class MobileOneBlock_origin(nn.Module):
-    """MobileOne building block.
-    This block has a multi-branched architecture at train-time
-    and plain-CNN style architecture at inference time
-    For more details, please refer to our paper:
-    `An Improved One millisecond Mobile Backbone` -
-    https://arxiv.org/pdf/2206.04040.pdf
+    """MobileOne building block. This block has a multi-branched architecture at train-time and plain-CNN style
+    architecture at inference time For more details, please refer to our paper: `An Improved One millisecond Mobile
+    Backbone` - https://arxiv.org/pdf/2206.04040.pdf.
     """
 
     def __init__(
@@ -2078,7 +2060,7 @@ class MobileOneBlock_origin(nn.Module):
         :param use_se: Whether to use SE-ReLU activations.
         :param num_conv_branches: Number of linear conv branches.
         """
-        super(MobileOneBlock_origin, self).__init__()
+        super().__init__()
         self.inference_mode = inference_mode
         self.groups = groups
         self.stride = stride
@@ -2112,7 +2094,7 @@ class MobileOneBlock_origin(nn.Module):
             )
 
             # Re-parameterizable conv branches
-            rbr_conv = list()
+            rbr_conv = []
             for _ in range(self.num_conv_branches):
                 rbr_conv.append(self._conv_bn(kernel_size=kernel_size, padding=padding))
             self.rbr_conv = nn.ModuleList(rbr_conv)
@@ -2147,10 +2129,9 @@ class MobileOneBlock_origin(nn.Module):
         return self.activation(self.se(out))
 
     def reparameterize(self):
-        """Following works like `RepVGG: Making VGG-style ConvNets Great Again` -
-        https://arxiv.org/pdf/2101.03697.pdf. We re-parameterize multi-branched
-        architecture used at training time to obtain a plain CNN-like structure
-        for inference.
+        """Following works like `RepVGG: Making VGG-style ConvNets Great Again` - https://arxiv.org/pdf/2101.03697.pdf.
+        We re-parameterize multi-branched architecture used at training time to obtain a plain CNN-like
+        structure for inference.
         """
         if self.inference_mode:
             return
@@ -2287,10 +2268,9 @@ class MobileOne(nn.Module):
 
 
 class MobileOne_origin(nn.Module):
-    """MobileOne Model
+    """MobileOne Model.
 
-    Pytorch implementation of `An Improved One millisecond Mobile Backbone` -
-    https://arxiv.org/pdf/2206.04040.pdf
+    Pytorch implementation of `An Improved One millisecond Mobile Backbone` - https://arxiv.org/pdf/2206.04040.pdf
     """
 
     def __init__(
@@ -2337,7 +2317,7 @@ class MobileOne_origin(nn.Module):
         for ix, stride in enumerate(strides):
             use_se = False
             if num_se_blocks > num_blocks:
-                raise ValueError("Number of SE blocks cannot " "exceed number of layers.")
+                raise ValueError("Number of SE blocks cannot exceed number of layers.")
             if ix >= (num_blocks - num_se_blocks):
                 use_se = True
 
@@ -2379,10 +2359,10 @@ class MobileOne_origin(nn.Module):
 
 
 class HorLayerNorm(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).# https://ar5iv.labs.arxiv.org/html/2207.14284
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height,
+    width).# https://ar5iv.labs.arxiv.org/html/2207.14284.
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
@@ -2443,7 +2423,7 @@ class gnconv(nn.Module):
 
 
 class HorBlock(nn.Module):
-    r"""HorNet block"""
+    r"""HorNet block."""
 
     def __init__(self, dim, drop_path=0.0, layer_scale_init_value=1e-6, gnconv=gnconv):
         super().__init__()
@@ -2462,14 +2442,14 @@ class HorBlock(nn.Module):
         )
 
         self.gamma2 = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x):
-        B, C, H, W = x.shape  # [512]
+        _B, C, _H, _W = x.shape  # [512]
         if self.gamma1 is not None:
             gamma1 = self.gamma1.view(C, 1, 1)
         else:
@@ -2495,10 +2475,10 @@ def INF(B, H, W):
 
 
 class CrissCrossAttention(nn.Module):
-    """Criss-Cross Attention Module"""
+    """Criss-Cross Attention Module."""
 
     def __init__(self, in_dim):
-        super(CrissCrossAttention, self).__init__()
+        super().__init__()
         self.query_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
         self.key_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
         self.value_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
@@ -2572,7 +2552,9 @@ class SEAttention(nn.Module):
 
 
 class SKAttention(nn.Module):
-    def __init__(self, channel=512, kernels=[1, 3, 5, 7], reduction=16, group=1, L=32):
+    def __init__(self, channel=512, kernels=None, reduction=16, group=1, L=32):
+        if kernels is None:
+            kernels = [1, 3, 5, 7]
         super().__init__()
         self.d = max(L, channel // reduction)
         self.convs = nn.ModuleList([])
@@ -2624,13 +2606,14 @@ class SKAttention(nn.Module):
 
 class ECAAttention(nn.Module):
     """Constructs a ECA module.
+
     Args:
         channel: Number of channels of the input feature map
-        k_size: Adaptive selection of kernel size
+        k_size: Adaptive selection of kernel size.
     """
 
     def __init__(self, c1, k_size=3):
-        super(ECAAttention, self).__init__()
+        super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Conv1d(1, 1, kernel_size=k_size, padding=(k_size - 1) // 2, bias=False)
         self.sigmoid = nn.Sigmoid()
@@ -2647,7 +2630,7 @@ class ECAAttention(nn.Module):
 
 class EffectiveSE(nn.Module):
     def __init__(self, channels, add_maxpool=False, gate_layer="hard_sigmoid"):
-        super(EffectiveSE, self).__init__()
+        super().__init__()
         self.add_maxpool = add_maxpool
         self.fc = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
         self.gate = create_act_layer(gate_layer)
@@ -2668,7 +2651,7 @@ class ZPool(nn.Module):
 
 class AttentionGate(nn.Module):
     def __init__(self):
-        super(AttentionGate, self).__init__()
+        super().__init__()
         kernel_size = 7
         self.compress = ZPool()
         self.conv = BasicConv(2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2, relu=False)
@@ -2682,7 +2665,7 @@ class AttentionGate(nn.Module):
 
 class TripletAttention(nn.Module):
     def __init__(self, no_spatial=False):
-        super(TripletAttention, self).__init__()
+        super().__init__()
         self.cw = AttentionGate()
         self.hc = AttentionGate()
         self.no_spatial = no_spatial
@@ -2772,7 +2755,7 @@ class C3_TripletAt(nn.Module):
 
 class DeformConv(nn.Module):
     def __init__(self, in_channels, groups, kernel_size=(3, 3), padding=1, stride=1, dilation=1, bias=True):
-        super(DeformConv, self).__init__()
+        super().__init__()
 
         self.offset_net = nn.Conv2d(
             in_channels=in_channels,
@@ -2843,7 +2826,7 @@ class Bottleneck_DLKA(nn.Module):
         expansion.
         """
         super().__init__()
-        c_ = int(c2 * e)  # hidden channels
+        int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c2, k[0], 1)
         self.cv2 = deformable_LKA_Attention(c2)
         self.add = shortcut and c1 == c2
@@ -2886,7 +2869,7 @@ class C2f_DLKA(nn.Module):
 
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=4):
-        super(SELayer, self).__init__()
+        super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction),
@@ -2905,7 +2888,7 @@ class SELayer(nn.Module):
 
 class conv_bn_hswish(nn.Module):
     def __init__(self, c1, c2, stride):
-        super(conv_bn_hswish, self).__init__()
+        super().__init__()
         self.conv = nn.Conv2d(c1, c2, 3, stride, 1, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         # self.act = h_swish()
@@ -2921,7 +2904,7 @@ class conv_bn_hswish(nn.Module):
 class mobilev3_bneck(nn.Module):
     # OFUUSAE
     def __init__(self, inp, oup, hidden_dim, kernel_size, stride, use_se, use_hs):
-        super(mobilev3_bneck, self).__init__()
+        super().__init__()
         assert stride in [1, 2]
 
         self.identity = stride == 1 and inp == oup
@@ -2967,7 +2950,7 @@ class mobilev3_bneck(nn.Module):
 
 class MobileNetV3_InvertedResidual(nn.Module):
     def __init__(self, inp, oup, hidden_dim, kernel_size, stride, use_se, use_hs):
-        super(MobileNetV3_InvertedResidual, self).__init__()
+        super().__init__()
         assert stride in [1, 2]
 
         self.identity = stride == 1 and inp == oup
@@ -3018,14 +3001,14 @@ class MobileNetV3_InvertedResidual(nn.Module):
 
 class SimAM(torch.nn.Module):
     def __init__(self, channels=None, out_channels=None, e_lambda=1e-4):
-        super(SimAM, self).__init__()
+        super().__init__()
 
         self.activaton = nn.Sigmoid()
         self.e_lambda = e_lambda
 
     def __repr__(self):
         s = self.__class__.__name__ + "("
-        s += "lambda=%f)" % self.e_lambda
+        s += f"lambda={self.e_lambda:f})"
         return s
 
     @staticmethod
@@ -3033,7 +3016,7 @@ class SimAM(torch.nn.Module):
         return "simam"
 
     def forward(self, x):
-        b, c, h, w = x.size()
+        _b, _c, h, w = x.size()
 
         n = w * h - 1
 
@@ -3073,7 +3056,7 @@ class OREPA(nn.Module):
         init_hyper_para=1.0,
         init_hyper_gamma=1.0,
     ):
-        super(OREPA, self).__init__()
+        super().__init__()
         self.deploy = deploy
 
         self.nonlinear = Conv.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
@@ -3452,7 +3435,7 @@ class Faster_Block(nn.Module):
         self.spatial_mixing = PConv(dim)
 
         if layer_scale_init_value > 0:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             self.forward = self.forward_layer_scale
         else:
             self.forward = self.forward
@@ -3553,7 +3536,7 @@ class Yolov7_Tiny_E_ELAN(nn.Module):
 
 class Yolov7_Tiny_SPP(nn.Module):
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=(5, 9, 13)):
-        super(Yolov7_Tiny_SPP, self).__init__()
+        super().__init__()
         c_ = int(2 * c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -3631,7 +3614,7 @@ class Yolov7_Tiny_E_ELANMO(nn.Module):
         for ix, stride in enumerate(strides):
             use_se = False
             if num_se_blocks > num_blocks:
-                raise ValueError("Number of SE blocks cannot " "exceed number of layers.")
+                raise ValueError("Number of SE blocks cannot exceed number of layers.")
             if ix >= (num_blocks - num_se_blocks):
                 use_se = True
 
@@ -3678,7 +3661,9 @@ class Yolov7_Tiny_E_ELANMO(nn.Module):
 
 class Yolov7_E_ELAN(nn.Module):
     # Yolov7 ELAN with args(ch_in, ch_out, kernel, stride, padding, groups, activation)
-    def __init__(self, c1, c2, in_c, k=1, s=1, p=None, g=1, layer=[], backbone=True, act=True):
+    def __init__(self, c1, c2, in_c, k=1, s=1, p=None, g=1, layer=None, backbone=True, act=True):
+        if layer is None:
+            layer = []
         super().__init__()
         self.layer = layer
         if backbone:
@@ -3734,7 +3719,7 @@ class V7DownSampling(nn.Module):
 
 class MHSA(nn.Module):
     def __init__(self, n_dims, width=14, height=14, heads=4, pos_emb=False):
-        super(MHSA, self).__init__()
+        super().__init__()
 
         self.heads = heads
         self.query = nn.Conv2d(n_dims, n_dims, kernel_size=1)
@@ -3758,7 +3743,7 @@ class MHSA(nn.Module):
         # print('q shape:{},k shape:{},v shape:{}'.format(q.shape,k.shape,v.shape))  #1,4,64,256
         content_content = torch.matmul(q.permute(0, 1, 3, 2), k)  # 1,C,h*w,h*w
         # print("qkT=",content_content.shape)
-        c1, c2, c3, c4 = content_content.size()
+        _c1, _c2, c3, _c4 = content_content.size()
         if self.pos:
             # print("old content_content shape",content_content.shape) #1,4,256,256
             content_position = (
@@ -3792,7 +3777,7 @@ class BottleneckTransformer(nn.Module):
     # expansion = 1
 
     def __init__(self, c1, c2, stride=1, heads=4, mhsa=True, resolution=None, expansion=1):
-        super(BottleneckTransformer, self).__init__()
+        super().__init__()
         c_ = int(c2 * expansion)
         self.cv1 = Conv(c1, c_, 1, 1)
         # self.bn1 = nn.BatchNorm2d(c2)
@@ -3819,7 +3804,7 @@ class BottleneckTransformer(nn.Module):
 class BoT3(nn.Module):
     # CSP Bottleneck with 3 convolutions
     def __init__(self, c1, c2, n=1, e=0.5, e2=1, w=20, h=20):  # ch_in, ch_out, number, , expansion,w,h
-        super(BoT3, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -3839,7 +3824,7 @@ class BoT3(nn.Module):
 class ADD(nn.Module):
     # Stortcut a list of tensors along dimension
     def __init__(self, alpha=0.5):
-        super(ADD, self).__init__()
+        super().__init__()
         self.a = alpha
 
     def forward(self, x):
@@ -3849,7 +3834,7 @@ class ADD(nn.Module):
 
 class h_swish(nn.Module):
     def __init__(self, inplace=True):
-        super(h_swish, self).__init__()
+        super().__init__()
         self.sigmoid = h_sigmoid(inplace=inplace)
 
     def forward(self, x):
@@ -3858,7 +3843,7 @@ class h_swish(nn.Module):
 
 class CoordAtt(nn.Module):
     def __init__(self, inp, reduction=32):
-        super(CoordAtt, self).__init__()
+        super().__init__()
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
 
@@ -3874,7 +3859,7 @@ class CoordAtt(nn.Module):
     def forward(self, x):
         identity = x
 
-        n, c, h, w = x.size()
+        _n, _c, h, w = x.size()
         x_h = self.pool_h(x)
         x_w = self.pool_w(x).permute(0, 1, 3, 2)
 
@@ -3897,7 +3882,7 @@ class CoordAtt(nn.Module):
 class CARAFE(nn.Module):
     # CARAFE: Content-Aware ReAssembly of FEatures       https://arxiv.org/pdf/1905.02188.pdf
     def __init__(self, c1, c2, kernel_size=5, up_factor=2):
-        super(CARAFE, self).__init__()
+        super().__init__()
         self.kernel_size = 5
         self.up_factor = 2
         self.down = nn.Conv2d(c1, c1 // 4, 1)
@@ -3943,7 +3928,7 @@ class CARAFE(nn.Module):
 
 class EMA(nn.Module):
     def __init__(self, channels, factor=8):
-        super(EMA, self).__init__()
+        super().__init__()
         self.groups = factor
         assert channels // self.groups > 0
         self.softmax = nn.Softmax(-1)
@@ -3975,7 +3960,7 @@ class BasicConv(nn.Module):
     def __init__(
         self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1, relu=True, bn=True
     ):
-        super(BasicConv, self).__init__()
+        super().__init__()
         self.out_channels = out_planes
         if bn:
             self.conv = nn.Conv2d(
@@ -4014,9 +3999,8 @@ class BasicConv(nn.Module):
 
 
 class Light_HGBlock(nn.Module):
-    """
-    HG_Block of PPHGNetV2 with 2 convolutions and LightConv.
-    https://github.com/PaddlePaddle/PaddleDetection/blob/develop/ppdet/modeling/backbones/hgnet_v2.py
+    """HG_Block of PPHGNetV2 with 2 convolutions and LightConv.
+    https://github.com/PaddlePaddle/PaddleDetection/blob/develop/ppdet/modeling/backbones/hgnet_v2.py.
     """
 
     def __init__(self, c1, cm, c2, k=3, n=6, num=1, shortcut=False, act=True):
@@ -4138,7 +4122,7 @@ class ChannelPool(nn.Module):
 
 class DSM_SpatialGate(nn.Module):
     def __init__(self, channel):
-        super(DSM_SpatialGate, self).__init__()
+        super().__init__()
         kernel_size = 3
         self.compress = ChannelPool()
         self.spatial = Conv(2, 1, kernel_size, act=False)
@@ -4268,7 +4252,7 @@ class LocalGlobalAttention(nn.Module):
 
 class HRIF(nn.Module):
     def __init__(self, inc, ouc, group=False):
-        super(HRIF, self).__init__()
+        super().__init__()
         ch_1, ch_2 = inc
         hidc = ouc // 2
 
@@ -4298,16 +4282,16 @@ class HRIF(nn.Module):
 
 
 class DSBottleneck(nn.Module):
-    """
-    An improved bottleneck block using depthwise separable convolutions (DSConv).
+    """An improved bottleneck block using depthwise separable convolutions (DSConv).
 
-    This class implements a lightweight bottleneck module that replaces standard convolutions with depthwise
-    separable convolutions to reduce parameters and computational cost.
+    This class implements a lightweight bottleneck module that replaces standard convolutions with depthwise separable
+    convolutions to reduce parameters and computational cost.
 
     Attributes:
         c1 (int): Number of input channels.
         c2 (int): Number of output channels.
-        shortcut (bool, optional): Whether to use a residual shortcut connection. The connection is only added if c1 == c2. Defaults to True.
+        shortcut (bool, optional): Whether to use a residual shortcut connection. The connection is only added if c1 ==
+            c2. Defaults to True.
         e (float, optional): Expansion ratio for the intermediate channels. Defaults to 0.5.
         k1 (int, optional): Kernel size for the first DSConv layer. Defaults to 3.
         k2 (int, optional): Kernel size for the second DSConv layer. Defaults to 5.
@@ -4338,11 +4322,10 @@ class DSBottleneck(nn.Module):
 
 
 class DSC3k(C3):
-    """
-    An improved C3k module using DSBottleneck blocks for lightweight feature extraction.
+    """An improved C3k module using DSBottleneck blocks for lightweight feature extraction.
 
-    This class extends the C3 module by replacing its standard bottleneck blocks with DSBottleneck blocks,
-    which use depthwise separable convolutions.
+    This class extends the C3 module by replacing its standard bottleneck blocks with DSBottleneck blocks, which use
+    depthwise separable convolutions.
 
     Attributes:
         c1 (int): Number of input channels.
@@ -4375,11 +4358,10 @@ class DSC3k(C3):
 
 
 class DSC3k2(C2f):
-    """
-    An improved C3k2 module that uses lightweight depthwise separable convolution blocks.
+    """An improved C3k2 module that uses lightweight depthwise separable convolution blocks.
 
-    This class redesigns C3k2 module, replacing its internal processing blocks with either DSBottleneck
-    or DSC3k modules.
+    This class redesigns C3k2 module, replacing its internal processing blocks with either DSBottleneck or DSC3k
+    modules.
 
     Attributes:
         c1 (int): Number of input channels.
@@ -4424,12 +4406,11 @@ class DSC3k2(C2f):
 
 
 class AdaHyperedgeGen(nn.Module):
-    """
-    Generates an adaptive hyperedge participation matrix from a set of vertex features.
+    """Generates an adaptive hyperedge participation matrix from a set of vertex features.
 
-    This module implements the Adaptive Hyperedge Generation mechanism. It generates dynamic hyperedge prototypes
-    based on the global context of the input nodes and calculates a continuous participation matrix (A)
-    that defines the relationship between each vertex and each hyperedge.
+    This module implements the Adaptive Hyperedge Generation mechanism. It generates dynamic hyperedge prototypes based
+    on the global context of the input nodes and calculates a continuous participation matrix (A) that defines the
+    relationship between each vertex and each hyperedge.
 
     Attributes:
         node_dim (int): The feature dimension of each input node.
@@ -4464,7 +4445,7 @@ class AdaHyperedgeGen(nn.Module):
         elif context == "both":
             self.context_net = nn.Linear(2 * node_dim, num_hyperedges * node_dim)
         else:
-            raise ValueError(f"Unsupported context '{context}'. " "Expected one of: 'mean', 'max', 'both'.")
+            raise ValueError(f"Unsupported context '{context}'. Expected one of: 'mean', 'max', 'both'.")
 
         self.pre_head_proj = nn.Linear(node_dim, node_dim)
 
@@ -4500,8 +4481,7 @@ class AdaHyperedgeGen(nn.Module):
 
 
 class AdaHGConv(nn.Module):
-    """
-    Performs the adaptive hypergraph convolution.
+    """Performs the adaptive hypergraph convolution.
 
     This module contains the two-stage message passing process of hypergraph convolution:
     1. Generates an adaptive participation matrix using AdaHyperedgeGen.
@@ -4547,12 +4527,11 @@ class AdaHGConv(nn.Module):
 
 
 class AdaHGComputation(nn.Module):
-    """
-    A wrapper module for applying adaptive hypergraph convolution to 4D feature maps.
+    """A wrapper module for applying adaptive hypergraph convolution to 4D feature maps.
 
-    This class makes the hypergraph convolution compatible with standard CNN architectures. It flattens a
-    4D input tensor (B, C, H, W) into a sequence of vertices (tokens), applies the AdaHGConv layer to
-    model high-order correlations, and then reshapes the output back into a 4D tensor.
+    This class makes the hypergraph convolution compatible with standard CNN architectures. It flattens a 4D input
+    tensor (B, C, H, W) into a sequence of vertices (tokens), applies the AdaHGConv layer to model high-order
+    correlations, and then reshapes the output back into a 4D tensor.
 
     Attributes:
         embed_dim (int): The feature dimension of the vertices (equivalent to input channels C).
@@ -4589,12 +4568,10 @@ class AdaHGComputation(nn.Module):
 
 
 class C3AH(nn.Module):
-    """
-    A CSP-style block integrating Adaptive Hypergraph Computation (C3AH).
+    """A CSP-style block integrating Adaptive Hypergraph Computation (C3AH).
 
-    The input feature map is split into two paths.
-    One path is processed by the AdaHGComputation module to model high-order correlations, while the other
-    serves as a shortcut. The outputs are then concatenated to fuse features.
+    The input feature map is split into two paths. One path is processed by the AdaHGComputation module to model
+    high-order correlations, while the other serves as a shortcut. The outputs are then concatenated to fuse features.
 
     Attributes:
         c1 (int): Number of input channels.
@@ -4632,12 +4609,10 @@ class C3AH(nn.Module):
 
 
 class FuseModule(nn.Module):
-    """
-    A module to fuse multi-scale features for the HyperACE block.
+    """A module to fuse multi-scale features for the HyperACE block.
 
-    This module takes a list of three feature maps from different scales, aligns them to a common
-    spatial resolution by downsampling the first and upsampling the third, and then concatenates
-    and fuses them with a convolution layer.
+    This module takes a list of three feature maps from different scales, aligns them to a common spatial resolution by
+    downsampling the first and upsampling the third, and then concatenates and fuses them with a convolution layer.
 
     Attributes:
         c_in (int): The number of channels of the input feature maps.
@@ -4657,7 +4632,7 @@ class FuseModule(nn.Module):
     """
 
     def __init__(self, c_in, channel_adjust):
-        super(FuseModule, self).__init__()
+        super().__init__()
         self.downsample = nn.AvgPool2d(kernel_size=2)
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
         if channel_adjust:
@@ -4674,20 +4649,19 @@ class FuseModule(nn.Module):
 
 
 class HyperACE(nn.Module):
-    """
-    Hypergraph-based Adaptive Correlation Enhancement (HyperACE).
+    """Hypergraph-based Adaptive Correlation Enhancement (HyperACE).
 
-    This is the core module of YOLOv13, designed to model both global high-order correlations and
-    local low-order correlations. It first fuses multi-scale features, then processes them through parallel
-    branches: two C3AH branches for high-order modeling and a lightweight DSConv-based branch for
-    low-order feature extraction.
+    This is the core module of YOLOv13, designed to model both global high-order correlations and local low-order
+    correlations. It first fuses multi-scale features, then processes them through parallel branches: two C3AH branches
+    for high-order modeling and a lightweight DSConv-based branch for low-order feature extraction.
 
     Attributes:
         c1 (int): Number of input channels for the fuse module.
         c2 (int): Number of output channels for the entire block.
         n (int, optional): Number of blocks in the low-order branch. Defaults to 1.
         num_hyperedges (int, optional): Number of hyperedges for the C3AH branches. Defaults to 8.
-        dsc3k (bool, optional): If True, use DSC3k in the low-order branch; otherwise, use DSBottleneck. Defaults to True.
+        dsc3k (bool, optional): If True, use DSC3k in the low-order branch; otherwise, use DSBottleneck. Defaults to
+            True.
         shortcut (bool, optional): Whether to use shortcuts in the low-order branch. Defaults to False.
         e1 (float, optional): Expansion ratio for the main hidden channels. Defaults to 0.5.
         e2 (float, optional): Expansion ratio within the C3AH branches. Defaults to 1.
@@ -4743,11 +4717,10 @@ class HyperACE(nn.Module):
 
 
 class DownsampleConv(nn.Module):
-    """
-    A simple downsampling block with optional channel adjustment.
+    """A simple downsampling block with optional channel adjustment.
 
-    This module uses average pooling to reduce the spatial dimensions (H, W) by a factor of 2. It can
-    optionally include a 1x1 convolution to adjust the number of channels, typically doubling them.
+    This module uses average pooling to reduce the spatial dimensions (H, W) by a factor of 2. It can optionally include
+    a 1x1 convolution to adjust the number of channels, typically doubling them.
 
     Attributes:
         in_channels (int): The number of input channels.
@@ -4778,12 +4751,11 @@ class DownsampleConv(nn.Module):
 
 
 class FullPAD_Tunnel(nn.Module):
-    """
-    A gated fusion module for the Full-Pipeline Aggregation-and-Distribution (FullPAD) paradigm.
+    """A gated fusion module for the Full-Pipeline Aggregation-and-Distribution (FullPAD) paradigm.
 
-    This module implements a gated residual connection used to fuse features. It takes two inputs: the original
-    feature map and a correlation-enhanced feature map. It then computes `output = original + gate * enhanced`,
-    where `gate` is a learnable scalar parameter that adaptively balances the contribution of the enhanced features.
+    This module implements a gated residual connection used to fuse features. It takes two inputs: the original feature
+    map and a correlation-enhanced feature map. It then computes `output = original + gate * enhanced`, where `gate` is
+    a learnable scalar parameter that adaptively balances the contribution of the enhanced features.
 
     Methods:
         forward: Performs the gated fusion of two input feature maps.
@@ -4808,20 +4780,12 @@ class FullPAD_Tunnel(nn.Module):
 
 
 class MFAM(nn.Module):
-    """
-    多尺度特征聚合模块 (Multi-scale Feature Aggregation Module)
-    严格对齐需求：
-    - 分支1: DWConv 3x3
-    - 分支2: DWConv 5x5
-    - 分支3: DWConv 1x7 + 7x1
-    - 分支4: DWConv 1x9 + 9x1
-    - 分支5: 1x1深度卷积（非恒等映射）
-    - 输出: 1x1 Conv 融合所有分支
+    """多尺度特征聚合模块 (Multi-scale Feature Aggregation Module) 严格对齐需求： - 分支1: DWConv 3x3 - 分支2: DWConv 5x5 - 分支3: DWConv 1x7
+    + 7x1 - 分支4: DWConv 1x9 + 9x1 - 分支5: 1x1深度卷积（非恒等映射） - 输出: 1x1 Conv 融合所有分支.
     """
 
     def __init__(self, c1: int, c2: int):
-        """
-        初始化MFAM模块
+        """初始化MFAM模块.
 
         Args:
             c1 (int): 输入通道数
@@ -4848,11 +4812,7 @@ class MFAM(nn.Module):
         self.conv1x1 = Conv(c1 * 5, c2, k=1, act=True)  # 5个分支，每个c1通道
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        前向传播流程：
-        1. 输入特征分5条分支处理
-        2. 各分支结果相加（分支3和4是两个卷积的和）
-        3. 所有分支结果拼接后用1x1 Conv融合
+        """前向传播流程： 1. 输入特征分5条分支处理 2. 各分支结果相加（分支3和4是两个卷积的和） 3. 所有分支结果拼接后用1x1 Conv融合.
         """
         # 分支1: 3x3 DWConv
         x1 = self.dw_conv3x3(x)
@@ -4873,9 +4833,7 @@ class MFAM(nn.Module):
 
 
 class IEMA(nn.Module):
-    """
-    特征分组与多分支处理模块
-    """
+    """特征分组与多分支处理模块."""
 
     def __init__(self, c1: int, c2: int, groups: int = 16):
         super().__init__()
@@ -4918,10 +4876,8 @@ class IEMA(nn.Module):
         self.rewight_2 = nn.Conv2d(c1, c2, kernel_size=1, stride=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        前向传播逻辑
-        """
-        batch_size, channels, height, width = x.size()
+        """前向传播逻辑."""
+        _batch_size, _channels, height, width = x.size()
 
         # 水平方向池化: [B, C, 1, W]
         x_x_pool = self.x_avg_pool(x)
@@ -4975,7 +4931,7 @@ class IEMA(nn.Module):
 
 class DASI(nn.Module):
     def __init__(self, in_channels_high, out_channels, in_channels_low=0, in_channels_mid=0):
-        super(DASI, self).__init__()
+        super().__init__()
         self.in_channels_high = in_channels_high
         self.out_channels = out_channels
 
@@ -5028,7 +4984,7 @@ class DASI(nn.Module):
         attention = self.attention_conv(x_mid_processed)  # [B, in_channels_high, 1, 1]
 
         # 5. 特征融合（带注意力的加权求和）
-        fused = x_low_processed * attention + x_high_upsampled * (1 - attention) + x_mid_processed
+        x_low_processed * attention + x_high_upsampled * (1 - attention) + x_mid_processed
 
         # 6. 合并三分支特征（通道拼接）
         merged = torch.cat([x_low_processed, x_mid_processed, x_high_upsampled], dim=1)  # 通道数: 3*in_channels_high
@@ -5042,13 +4998,12 @@ class DASI(nn.Module):
 
 
 class PSAttn(nn.Module):
-    """
-    Pyramid Sparse Attention module for efficient multi-scale feature fusion in object detection.
+    """Pyramid Sparse Attention module for efficient multi-scale feature fusion in object detection.
 
-    This module implements a cross-attention mechanism where queries are derived from lower-level features
-    and keys/values from higher-level features. It provides a coarse attention output during training and,
-    optionally, a fine attention output during inference when `topk > 0`, enhancing performance by focusing
-    on key regions across scales.
+    This module implements a cross-attention mechanism where queries are derived from lower-level features and
+    keys/values from higher-level features. It provides a coarse attention output during training and, optionally, a
+    fine attention output during inference when `topk > 0`, enhancing performance by focusing on key regions across
+    scales.
 
     Attributes:
         num_heads (int): Number of attention heads.
@@ -5072,8 +5027,7 @@ class PSAttn(nn.Module):
     """
 
     def __init__(self, dim, num_heads, topk=4, tau=1.0):
-        """
-        Initialize the Pyramid Sparse Attention module.
+        """Initialize the Pyramid Sparse Attention module.
 
         Args:
             dim (int): Number of hidden channels.
@@ -5098,8 +5052,7 @@ class PSAttn(nn.Module):
 
     @staticmethod
     def gumbel_softmax(logits):
-        """
-        Apply Gumbel-Softmax to approximate differentiable top-k selection.
+        """Apply Gumbel-Softmax to approximate differentiable top-k selection.
 
         Args:
             logits (torch.Tensor): Input logits for token scoring.
@@ -5112,8 +5065,7 @@ class PSAttn(nn.Module):
         return F.softmax(logits, dim=-1)  # Apply softmax to get soft weights
 
     def forward(self, x, upper_feat):
-        """
-        Process the input tensors through pyramid sparse attention.
+        """Process the input tensors through pyramid sparse attention.
 
         This method computes coarse attention using queries from `x` and keys/values from `upper_feat`. During
         inference, if `topk > 0`, it additionally computes fine attention by selecting key regions from `x`
@@ -5126,7 +5078,7 @@ class PSAttn(nn.Module):
         Returns:
             torch.Tensor: Fused feature map after attention; shape [B, C, H, W].
         """
-        B, C, H, W = x.shape
+        B, _C, H, W = x.shape
         N = H * W
         _, _, H_up, W_up = upper_feat.shape
 
@@ -5150,7 +5102,7 @@ class PSAttn(nn.Module):
             # Aggregate similarity scores over query dimension for token selection
             global_sim = sim.mean(dim=2)  # [B, num_heads, H_up*W_up]
             soft_weights = PSAttn.gumbel_softmax(global_sim)  # [B, num_heads, H_up*W_up]
-            topk_weights, topk_indices = torch.topk(soft_weights, k=self.topk, dim=-1)  # [B, num_heads, topk]
+            _topk_weights, topk_indices = torch.topk(soft_weights, k=self.topk, dim=-1)  # [B, num_heads, topk]
 
             # Map selected indices from upper_feat to x (assuming 2x downsampling)
             scale = 2
@@ -5194,13 +5146,11 @@ class PSAttn(nn.Module):
 
 
 class PSAttnBlock(nn.Module):
-    """
-    Pyramid Sparse Attention block module for efficient feature fusion.
+    """Pyramid Sparse Attention block module for efficient feature fusion.
 
-    This module implements a Pyramid Sparse Attention (PSAttn) mechanism combined with a
-    multi-layer perceptron (MLP) to enhance feature representation while maintaining
-    computational efficiency. It is designed for feature fusion across different scales
-    in computer vision architectures.
+    This module implements a Pyramid Sparse Attention (PSAttn) mechanism combined with a multi-layer perceptron (MLP) to
+    enhance feature representation while maintaining computational efficiency. It is designed for feature fusion across
+    different scales in computer vision architectures.
 
     Attributes:
         attn (PSAttn): Pyramid Sparse Attention module for cross-scale feature fusion.
@@ -5220,8 +5170,7 @@ class PSAttnBlock(nn.Module):
     """
 
     def __init__(self, dim, num_heads, mlp_ratio=2, topk=0):
-        """
-        Initialize the Pyramid Sparse Attention block module.
+        """Initialize the Pyramid Sparse Attention block module.
 
         Args:
             dim (int): Number of input channels.
@@ -5240,8 +5189,7 @@ class PSAttnBlock(nn.Module):
         self.apply(self._init_weights)  # Initialize weights
 
     def _init_weights(self, m):
-        """
-        Initialize weights using a truncated normal distribution.
+        """Initialize weights using a truncated normal distribution.
 
         This method ensures that convolutional layers are initialized with weights drawn
         from a truncated normal distribution, aiding in training stability and convergence.
@@ -5255,8 +5203,7 @@ class PSAttnBlock(nn.Module):
                 nn.init.constant_(m.bias, 0)  # Zero initialization for biases
 
     def forward(self, x, upper_feat):
-        """
-        Forward pass through the PSAttnBlock.
+        """Forward pass through the PSAttnBlock.
 
         Applies the Pyramid Sparse Attention mechanism followed by the MLP to the input tensor,
         using residual connections to preserve information flow.
@@ -5273,16 +5220,16 @@ class PSAttnBlock(nn.Module):
 
 
 class PST(nn.Module):
-    """
-    Pyramid Sparse Transformer (PST) module for enhanced feature fusion with attention mechanisms.
+    """Pyramid Sparse Transformer (PST) module for enhanced feature fusion with attention mechanisms.
 
-    This module integrates Pyramid Sparse Attention (PSA) blocks to fuse features from different scales,
-    leveraging cross-attention and dynamic token selection for efficient computation. It is designed to
-    enhance feature representations in tasks such as object detection and image classification.
+    This module integrates Pyramid Sparse Attention (PSA) blocks to fuse features from different scales, leveraging
+    cross-attention and dynamic token selection for efficient computation. It is designed to enhance feature
+    representations in tasks such as object detection and image classification.
 
     Attributes:
         cv1 (Conv): Initial 1x1 convolution layer that reduces input channels to hidden channels.
-        cvup (Conv): Initial 1x1 convolution layer that reduces input channels from upper-level feature to hidden channels.
+        cvup (Conv): Initial 1x1 convolution layer that reduces input channels from upper-level feature to hidden
+            channels.
         cv2 (Conv): Final 1x1 convolution layer that processes concatenated features.
         attnlayer_{i} (PSAttnBlock): Stacked Pyramid Sparse Attention blocks for feature fusion.
 
@@ -5295,8 +5242,7 @@ class PST(nn.Module):
     """
 
     def __init__(self, c1, c_up, c2, n=1, mlp_ratio=2.0, e=0.5, k=0):
-        """
-        Initialize the Pyramid Sparse Transformer module.
+        """Initialize the Pyramid Sparse Transformer module.
 
         Args:
             c1 (int): Number of input channels.
@@ -5323,8 +5269,7 @@ class PST(nn.Module):
             self.add_module(f"attnlayer_{i}", layer)
 
     def forward(self, x):
-        """
-        Forward pass through the PST module.
+        """Forward pass through the PST module.
 
         Processes the input feature and upper-level feature through initial convolutions,
         applies stacked PSAttnBlock modules for feature fusion, and concatenates the outputs

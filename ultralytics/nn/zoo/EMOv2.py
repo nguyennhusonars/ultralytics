@@ -1,17 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/EMOv2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from einops import reduce
-from functools import partial
-from torchvision.ops import DeformConv2d
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from functools import partial
 
+import torch
+import torch.nn.functional as F
+from einops import rearrange, reduce
+from torch import nn
+from torchvision.ops import DeformConv2d
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 inplace = True
 
@@ -207,7 +206,7 @@ class ConvNormAct(nn.Module):
         inplace=True,
         drop_path_rate=0.0,
     ):
-        super(ConvNormAct, self).__init__()
+        super().__init__()
         self.conv_layer = conv_layer
         self.norm_layer = norm_layer
         self.has_skip = skip and dim_in == dim_out and stride == 1  # Skip connection only if dim and stride match
@@ -353,7 +352,7 @@ class EW_MHSA_Remote(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         if self.window_size <= 0:
             window_size_W, window_size_H = W, H
         else:
@@ -376,7 +375,7 @@ class EW_MHSA_Remote(nn.Module):
         N1, N2 = (H + pad_b) // window_size_H, (W + pad_r) // window_size_W
         x_windowed = rearrange(x_padded, "b c (h1 n1) (w1 n2) -> (b n1 n2) c h1 w1", n1=N1, n2=N2).contiguous()
 
-        b, c, h, w = x_windowed.shape
+        _b, _c, h, w = x_windowed.shape
         qk = self.qk(x_windowed)
         qk = rearrange(
             qk,
@@ -455,7 +454,7 @@ class EW_MHSA_Close(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         if self.window_size <= 0:
             window_size_W, window_size_H = W, H
         else:
@@ -484,7 +483,7 @@ class EW_MHSA_Close(nn.Module):
             x_padded, "b c (n1 h1) (n2 w1) -> (b n1 n2) c h1 w1", n1=N1, h1=window_size_H, n2=N2, w1=window_size_W
         ).contiguous()
 
-        b, c, h, w = x_windowed.shape  # Here h=window_size_H, w=window_size_W
+        _b, _c, h, w = x_windowed.shape  # Here h=window_size_H, w=window_size_W
         qk = self.qk(x_windowed)
         qk = rearrange(
             qk,
@@ -566,7 +565,7 @@ class EW_MHSA_Hybrid(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         if self.window_size <= 0:
             window_size_W, window_size_H = W, H
         else:
@@ -641,7 +640,7 @@ class EW_MHSA_Hybrid(nn.Module):
             w1=window_size_W,
         ).contiguous()
 
-        b_w, c_qk, h_w, w_w = qk_remote_windowed.shape  # (B*N1*N2, 2*C_head*num_head, win_H, win_W)
+        _b_w, _c_qk, h_w, w_w = qk_remote_windowed.shape  # (B*N1*N2, 2*C_head*num_head, win_H, win_W)
 
         _qk_remote = rearrange(
             qk_remote_windowed,
@@ -775,7 +774,7 @@ class iiRMB(nn.Module):
         stride=1,
         dim_head=64,
         window_size=7,
-        hybrid_eops=[0],
+        hybrid_eops=None,
         conv_ks=1,
         conv_groups=1,
         qkv_bias=False,
@@ -786,6 +785,8 @@ class iiRMB(nn.Module):
         attn_pre=False,
         ls_value=1e-6,
     ):
+        if hybrid_eops is None:
+            hybrid_eops = [0]
         super().__init__()
         self.norm = get_norm(norm_layer)(dim_in) if norm_in else nn.Identity()
         self.dw_ks = dw_ks  # Store dw_ks for use in forward pass logic
@@ -949,17 +950,17 @@ class EMO2(nn.Module):
         dim_in=3,
         num_classes=1000,
         img_size=224,
-        depths=[1, 2, 4, 2],
-        embed_dims=[64, 128, 256, 512],
-        exp_ratios=[4.0, 4.0, 4.0, 4.0],
-        norm_layers=["bn_2d", "bn_2d", "ln_2d", "ln_2d"],
-        act_layers=["silu", "silu", "gelu", "gelu"],
-        dw_kss=[3, 3, 5, 5],  # dw_kss[i] used for all blocks in stage i+1, except first block uses 5 if dw_kss[i]=0
-        dim_heads=[32, 32, 32, 32],  # dim_heads[i] for stage i+1
-        window_sizes=[7, 7, 7, 7],
-        hybrid_eopss=[[0], [0], [1], [1]],  # hybrid_eopss[i] for non-first blocks in stage i+1
-        conv_kss=[1, 1, 1, 1],
-        conv_groupss=[1, 1, 1, 1],
+        depths=None,
+        embed_dims=None,
+        exp_ratios=None,
+        norm_layers=None,
+        act_layers=None,
+        dw_kss=None,  # dw_kss[i] used for all blocks in stage i+1, except first block uses 5 if dw_kss[i]=0
+        dim_heads=None,  # dim_heads[i] for stage i+1
+        window_sizes=None,
+        hybrid_eopss=None,  # hybrid_eopss[i] for non-first blocks in stage i+1
+        conv_kss=None,
+        conv_groupss=None,
         qkv_bias=True,
         attn_drop=0.0,
         drop=0.0,
@@ -968,6 +969,28 @@ class EMO2(nn.Module):
         attn_pre=False,
         ls_value=1e-6,
     ):
+        if conv_groupss is None:
+            conv_groupss = [1, 1, 1, 1]
+        if conv_kss is None:
+            conv_kss = [1, 1, 1, 1]
+        if hybrid_eopss is None:
+            hybrid_eopss = [[0], [0], [1], [1]]
+        if window_sizes is None:
+            window_sizes = [7, 7, 7, 7]
+        if dim_heads is None:
+            dim_heads = [32, 32, 32, 32]
+        if dw_kss is None:
+            dw_kss = [3, 3, 5, 5]
+        if act_layers is None:
+            act_layers = ["silu", "silu", "gelu", "gelu"]
+        if norm_layers is None:
+            norm_layers = ["bn_2d", "bn_2d", "ln_2d", "ln_2d"]
+        if exp_ratios is None:
+            exp_ratios = [4.0, 4.0, 4.0, 4.0]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
+        if depths is None:
+            depths = [1, 2, 4, 2]
         super().__init__()
         self.num_classes = num_classes
         self.dim_in = dim_in
@@ -982,7 +1005,7 @@ class EMO2(nn.Module):
         # This means emb_dim_pre must be divisible by dim_heads[0].
         if (embed_dims[0] // 2) % dim_heads[0] != 0:
             raise ValueError(
-                f"Stem output channels (embed_dims[0]//2 = {embed_dims[0]//2}) "
+                f"Stem output channels (embed_dims[0]//2 = {embed_dims[0] // 2}) "
                 f"must be divisible by dim_heads[0] ({dim_heads[0]})"
             )
         emb_dim_pre = embed_dims[0] // 2
@@ -995,7 +1018,7 @@ class EMO2(nn.Module):
             if embed_dims[i] % dim_heads[i] != 0:
                 raise ValueError(
                     f"embed_dims[{i}] ({embed_dims[i]}) must be divisible by "
-                    f"dim_heads[{i}] ({dim_heads[i]}) for stage {i+1}"
+                    f"dim_heads[{i}] ({dim_heads[i]}) for stage {i + 1}"
                 )
 
             stage_layers = []
@@ -1005,7 +1028,7 @@ class EMO2(nn.Module):
 
                 block_stride = 2 if is_first_block_of_stage else 1
                 block_has_skip = (
-                    False if is_first_block_of_stage else True
+                    not is_first_block_of_stage
                 )  # Skip only if stride=1 and dims match (dim_out is embed_dims[i])
                 if (
                     is_first_block_of_stage and current_dim == embed_dims[i]

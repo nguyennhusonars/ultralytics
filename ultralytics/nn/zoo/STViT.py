@@ -1,15 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/STViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, register_model, to_2tuple, trunc_normal_
 
 
 class SwishImplementation(torch.autograd.Function):
@@ -402,11 +399,11 @@ class STViT(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dim=[96, 192, 384, 768],
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
-        n_iter=[1, 1, 1, 1],
-        stoken_size=[8, 4, 2, 1],
+        embed_dim=None,
+        depths=None,
+        num_heads=None,
+        n_iter=None,
+        stoken_size=None,
         mlp_ratio=4.0,
         qkv_bias=True,
         qk_scale=None,
@@ -416,11 +413,25 @@ class STViT(nn.Module):
         projection=None,
         freeze_bn=False,
         use_checkpoint=False,
-        checkpoint_num=[0, 0, 0, 0],
-        layerscale=[False, False, False, False],
+        checkpoint_num=None,
+        layerscale=None,
         init_values=1e-6,
         **kwargs,
     ):
+        if layerscale is None:
+            layerscale = [False, False, False, False]
+        if checkpoint_num is None:
+            checkpoint_num = [0, 0, 0, 0]
+        if stoken_size is None:
+            stoken_size = [8, 4, 2, 1]
+        if n_iter is None:
+            n_iter = [1, 1, 1, 1]
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        if embed_dim is None:
+            embed_dim = [96, 192, 384, 768]
         super().__init__()
 
         self.num_classes = num_classes

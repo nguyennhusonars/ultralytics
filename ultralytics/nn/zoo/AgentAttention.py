@@ -1,12 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/AgentAttention.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+import math
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.zoo._timm import trunc_normal_
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 
 class AgentAttention(nn.Module):
@@ -83,9 +85,9 @@ class AgentAttention(nn.Module):
         q = self.q(x)
 
         if self.sr_ratio > 1:
-            assert (
-                H % self.sr_ratio == 0 and W % self.sr_ratio == 0
-            ), f"Runtime H={H}, W={W} not divisible by sr_ratio={self.sr_ratio}"
+            assert H % self.sr_ratio == 0 and W % self.sr_ratio == 0, (
+                f"Runtime H={H}, W={W} not divisible by sr_ratio={self.sr_ratio}"
+            )
             x_ = x.permute(0, 2, 1).reshape(b, c, H, W)
             x_ = self.sr(x_).reshape(b, c, -1).permute(0, 2, 1)
             x_ = self.norm(x_)

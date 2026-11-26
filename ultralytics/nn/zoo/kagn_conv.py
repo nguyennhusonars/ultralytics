@@ -2,9 +2,10 @@
 """Ported from ultralytics_sonnn nn/modules/kan_convs/kagn_conv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import lru_cache
+
 import torch
-import torch.nn as nn
-from torch.nn.functional import conv3d, conv2d, conv1d
+from torch import nn
+from torch.nn.functional import conv1d, conv2d, conv3d
 
 
 class KAGNConvNDLayer(nn.Module):
@@ -24,7 +25,7 @@ class KAGNConvNDLayer(nn.Module):
         dropout: float = 0.0,
         ndim: int = 2,
     ):
-        super(KAGNConvNDLayer, self).__init__()
+        super().__init__()
         self.inputdim = input_dim
         self.outdim = output_dim
         self.degree = degree
@@ -70,8 +71,11 @@ class KAGNConvNDLayer(nn.Module):
 
         self.layer_norm = nn.ModuleList([norm_class(output_dim // groups) for _ in range(groups)])
 
-        poly_shape = (groups, output_dim // groups, (input_dim // groups) * (degree + 1)) + tuple(
-            kernel_size for _ in range(ndim)
+        poly_shape = (
+            groups,
+            output_dim // groups,
+            input_dim // groups * (degree + 1),
+            *tuple(kernel_size for _ in range(ndim)),
         )
 
         self.poly_weights = nn.Parameter(torch.randn(*poly_shape))
@@ -163,7 +167,7 @@ class KAGNConv3DLayer(KAGNConvNDLayer):
         dilation=1,
         dropout: float = 0.0,
     ):
-        super(KAGNConv3DLayer, self).__init__(
+        super().__init__(
             nn.Conv3d,
             nn.InstanceNorm3d,
             conv3d,
@@ -194,7 +198,7 @@ class KAGNConv2DLayer(KAGNConvNDLayer):
         dropout: float = 0.0,
         norm_layer=nn.InstanceNorm2d,
     ):
-        super(KAGNConv2DLayer, self).__init__(
+        super().__init__(
             nn.Conv2d,
             norm_layer,
             conv2d,
@@ -224,7 +228,7 @@ class KAGNConv1DLayer(KAGNConvNDLayer):
         dilation=1,
         dropout: float = 0.0,
     ):
-        super(KAGNConv1DLayer, self).__init__(
+        super().__init__(
             nn.Conv1d,
             nn.InstanceNorm1d,
             conv1d,

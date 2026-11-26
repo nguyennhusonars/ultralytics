@@ -1,28 +1,20 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MaxViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from ultralytics.utils.checks import check_requirements
 
 check_requirements("timm>=1.0")  # a few layers here still come from timm itself
 
-from timm.models._efficientnet_blocks import DepthwiseSeparableConv
-from timm.models._efficientnet_blocks import SqueezeExcite
 from typing import Callable
-from typing import List
-from typing import Optional
-from typing import Set
-from typing import Tuple
-from typing import Type
-from typing import Union
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import Mlp
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import drop_path
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from timm.models._efficientnet_blocks import DepthwiseSeparableConv, SqueezeExcite
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, Mlp, _cfg, drop_path, register_model, trunc_normal_
 
 
 def _gelu_ignore_parameters(*args, **kwargs) -> nn.Module:
@@ -68,13 +60,13 @@ class MBConv(nn.Module):
         in_channels: int,
         out_channels: int,
         downscale: bool = False,
-        act_layer: Type[nn.Module] = nn.GELU,
-        norm_layer: Type[nn.Module] = nn.BatchNorm2d,
+        act_layer: type[nn.Module] = nn.GELU,
+        norm_layer: type[nn.Module] = nn.BatchNorm2d,
         drop_path: float = 0.0,
     ) -> None:
-        """Constructor method"""
+        """Constructor method."""
         # Call super constructor
-        super(MBConv, self).__init__()
+        super().__init__()
         # Save parameter
         self.drop_path_rate: float = drop_path
         # Check parameters for downscaling
@@ -124,7 +116,7 @@ class MBConv(nn.Module):
         return output
 
 
-def window_partition(input: torch.Tensor, window_size: Tuple[int, int] = (7, 7)) -> torch.Tensor:
+def window_partition(input: torch.Tensor, window_size: tuple[int, int] = (7, 7)) -> torch.Tensor:
     """Window partition function.
 
     Args:
@@ -144,7 +136,7 @@ def window_partition(input: torch.Tensor, window_size: Tuple[int, int] = (7, 7))
 
 
 def window_reverse(
-    windows: torch.Tensor, original_size: Tuple[int, int], window_size: Tuple[int, int] = (7, 7)
+    windows: torch.Tensor, original_size: tuple[int, int], window_size: tuple[int, int] = (7, 7)
 ) -> torch.Tensor:
     """Reverses the window partition.
 
@@ -166,7 +158,7 @@ def window_reverse(
     return output
 
 
-def grid_partition(input: torch.Tensor, grid_size: Tuple[int, int] = (7, 7)) -> torch.Tensor:
+def grid_partition(input: torch.Tensor, grid_size: tuple[int, int] = (7, 7)) -> torch.Tensor:
     """Grid partition function.
 
     Args:
@@ -186,7 +178,7 @@ def grid_partition(input: torch.Tensor, grid_size: Tuple[int, int] = (7, 7)) -> 
 
 
 def grid_reverse(
-    grid: torch.Tensor, original_size: Tuple[int, int], grid_size: Tuple[int, int] = (7, 7)
+    grid: torch.Tensor, original_size: tuple[int, int], grid_size: tuple[int, int] = (7, 7)
 ) -> torch.Tensor:
     """Reverses the grid partition.
 
@@ -209,8 +201,8 @@ def grid_reverse(
 
 
 def get_relative_position_index(win_h: int, win_w: int) -> torch.Tensor:
-    """Function to generate pair-wise relative position index for each token inside the window.
-        Taken from Timms Swin V1 implementation.
+    """Function to generate pair-wise relative position index for each token inside the window. Taken from Timms Swin V1
+    implementation.
 
     Args:
         win_h (int): Window/Grid height.
@@ -244,17 +236,17 @@ class RelativeSelfAttention(nn.Module):
         self,
         in_channels: int,
         num_heads: int = 32,
-        grid_window_size: Tuple[int, int] = (7, 7),
+        grid_window_size: tuple[int, int] = (7, 7),
         attn_drop: float = 0.0,
         drop: float = 0.0,
     ) -> None:
-        """Constructor method"""
+        """Constructor method."""
         # Call super constructor
-        super(RelativeSelfAttention, self).__init__()
+        super().__init__()
         # Save parameters
         self.in_channels: int = in_channels
         self.num_heads: int = num_heads
-        self.grid_window_size: Tuple[int, int] = grid_window_size
+        self.grid_window_size: tuple[int, int] = grid_window_size
         self.scale: float = (in_channels // num_heads) ** -0.5
         self.attn_area: int = grid_window_size[0] * grid_window_size[1]
         # Init layers
@@ -333,7 +325,7 @@ class MaxViTTransformerBlock(nn.Module):
     Args:
         in_channels (int): Number of input channels.
         partition_function (Callable): Partition function to be utilized (grid or window partition).
-        reverse_function (Callable): Reverse function to be utilized  (grid or window reverse).
+        reverse_function (Callable): Reverse function to be utilized (grid or window reverse).
         num_heads (int, optional): Number of attention heads. Default 32
         grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
@@ -350,20 +342,20 @@ class MaxViTTransformerBlock(nn.Module):
         partition_function: Callable,
         reverse_function: Callable,
         num_heads: int = 32,
-        grid_window_size: Tuple[int, int] = (7, 7),
+        grid_window_size: tuple[int, int] = (7, 7),
         attn_drop: float = 0.0,
         drop: float = 0.0,
         drop_path: float = 0.0,
         mlp_ratio: float = 4.0,
-        act_layer: Type[nn.Module] = nn.GELU,
-        norm_layer: Type[nn.Module] = nn.LayerNorm,
+        act_layer: type[nn.Module] = nn.GELU,
+        norm_layer: type[nn.Module] = nn.LayerNorm,
     ) -> None:
-        """Constructor method"""
-        super(MaxViTTransformerBlock, self).__init__()
+        """Constructor method."""
+        super().__init__()
         # Save parameters
         self.partition_function: Callable = partition_function
         self.reverse_function: Callable = reverse_function
-        self.grid_window_size: Tuple[int, int] = grid_window_size
+        self.grid_window_size: tuple[int, int] = grid_window_size
         # Init layers
         self.norm_1 = norm_layer(in_channels)
         self.attention = RelativeSelfAttention(
@@ -389,7 +381,7 @@ class MaxViTTransformerBlock(nn.Module):
             output (torch.Tensor): Output tensor of the shape [B, C_out, H, W].
         """
         # Save original shape
-        B, C, H, W = input.shape
+        _B, C, H, W = input.shape
         shortcut = input
 
         # --- Padding ---
@@ -471,18 +463,18 @@ class MaxViTBlock(nn.Module):
         out_channels: int,
         downscale: bool = False,
         num_heads: int = 32,
-        grid_window_size: Tuple[int, int] = (7, 7),
+        grid_window_size: tuple[int, int] = (7, 7),
         attn_drop: float = 0.0,
         drop: float = 0.0,
         drop_path: float = 0.0,
         mlp_ratio: float = 4.0,
-        act_layer: Type[nn.Module] = nn.GELU,
-        norm_layer: Type[nn.Module] = nn.BatchNorm2d,
-        norm_layer_transformer: Type[nn.Module] = nn.LayerNorm,
+        act_layer: type[nn.Module] = nn.GELU,
+        norm_layer: type[nn.Module] = nn.BatchNorm2d,
+        norm_layer_transformer: type[nn.Module] = nn.LayerNorm,
     ) -> None:
-        """Constructor method"""
+        """Constructor method."""
         # Call super constructor
-        super(MaxViTBlock, self).__init__()
+        super().__init__()
         # Init MBConv block
         self.mb_conv = MBConv(
             in_channels=in_channels,
@@ -559,18 +551,18 @@ class MaxViTStage(nn.Module):
         in_channels: int,
         out_channels: int,
         num_heads: int = 32,
-        grid_window_size: Tuple[int, int] = (7, 7),
+        grid_window_size: tuple[int, int] = (7, 7),
         attn_drop: float = 0.0,
         drop: float = 0.0,
-        drop_path: Union[List[float], float] = 0.0,
+        drop_path: list[float] | float = 0.0,
         mlp_ratio: float = 4.0,
-        act_layer: Type[nn.Module] = nn.GELU,
-        norm_layer: Type[nn.Module] = nn.BatchNorm2d,
-        norm_layer_transformer: Type[nn.Module] = nn.LayerNorm,
+        act_layer: type[nn.Module] = nn.GELU,
+        norm_layer: type[nn.Module] = nn.BatchNorm2d,
+        norm_layer_transformer: type[nn.Module] = nn.LayerNorm,
     ) -> None:
-        """Constructor method"""
+        """Constructor method."""
         # Call super constructor
-        super(MaxViTStage, self).__init__()
+        super().__init__()
         # Init blocks
         self.blocks = nn.ModuleList()
         self.blocks.append(
@@ -623,8 +615,7 @@ class MaxViTStage(nn.Module):
 
 
 class MaxViT(nn.Module):
-    """Implementation of the MaxViT proposed in:
-        https://arxiv.org/pdf/2204.01697.pdf
+    """Implementation of the MaxViT proposed in: https://arxiv.org/pdf/2204.01697.pdf.
 
     Args:
         in_channels (int, optional): Number of input channels to the convolutional stem. Default 3
@@ -649,8 +640,8 @@ class MaxViT(nn.Module):
         self,
         in_chans: int = 3,
         img_size: int = 224,
-        depths: Tuple[int, ...] = (2, 2, 5, 2),
-        channels: Tuple[int, ...] = (64, 128, 256, 512),
+        depths: tuple[int, ...] = (2, 2, 5, 2),
+        channels: tuple[int, ...] = (64, 128, 256, 512),
         num_classes: int = 1000,
         embed_dim: int = 64,
         num_heads: int = 32,
@@ -665,7 +656,7 @@ class MaxViT(nn.Module):
         global_pool: str = "avg",
         **kwargs,
     ) -> None:
-        """Constructor method"""
+        """Constructor method."""
         super().__init__()
         # Check parameters
         assert len(depths) == len(channels), "For each stage a channel dimension must be given."
@@ -746,7 +737,7 @@ class MaxViT(nn.Module):
         return 224
 
     @torch.jit.ignore
-    def no_weight_decay(self) -> Set[str]:
+    def no_weight_decay(self) -> set[str]:
         """Gets the names of parameters to not apply weight decay to.
 
         Returns:
@@ -762,8 +753,8 @@ class MaxViT(nn.Module):
                 nwd.add(n)
         return nwd
 
-    def reset_classifier(self, num_classes: int, global_pool: Optional[str] = None) -> None:
-        """Method results the classification head
+    def reset_classifier(self, num_classes: int, global_pool: str | None = None) -> None:
+        """Method results the classification head.
 
         Args:
             num_classes (int): Number of classes to be predicted
@@ -774,7 +765,7 @@ class MaxViT(nn.Module):
             self.global_pool = global_pool
         self.head = nn.Linear(self.channels[-1], num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, input: torch.Tensor) -> List[torch.Tensor]:
+    def forward_features(self, input: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass of feature extraction.
 
         Args:
@@ -809,7 +800,7 @@ class MaxViT(nn.Module):
 
         return x if pre_logits else self.head(x)
 
-    def forward(self, input: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, input: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass for feature extraction.
 
         Args:
@@ -824,7 +815,7 @@ class MaxViT(nn.Module):
 
 @register_model
 def maxvit_tiny(pretrained=False, img_size=224, **kwargs):
-    """MaxViT-Tiny for 224x224 input"""
+    """MaxViT-Tiny for 224x224 input."""
     model = MaxViT(
         img_size=img_size,
         depths=(2, 2, 5, 2),

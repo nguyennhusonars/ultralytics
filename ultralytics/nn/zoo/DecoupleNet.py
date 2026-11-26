@@ -1,20 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/DecoupleNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import Tensor
+from __future__ import annotations
+
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import antialiased_cnns
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor, nn
 
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
-DECOUPLE_NET_SPECS: Dict[str, Dict[str, Any]] = {
+DECOUPLE_NET_SPECS: dict[str, dict[str, Any]] = {
     "decouplenet_d0": {
         "embed_dim": 32,
         "depths": (1, 6, 6, 2),
@@ -143,7 +141,7 @@ class PII(nn.Module):
 
 class MRLA(nn.Module):
     def __init__(self, channel, att_kernel):
-        super(MRLA, self).__init__()
+        super().__init__()
         att_padding = att_kernel // 2
         self.gate_fn = nn.Sigmoid()
         self.channel = channel
@@ -194,7 +192,7 @@ class GA(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        B, _C, H, W = x.shape
         x_perm = x.permute(0, 2, 3, 1)
         N = H * W
         qkv = self.qkv(x_perm).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
@@ -241,7 +239,7 @@ class MLPBlock(nn.Module):
         self.MBFD = MBFD(dim, stage, att_kernel)
         self.use_layer_scale = layer_scale_init_value > 0
         if self.use_layer_scale:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
 
     def forward(self, x: Tensor) -> Tensor:
         shortcut = x
@@ -284,7 +282,7 @@ class DecoupleNet(nn.Module):
         model_name: str,
         in_chans: int = 3,
         num_classes: int = 1000,  # For get_classification_output's head
-        input_size: Tuple[int, int, int] = (3, 224, 224),
+        input_size: tuple[int, int, int] = (3, 224, 224),
         mlp_ratio: float = 2.0,
         patch_size: int = 4,
         patch_stride: int = 4,
@@ -362,7 +360,7 @@ class DecoupleNet(nn.Module):
         self.apply(self._init_weights)
 
         # Calculate width_list (channels of features returned by forward())
-        self.width_list: List[int] = []
+        self.width_list: list[int] = []
         self.eval()
         try:
             dummy_input = torch.randn(1, *self.input_size_for_dummy_pass)
@@ -382,11 +380,7 @@ class DecoupleNet(nn.Module):
         self.train()
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, (nn.Conv1d, nn.Conv2d)):
+        if isinstance(m, (nn.Linear, nn.Conv1d, nn.Conv2d)):
             trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
@@ -396,7 +390,7 @@ class DecoupleNet(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward_features_list(self, x: Tensor) -> List[Tensor]:
+    def forward_features_list(self, x: Tensor) -> list[Tensor]:
         x_embed = self.patch_embed(x)
         outs = [x_embed]
         current_x = x_embed
@@ -408,7 +402,7 @@ class DecoupleNet(nn.Module):
         return outs
 
     # Main forward method for compatibility with frameworks like Ultralytics
-    def forward(self, x: Tensor) -> List[Tensor]:
+    def forward(self, x: Tensor) -> list[Tensor]:
         return self.forward_features_list(x)
 
     # Helper method for standalone classification

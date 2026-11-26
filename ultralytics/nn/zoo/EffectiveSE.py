@@ -1,14 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/EffectiveSE.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from torch import nn
+
 from ultralytics.nn.modules.block import C2f
 from ultralytics.nn.modules.conv import Conv
-import torch.nn as nn
 
 
 class EffectiveSEModule(nn.Module):
     def __init__(self, channels, add_maxpool=False):
-        super(EffectiveSEModule, self).__init__()
+        super().__init__()
         self.add_maxpool = add_maxpool
         self.fc = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
         self.gate = nn.Hardsigmoid()

@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/OREPA_2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch.nn import init
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+from torch.nn import init
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -69,7 +70,7 @@ class OREPA_2(nn.Module):
         init_hyper_para=1.0,
         init_hyper_gamma=1.0,
     ):
-        super(OREPA_2, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.nonlinear = Conv.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
         self.weight_only = weight_only

@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SwinTransformer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Optional
+from __future__ import annotations
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
 
 
 def drop_path_f(x, drop_prob: float = 0.0, training: bool = False):
@@ -22,7 +23,7 @@ def drop_path_f(x, drop_prob: float = 0.0, training: bool = False):
 
 class DropPath(nn.Module):
     def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
 
     def forward(self, x):
@@ -70,15 +71,16 @@ class Mlp(nn.Module):
 
 
 class WindowAttention(nn.Module):
-    r"""Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    r"""Window based multi-head self attention (W-MSA) module with relative position bias. It supports both of shifted
+    and non-shifted window.
+
     Args:
         dim (int): Number of input channels.
         window_size (tuple[int]): The height and width of the window.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+        proj_drop (float, optional): Dropout ratio of output. Default: 0.0.
     """
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0.0, proj_drop=0.0):
@@ -116,11 +118,11 @@ class WindowAttention(nn.Module):
         nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask: Optional[torch.Tensor] = None):
+    def forward(self, x, mask: torch.Tensor | None = None):
         """
         Args:
             x: input features with shape of (num_windows*B, Mh*Mw, C)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None.
         """
         # [batch_size*num_windows, Mh*Mw, total_embed_dim]
         B_, N, C = x.shape
@@ -168,6 +170,7 @@ class WindowAttention(nn.Module):
 
 class SwinTransformerBlock(nn.Module):
     r"""Swin Transformer Block.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads.
@@ -179,7 +182,7 @@ class SwinTransformerBlock(nn.Module):
         attn_drop (float, optional): Attention dropout rate. Default: 0.0
         drop_path (float, optional): Stochastic depth rate. Default: 0.0
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
     """
 
     def __init__(
@@ -274,8 +277,8 @@ class SwinTransformerBlock(nn.Module):
 
 
 class SwinStage(nn.Module):
-    """
-    A basic Swin Transformer layer for one stage.
+    """A basic Swin Transformer layer for one stage.
+
     Args:
         dim (int): Number of input channels.
         depth (int): Number of blocks.
@@ -359,7 +362,7 @@ class SwinStage(nn.Module):
         mask_windows = mask_windows.view(-1, self.window_size * self.window_size)  # [nW, Mh*Mw]
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)  # [nW, 1, Mh*Mw] - [nW, Mh*Mw, 1]
         # [nW, Mh*Mw, Mh*Mw]
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, (-100.0)).masked_fill(attn_mask == 0, 0.0)
         return attn_mask
 
     def forward(self, x):
@@ -417,9 +420,10 @@ class PatchEmbed(nn.Module):
 
 class PatchMerging(nn.Module):
     r"""Patch Merging Layer.
+
     Args:
         dim (int): Number of input channels.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
     """
 
     def __init__(self, dim, c2, norm_layer=nn.LayerNorm):
@@ -430,9 +434,7 @@ class PatchMerging(nn.Module):
         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
-        """
-        x: B, C, H, W
-        """
+        """X: B, C, H, W."""
         B, C, H, W = x.shape
         # assert L == H * W, "input feature has wrong size"
         x = x.permute(0, 2, 3, 1).contiguous()

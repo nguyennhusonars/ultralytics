@@ -1,15 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/iRMB.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import SqueezeExcite
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from functools import partial
 
+import torch
+import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, SqueezeExcite
 
 inplace = True
 
@@ -65,7 +65,7 @@ class ConvNormAct(nn.Module):
         inplace=True,
         drop_path_rate=0.0,
     ):
-        super(ConvNormAct, self).__init__()
+        super().__init__()
         self.has_skip = skip and dim_in == dim_out
         padding = math.ceil((kernel_size - stride) / 2)
         self.conv = nn.Conv2d(dim_in, dim_out, kernel_size, stride, padding, dilation, groups, bias)
@@ -169,7 +169,7 @@ class iRMB(nn.Module):
     def forward(self, x):
         shortcut = x
         x = self.norm(x)
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         if self.attn_s:
             # padding
             if self.window_size <= 0:
@@ -193,7 +193,7 @@ class iRMB(nn.Module):
             n1, n2 = (H + pad_b) // window_size_H, (W + pad_r) // window_size_W
             x = rearrange(x, "b c (h1 n1) (w1 n2) -> (b n1 n2) c h1 w1", n1=n1, n2=n2).contiguous()
             # attention
-            b, c, h, w = x.shape
+            _b, _c, h, w = x.shape
             qk = self.qk(x)
             qk = rearrange(
                 qk,

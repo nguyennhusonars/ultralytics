@@ -1,16 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/TransNeXt.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, to_2tuple, trunc_normal_
 
 
 @torch.no_grad()
@@ -56,9 +55,9 @@ class AggregatedAttention(nn.Module):
         if fixed_pool_size is None:
             self.pool_H, self.pool_W = input_resolution[0] // self.sr_ratio, input_resolution[1] // self.sr_ratio
         else:
-            assert (
-                fixed_pool_size < min(input_resolution)
-            ), f"The fixed_pool_size {fixed_pool_size} should be less than the shorter side of input resolution {input_resolution} to ensure pooling works correctly."
+            assert fixed_pool_size < min(input_resolution), (
+                f"The fixed_pool_size {fixed_pool_size} should be less than the shorter side of input resolution {input_resolution} to ensure pooling works correctly."
+            )
             self.pool_H, self.pool_W = fixed_pool_size, fixed_pool_size
         self.pool_len = self.pool_H * self.pool_W
 
@@ -92,7 +91,7 @@ class AggregatedAttention(nn.Module):
             nn.init.trunc_normal_(torch.empty(num_heads, self.local_len), mean=0, std=0.0004)
         )
 
-        # Generate padding_mask && sequnce length scale
+        # Generate padding_mask && sequence length scale
         local_seq_length, padding_mask = get_seqlen_and_mask(input_resolution, window_size)
         self.register_buffer(
             "seq_length_scale", torch.as_tensor(np.log(local_seq_length.numpy() + self.pool_len)), persistent=False
@@ -169,11 +168,11 @@ class AggregatedAttention(nn.Module):
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1, bias=True, groups=dim)
 
     def forward(self, x, H, W):
-        B, N, C = x.shape
+        B, _N, C = x.shape
         x = x.transpose(1, 2).view(B, C, H, W).contiguous()
         x = self.dwconv(x)
         x = x.flatten(2).transpose(1, 2)
@@ -249,7 +248,7 @@ class Attention(nn.Module):
         self.temperature = nn.Parameter(
             torch.log((torch.ones(num_heads, 1, 1) / 0.24).exp() - 1)
         )  # Initialize softplus(temperature) to 1/0.24.
-        # Generate sequnce length scale
+        # Generate sequence length scale
         self.register_buffer(
             "seq_length_scale", torch.as_tensor(np.log(input_resolution[0] * input_resolution[1])), persistent=False
         )
@@ -342,7 +341,7 @@ class Block(nn.Module):
 
 
 class OverlapPatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Image to Patch Embedding."""
 
     def __init__(self, patch_size=7, stride=4, in_chans=3, embed_dim=768):
         super().__init__()
@@ -365,39 +364,49 @@ class OverlapPatchEmbed(nn.Module):
 
 
 class TransNeXt(nn.Module):
-    """
-    The parameter "img size" is primarily utilized for generating relative spatial coordinates,
-    which are used to compute continuous relative positional biases. As this TransNeXt implementation does not support multi-scale inputs,
-    it is recommended to set the "img size" parameter to a value that is exactly the same as the resolution of the inference images.
-    It is not advisable to set the "img size" parameter to a value exceeding 800x800.
-    The "pretrain size" refers to the "img size" used during the initial pre-training phase,
-    which is used to scale the relative spatial coordinates for better extrapolation by the MLP.
-    For models trained on ImageNet-1K at a resolution of 224x224,
-    as well as downstream task models fine-tuned based on these pre-trained weights,
-    the "pretrain size" parameter should be set to 224x224.
+    """The parameter "img size" is primarily utilized for generating relative spatial coordinates, which are used to
+    compute continuous relative positional biases. As this TransNeXt implementation does not support multi-scale
+    inputs, it is recommended to set the "img size" parameter to a value that is exactly the same as the resolution
+    of the inference images. It is not advisable to set the "img size" parameter to a value exceeding 800x800. The
+    "pretrain size" refers to the "img size" used during the initial pre-training phase, which is used to scale the
+    relative spatial coordinates for better extrapolation by the MLP. For models trained on ImageNet-1K at a
+    resolution of 224x224, as well as downstream task models fine-tuned based on these pre-trained weights, the
+    "pretrain size" parameter should be set to 224x224.
     """
 
     def __init__(
         self,
         img_size=224,
         pretrain_size=None,
-        window_size=[3, 3, 3, None],
+        window_size=None,
         patch_size=16,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[64, 128, 256, 512],
-        num_heads=[1, 2, 4, 8],
-        mlp_ratios=[4, 4, 4, 4],
+        embed_dims=None,
+        num_heads=None,
+        mlp_ratios=None,
         qkv_bias=False,
         drop_rate=0.0,
         attn_drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=nn.LayerNorm,
-        depths=[3, 4, 6, 3],
-        sr_ratios=[8, 4, 2, 1],
+        depths=None,
+        sr_ratios=None,
         num_stages=4,
         fixed_pool_size=None,
     ):
+        if sr_ratios is None:
+            sr_ratios = [8, 4, 2, 1]
+        if depths is None:
+            depths = [3, 4, 6, 3]
+        if mlp_ratios is None:
+            mlp_ratios = [4, 4, 4, 4]
+        if num_heads is None:
+            num_heads = [1, 2, 4, 8]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
+        if window_size is None:
+            window_size = [3, 3, 3, None]
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths

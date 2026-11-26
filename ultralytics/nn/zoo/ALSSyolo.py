@@ -1,9 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/ALSSyolo.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.conv import Conv
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv
 
 
 def channel_shuffle(x, g):
@@ -20,7 +21,7 @@ def channel_shuffle(x, g):
 
 class ALSS(nn.Module):
     def __init__(self, C_in, C_out, num_blocks=1, alpha=0.2, beta=1, stride=1, use_identity=False, shortcut_mode=False):
-        super(ALSS, self).__init__()
+        super().__init__()
 
         # Calculate split sizes
         self.shortcut_channels = int(C_in * alpha)
@@ -88,7 +89,7 @@ class ALSS(nn.Module):
 
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
-        super(h_sigmoid, self).__init__()
+        super().__init__()
         self.relu = nn.ReLU6(inplace=inplace)
 
     def forward(self, x):
@@ -97,7 +98,7 @@ class h_sigmoid(nn.Module):
 
 class h_swish(nn.Module):
     def __init__(self, inplace=True):
-        super(h_swish, self).__init__()
+        super().__init__()
         self.sigmoid = h_sigmoid(inplace=inplace)
 
     def forward(self, x):
@@ -106,7 +107,7 @@ class h_swish(nn.Module):
 
 class LCA(nn.Module):
     def __init__(self, input_channel, reduction=32):
-        super(LCA, self).__init__()
+        super().__init__()
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
 
@@ -120,7 +121,7 @@ class LCA(nn.Module):
     def forward(self, x):  # torch.Size([2, 32, 64, 64])
         identity = x
 
-        b, c, h, w = x.size()
+        _b, _c, _h, _w = x.size()
         x_h = self.pool_h(x)  # torch.Size([2, 32, 64, 1])
         x_w = self.pool_w(x)  # torch.Size([2, 32, 1, 64])
 
