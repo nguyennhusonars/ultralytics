@@ -1,10 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RepViT_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import SqueezeExcite
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import SqueezeExcite
 
 
 def replace_batchnorm(net):
@@ -147,7 +148,7 @@ class RepVGGDW(torch.nn.Module):
 
 class RepViTBlock(nn.Module):
     def __init__(self, inp, hidden_dim, oup, kernel_size, stride, use_se, use_hs):
-        super(RepViTBlock, self).__init__()
+        super().__init__()
         assert stride in [1, 2]
 
         self.identity = stride == 1 and inp == oup
@@ -190,7 +191,7 @@ class RepViTBlock(nn.Module):
 
 class RepViT(nn.Module):
     def __init__(self, cfgs):
-        super(RepViT, self).__init__()
+        super().__init__()
         # setting of inverted residual blocks
         self.cfgs = cfgs
 
@@ -230,7 +231,7 @@ def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
         # k = k[9:]
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)
@@ -239,9 +240,7 @@ def update_weight(model_dict, weight_dict):
 
 
 def repvit_m0_6(weights=""):
-    """
-    Constructs a MobileNetV3-Large model
-    """
+    """Constructs a MobileNetV3-Large model."""
     cfgs = [
         [3, 2, 40, 1, 0, 1],
         [3, 2, 40, 0, 0, 1],

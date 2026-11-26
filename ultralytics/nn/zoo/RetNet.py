@@ -1,12 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RetNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Tuple
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+
 from ultralytics.nn.modules.block import C2f
 from ultralytics.nn.zoo._timm import DropPath
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 
 class DWConv2d(nn.Module):
@@ -15,9 +17,7 @@ class DWConv2d(nn.Module):
         self.conv = nn.Conv2d(dim, dim, kernel_size, stride, padding, groups=dim)
 
     def forward(self, x: torch.Tensor):
-        """
-        x: (b h w c)
-        """
+        """X: (b h w c)."""
         x = x.permute(0, 3, 1, 2)  # (b c h w)
         x = self.conv(x)  # (b c h w)
         x = x.permute(0, 2, 3, 1)  # (b h w c)
@@ -49,10 +49,7 @@ class MaSAd(nn.Module):
         nn.init.constant_(self.out_proj.bias, 0.0)
 
     def forward(self, x: torch.Tensor, rel_pos, chunkwise_recurrent=False, incremental_state=None):
-        """
-        x: (b h w c)
-        mask_h: (n h h)
-        mask_w: (n w w)
+        """x: (b h w c) mask_h: (n h h) mask_w: (n w w).
         """
         bsz, h, w, _ = x.size()
 
@@ -126,9 +123,7 @@ class FeedForwardNetwork(nn.Module):
             self.ffn_layernorm.reset_parameters()
 
     def forward(self, x: torch.Tensor):
-        """
-        x: (b h w c)
-        """
+        """X: (b h w c)."""
         x = self.fc1(x)
         x = self.activation_fn(x)
         x = self.activation_dropout_module(x)
@@ -167,9 +162,7 @@ class MaSA(nn.Module):
         nn.init.constant_(self.out_proj.bias, 0.0)
 
     def forward(self, x: torch.Tensor, rel_pos, chunkwise_recurrent=False, incremental_state=None):
-        """
-        x: (b h w c)
-        rel_pos: mask: (n l l)
+        """x: (b h w c) rel_pos: mask: (n l l).
         """
         bsz, h, w, _ = x.size()
         mask = rel_pos
@@ -248,12 +241,8 @@ class RetBlock(nn.Module):
 
 class RelPos2d(nn.Module):
     def __init__(self, embed_dim, num_heads, initial_value, heads_range):
-        """
-        recurrent_chunk_size: (clh clw)
-        num_chunks: (nch ncw)
-        clh * clw == cl
-        nch * ncw == nc
-        default: clh==clw, clh != clw is not implemented
+        """recurrent_chunk_size: (clh clw) num_chunks: (nch ncw) clh * clw == cl nch * ncw == nc default: clh==clw, clh
+        != clw is not implemented.
         """
         super().__init__()
         angle = 1.0 / (10000 ** torch.linspace(0, 1, embed_dim // num_heads // 2))
@@ -268,9 +257,7 @@ class RelPos2d(nn.Module):
         self.register_buffer("decay", decay)
 
     def generate_2d_decay(self, H: int, W: int):
-        """
-        generate 2d decay mask, the result is (HW)*(HW)
-        """
+        """Generate 2d decay mask, the result is (HW)*(HW)."""
         index_h = torch.arange(H).to(self.decay)
         index_w = torch.arange(W).to(self.decay)
         grid = torch.meshgrid([index_h, index_w])
@@ -281,20 +268,15 @@ class RelPos2d(nn.Module):
         return mask
 
     def generate_1d_decay(self, l: int):
-        """
-        generate 1d decay mask, the result is l*l
-        """
+        """Generate 1d decay mask, the result is l*l."""
         index = torch.arange(l).to(self.decay)
         mask = index[:, None] - index[None, :]  # (l l)
         mask = mask.abs()  # (l l)
         mask = mask * self.decay[:, None, None]  # (n l l)
         return mask
 
-    def forward(self, slen: Tuple[int], activate_recurrent=False, chunkwise_recurrent=False):
-        """
-        slen: (h, w)
-        h * w == l
-        recurrent is not implemented
+    def forward(self, slen: tuple[int], activate_recurrent=False, chunkwise_recurrent=False):
+        """slen: (h, w) h * w == l recurrent is not implemented.
         """
         if activate_recurrent:
             retention_rel_pos = self.decay.exp()
@@ -321,7 +303,7 @@ class C2f_RetBlock(C2f):
 
     def forward(self, x):
         """Forward pass through C2f layer."""
-        b, c, h, w = x.size()
+        _b, _c, h, w = x.size()
         rel_pos = self.Relpos((h, w), chunkwise_recurrent=self.retention == "chunk")
 
         y = list(self.cv1(x).chunk(2, 1))

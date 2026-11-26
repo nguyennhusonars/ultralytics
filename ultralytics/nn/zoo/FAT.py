@@ -1,14 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FAT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import List
-from ultralytics.nn.zoo._timm import DropPath
+from __future__ import annotations
+
 import math
 import os
 import sys
+
 import torch
-import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath
 
 
 def get_conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias):
@@ -65,10 +68,10 @@ class FASA(nn.Module):
                 break
         block = nn.Sequential()
         for num in range(i):
-            block.add_module("conv{}".format(num), get_conv2d(dim, dim, kernel_size, 2, kernel_size // 2, 1, dim, True))
-            block.add_module("bn{}".format(num), nn.SyncBatchNorm(dim))
+            block.add_module(f"conv{num}", get_conv2d(dim, dim, kernel_size, 2, kernel_size // 2, 1, dim, True))
+            block.add_module(f"bn{num}", nn.SyncBatchNorm(dim))
             if num != i - 1:
-                block.add_module("linear{}".format(num), nn.Conv2d(dim, dim, 1, 1, 0))
+                block.add_module(f"linear{num}", nn.Conv2d(dim, dim, 1, 1, 0))
         return block
 
     def forward(self, x: torch.Tensor):
@@ -85,7 +88,7 @@ class FASA(nn.Module):
         local_weight = torch.sigmoid(local_feat)
         local_feat = local_feat * local_weight
         local2global = torch.sigmoid(global_feat)
-        global2local = torch.sigmoid(local_feat)
+        torch.sigmoid(local_feat)
         local_feat = local_feat * local2global
         return self.mixer(local_feat * global_feat)
 
@@ -164,10 +167,12 @@ class FATlayer(nn.Module):
         window_size: int,
         mlp_kernel_size: int,
         mlp_ratio: float,
-        drop_paths=[0.0, 0.0],
+        drop_paths=None,
         downsample=True,
         use_checkpoint=False,
     ):
+        if drop_paths is None:
+            drop_paths = [0.0, 0.0]
         super().__init__()
         self.dim = dim
         self.depth = depth
@@ -233,22 +238,20 @@ class PatchEmbedding(nn.Module):
 
 
 class FAT(nn.Module):
-    """
-    Focal Attention and Transformer (FAT) model.
-    """
+    """Focal Attention and Transformer (FAT) model."""
 
     def __init__(
         self,
         in_chans=3,
         num_classes=1000,
         img_size=224,
-        embed_dims: List[int] = None,
-        depths: List[int] = None,
-        kernel_sizes: List[int] = None,
-        num_heads: List[int] = None,
-        window_sizes: List[int] = None,
-        mlp_kernel_sizes: List[int] = None,
-        mlp_ratios: List[float] = None,
+        embed_dims: list[int] | None = None,
+        depths: list[int] | None = None,
+        kernel_sizes: list[int] | None = None,
+        num_heads: list[int] | None = None,
+        window_sizes: list[int] | None = None,
+        mlp_kernel_sizes: list[int] | None = None,
+        mlp_ratios: list[float] | None = None,
         drop_path_rate=0.1,
         use_checkpoint=False,
     ):
@@ -326,10 +329,9 @@ class FAT(nn.Module):
     # MODIFIED: forward_features is changed to produce the correct output channels.
     # ================================================================
     def forward_features(self, x):
-        """
-        Forward pass that returns a list of feature maps from each stage.
-        This is required by frameworks like ultralytics for detection/segmentation.
-        This modified version produces the desired channel list: [48, 96, 192, 384] for fat_b1.
+        """Forward pass that returns a list of feature maps from each stage. This is required by frameworks like
+        ultralytics for detection/segmentation. This modified version produces the desired channel list: [48,
+        96, 192, 384] for fat_b1.
         """
         outputs = []
 
@@ -354,9 +356,7 @@ class FAT(nn.Module):
         return outputs
 
     def forward_cls(self, x):
-        """
-        Forward pass for classification.
-        """
+        """Forward pass for classification."""
         # Note: This uses forward_features but only takes the last feature map
         features = self.forward_features(x)
         x = self.avgpool(self.norm(features[-1]))
@@ -364,9 +364,7 @@ class FAT(nn.Module):
         return self.head(x)
 
     def forward(self, x):
-        """
-        The main forward pass. Returns a list of feature maps.
-        """
+        """The main forward pass. Returns a list of feature maps."""
         return self.forward_features(x)
 
 

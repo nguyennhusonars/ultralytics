@@ -2,12 +2,12 @@
 """Ported from ultralytics_sonnn nn/modules/VanillaNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class activation(nn.ReLU):
     def __init__(self, dim, act_num=3, deploy=False):
-        super(activation, self).__init__()
+        super().__init__()
         self.act_num = act_num
         self.deploy = deploy
         self.dim = dim
@@ -22,13 +22,11 @@ class activation(nn.ReLU):
     def forward(self, x):
         if self.deploy:
             return torch.nn.functional.conv2d(
-                super(activation, self).forward(x), self.weight, self.bias, padding=self.act_num, groups=self.dim
+                super().forward(x), self.weight, self.bias, padding=self.act_num, groups=self.dim
             )
         else:
             return self.bn(
-                torch.nn.functional.conv2d(
-                    super(activation, self).forward(x), self.weight, padding=self.act_num, groups=self.dim
-                )
+                torch.nn.functional.conv2d(super().forward(x), self.weight, padding=self.act_num, groups=self.dim)
             )
 
     def _fuse_bn_tensor(self, weight, bn):

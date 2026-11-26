@@ -2,15 +2,15 @@
 """Ported from ultralytics_sonnn nn/modules/MogaNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class ChannelAggregationFFN(nn.Module):
     """An implementation of FFN with Channel Aggregation in MogaNet."""
 
     def __init__(self, embed_dims, mlp_hidden_dims, kernel_size=3, act_layer=nn.GELU, ffn_drop=0.0):
-        super(ChannelAggregationFFN, self).__init__()
+        super().__init__()
         self.embed_dims = embed_dims
         self.mlp_hidden_dims = mlp_hidden_dims
 
@@ -51,8 +51,12 @@ class ChannelAggregationFFN(nn.Module):
 class MultiOrderDWConv(nn.Module):
     """Multi-order Features with Dilated DWConv Kernel in MogaNet."""
 
-    def __init__(self, embed_dims, dw_dilation=[1, 2, 3], channel_split=[1, 3, 4]):
-        super(MultiOrderDWConv, self).__init__()
+    def __init__(self, embed_dims, dw_dilation=None, channel_split=None):
+        if channel_split is None:
+            channel_split = [1, 3, 4]
+        if dw_dilation is None:
+            dw_dilation = [1, 2, 3]
+        super().__init__()
         self.split_ratio = [i / sum(channel_split) for i in channel_split]
         self.embed_dims_1 = int(self.split_ratio[1] * embed_dims)
         self.embed_dims_2 = int(self.split_ratio[2] * embed_dims)
@@ -107,8 +111,12 @@ class MultiOrderDWConv(nn.Module):
 class MultiOrderGatedAggregation(nn.Module):
     """Spatial Block with Multi-order Gated Aggregation in MogaNet."""
 
-    def __init__(self, embed_dims, attn_dw_dilation=[1, 2, 3], attn_channel_split=[1, 3, 4], attn_shortcut=True):
-        super(MultiOrderGatedAggregation, self).__init__()
+    def __init__(self, embed_dims, attn_dw_dilation=None, attn_channel_split=None, attn_shortcut=True):
+        if attn_channel_split is None:
+            attn_channel_split = [1, 3, 4]
+        if attn_dw_dilation is None:
+            attn_dw_dilation = [1, 2, 3]
+        super().__init__()
         self.embed_dims = embed_dims
         self.attn_shortcut = attn_shortcut
         self.proj_1 = nn.Conv2d(in_channels=embed_dims, out_channels=embed_dims, kernel_size=1)

@@ -1,19 +1,19 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/PVTv2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         # Avoid creating Conv2d with 0 dim
         if dim == 0:
             self.dwconv = nn.Identity()
@@ -23,7 +23,7 @@ class DWConv(nn.Module):
     def forward(self, x, H, W):
         if isinstance(self.dwconv, nn.Identity):
             return x
-        B, N, C = x.shape
+        B, _N, C = x.shape
         x = x.transpose(1, 2).view(B, C, H, W)
         x = self.dwconv(x)
         x = x.flatten(2).transpose(1, 2)
@@ -308,7 +308,7 @@ class Block(nn.Module):
 
 
 class OverlapPatchEmbed(nn.Module):
-    """Image to Patch Embedding with Overlapping Patches"""
+    """Image to Patch Embedding with Overlapping Patches."""
 
     def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768):
         super().__init__()
@@ -367,7 +367,7 @@ class OverlapPatchEmbed(nn.Module):
         # Handle Identity case
         if isinstance(self.proj, nn.Identity):
             # Need to return dummy H, W consistent with calculation if stride > 0
-            B, C, H_in, W_in = x.shape
+            _B, _C, H_in, W_in = x.shape
             H_out = H_in // getattr(self, "stride", 1) if hasattr(self, "stride") and self.stride > 0 else 0
             W_out = W_in // getattr(self, "stride", 1) if hasattr(self, "stride") and self.stride > 0 else 0
             # Return x reshaped? Or just x and calculated H, W? Let's return x and H, W.
@@ -384,10 +384,10 @@ class OverlapPatchEmbed(nn.Module):
 
 
 class PyramidVisionTransformerV2(nn.Module):
-    """Pyramid Vision Transformer V2 (PVTv2)
+    """Pyramid Vision Transformer V2 (PVTv2).
 
-    Refactored to remove MMLab dependencies and follow MogaNet structure.
-    Includes `width_list` for compatibility with frameworks like Ultralytics.
+    Refactored to remove MMLab dependencies and follow MogaNet structure. Includes `width_list` for compatibility with
+    frameworks like Ultralytics.
     """
 
     arch_zoo = {
@@ -652,7 +652,7 @@ class PyramidVisionTransformerV2(nn.Module):
             # Ensure embed_dim matches C dimension after norm
             expected_c = self.embed_dims[i]
             if x.shape[2] != expected_c:
-                raise ValueError(f"Stage {i+1} output C dimension {x.shape[2]} != expected {expected_c}")
+                raise ValueError(f"Stage {i + 1} output C dimension {x.shape[2]} != expected {expected_c}")
             x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
             # print(f"Stage {i+1} Final Out: {x.shape}")
 
@@ -687,6 +687,6 @@ class PyramidVisionTransformerV2(nn.Module):
 
 
 def pvtv2_b0(c1=3, fork_feat=True, **kwargs):
-    """PVTv2-B0"""
+    """PVTv2-B0."""
     model = PyramidVisionTransformerV2(c1=c1, arch="b0", fork_feat=fork_feat, **kwargs)
     return model

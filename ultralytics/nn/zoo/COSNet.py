@@ -1,19 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/COSNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
+from __future__ import annotations
+
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
-from typing import Union
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
 import torch.nn.functional as F
+from torch import nn
 
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
-COSNET_SPECS: Dict[str, Dict[str, Any]] = {
+COSNET_SPECS: dict[str, dict[str, Any]] = {
     "cosnet_tiny": {  # Example: A smaller COSNet
         "depths": [2, 2, 6, 2],  # Shallower than original
         "base_dim": 64,  # Smaller base dimension
@@ -183,7 +181,7 @@ class COSNet(nn.Module):
         self,
         model_name: str,
         in_chans: int = 3,
-        input_size: Union[int, Tuple[int, int]] = 224,
+        input_size: int | tuple[int, int] = 224,
         num_classes: int = 1000,  # Kept for compatibility, but not used if only backbone
         head_init_scale: float = 1.0,  # Kept for compatibility
         **kwargs,
@@ -194,10 +192,10 @@ class COSNet(nn.Module):
             raise ValueError(f"Unknown model_name: {model_name}. Available: {list(COSNET_SPECS.keys())}")
 
         spec = COSNET_SPECS[model_name]
-        depths: List[int] = spec["depths"]
+        depths: list[int] = spec["depths"]
         base_dim: int = spec["base_dim"]
         expan_ratio: int = spec["expan_ratio"]
-        s_kernel_sizes: List[int] = spec["s_kernel_sizes"]
+        s_kernel_sizes: list[int] = spec["s_kernel_sizes"]
         drop_path_rate: float = spec["drop_path_rate"]
         layer_scale_init_value: float = spec["layer_scale_init_value"]
 
@@ -205,13 +203,13 @@ class COSNet(nn.Module):
         self.num_stages = len(depths)
         self.in_chans = in_chans
         if isinstance(input_size, int):
-            self.input_h_w: Tuple[int, int] = (input_size, input_size)
+            self.input_h_w: tuple[int, int] = (input_size, input_size)
         elif isinstance(input_size, tuple) and len(input_size) == 2:
             self.input_h_w = input_size
         else:
             raise ValueError(f"input_size must be int or tuple of 2 ints, got {input_size}")
 
-        self.dims: List[int] = []
+        self.dims: list[int] = []
         for i in range(self.num_stages):
             self.dims.append(base_dim * (2**i))
 
@@ -253,7 +251,7 @@ class COSNet(nn.Module):
         self.apply(self._init_weights)
 
         # Calculate width_list (output channels of each feature map)
-        self.width_list: List[int] = []
+        self.width_list: list[int] = []
         # Temporarily set to eval mode for dummy pass, affects dropout, batchnorm
         # Store original mode
         original_mode_is_training = self.training
@@ -286,10 +284,8 @@ class COSNet(nn.Module):
             nn.init.constant_(m.weight, 1.0)
             nn.init.constant_(m.bias, 0)
 
-    def init_weights(self, pretrained: str = None):
-        """
-        Load pretrained weights.
-        Handles shape mismatches in convolutional layers by bilinear interpolation.
+    def init_weights(self, pretrained: str | None = None):
+        """Load pretrained weights. Handles shape mismatches in convolutional layers by bilinear interpolation.
         """
         if pretrained is not None:
             try:
@@ -348,8 +344,8 @@ class COSNet(nn.Module):
             # Weights are already initialized by self.apply(self._init_weights) in __init__
             print("No pretrained weights provided, using random initialization from _init_weights.")
 
-    def forward_features(self, x: torch.Tensor) -> List[torch.Tensor]:
-        features: List[torch.Tensor] = []
+    def forward_features(self, x: torch.Tensor) -> list[torch.Tensor]:
+        features: list[torch.Tensor] = []
         # Stem
         x = self.downsample_layers[0](x)
         x = self.stages[0](x)
@@ -362,13 +358,13 @@ class COSNet(nn.Module):
             features.append(x)
         return features
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         # This model is used as a backbone, so it returns a list of feature maps.
         return self.forward_features(x)
 
 
 def cosnet_tiny(
-    input_size: Union[int, Tuple[int, int]] = 224, in_chans: int = 3, pretrained: str = None, **kwargs
+    input_size: int | tuple[int, int] = 224, in_chans: int = 3, pretrained: str | None = None, **kwargs
 ) -> COSNet:
     model = COSNet(model_name="cosnet_tiny", in_chans=in_chans, input_size=input_size, **kwargs)
     if pretrained:

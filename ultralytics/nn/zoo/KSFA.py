@@ -1,9 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/KSFA.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
-from ultralytics.nn.modules.conv import Conv
 import torch
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv
 
 
 class block(nn.Module):
@@ -27,7 +28,7 @@ class block(nn.Module):
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        batch_size, dim, h, w = x.size()
+        batch_size, dim, _h, _w = x.size()
         attn1 = self.conv0(x)
         attn2 = self.conv_spatial(attn1)
 
@@ -37,7 +38,7 @@ class block(nn.Module):
 
         avg_attn = torch.mean(attn, dim=1, keepdim=True)
         max_attn, _ = torch.max(attn, dim=1, keepdim=True)
-        agg = torch.cat([avg_attn, max_attn], dim=1)
+        torch.cat([avg_attn, max_attn], dim=1)
 
         # Channel attention path
         ch_attn = self.global_pool(attn)

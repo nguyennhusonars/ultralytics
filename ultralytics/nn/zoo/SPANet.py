@@ -1,19 +1,22 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SPANet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch.nn import functional as F
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import copy
 import logging
 import os
-import torch
-import torch.nn as nn
 
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+from ultralytics.nn.zoo._timm import (
+    IMAGENET_DEFAULT_MEAN,
+    IMAGENET_DEFAULT_STD,
+    DropPath,
+    register_model,
+    to_2tuple,
+    trunc_normal_,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +44,8 @@ default_cfgs = {
 
 
 class PatchEmbed(nn.Module):
-    """
-    Patch Embedding that is implemented by a layer of conv.
-    Input: tensor in shape [B, C, H, W]
-    Output: tensor in shape [B, C, H/stride, W/stride]
+    """Patch Embedding that is implemented by a layer of conv. Input: tensor in shape [B, C, H, W] Output: tensor in
+    shape [B, C, H/stride, W/stride].
     """
 
     def __init__(self, patch_size=16, stride=16, padding=0, in_chans=3, embed_dim=768, norm_layer=None):
@@ -62,9 +63,7 @@ class PatchEmbed(nn.Module):
 
 
 class GroupNorm(nn.GroupNorm):
-    """
-    Group Normalization with 1 group.
-    Input: tensor in shape [B, C, H, W]
+    """Group Normalization with 1 group. Input: tensor in shape [B, C, H, W].
     """
 
     def __init__(self, num_channels, **kwargs):
@@ -72,7 +71,7 @@ class GroupNorm(nn.GroupNorm):
 
 
 class SPF(nn.Module):
-    """Spectral Pooling Filter"""
+    """Spectral Pooling Filter."""
 
     def __init__(self, H, W, r, lamb):
         super().__init__()
@@ -110,7 +109,7 @@ class SPF(nn.Module):
         return torch.fft.ifftshift(x, dim=(-2, -1))
 
     def forward(self, x):
-        B, C, in_H, in_W = x.shape  # x can be [B, C_chunk, H, W]
+        _B, _C, in_H, in_W = x.shape  # x can be [B, C_chunk, H, W]
         original_dtype = x.dtype
 
         if original_dtype == torch.complex32 or original_dtype == torch.complex64 or original_dtype == torch.complex128:
@@ -217,7 +216,7 @@ class SPAM(nn.Module):
         self.pws = nn.ModuleList([nn.Conv2d(chunk_dim, dim, 1) for _ in range(self.n_chunk)])
 
     def forward(self, x):
-        B, C_in, H_in, W_in = x.shape  # C_in should be self.dim
+        _B, _C_in, _H_in, _W_in = x.shape  # C_in should be self.dim
 
         x_proj = self.proj_in(x)
         x_conv = self.conv(x_proj)  # Shape: (B, dim, H_in, W_in)
@@ -351,7 +350,7 @@ class SPANet(nn.Module):
         mlp_ratios=None,
         downsamples=None,
         k_size=7,
-        radius=[2**1, 2**1, 2**0, 2**0],
+        radius=None,
         norm_layer=GroupNorm,
         act_layer=nn.GELU,
         num_classes=1000,
@@ -363,7 +362,7 @@ class SPANet(nn.Module):
         down_pad=1,
         drop_rate=0.0,
         drop_path_rate=0.0,
-        res_scale_init_values=[None, None, 1.0, 1.0],
+        res_scale_init_values=None,
         fork_feat=True,
         img_size=224,
         in_chans=3,
@@ -371,6 +370,10 @@ class SPANet(nn.Module):
         pretrained=None,
         **kwargs,
     ):
+        if res_scale_init_values is None:
+            res_scale_init_values = [None, None, 1.0, 1.0]
+        if radius is None:
+            radius = [2**1, 2**1, 2**0, 2**0]
         super().__init__()
 
         self.num_classes = num_classes
@@ -489,11 +492,7 @@ class SPANet(nn.Module):
         )
 
     def cls_init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, (nn.Conv2d)):
+        if isinstance(m, (nn.Linear, nn.Conv2d)):
             trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)

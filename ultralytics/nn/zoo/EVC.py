@@ -2,17 +2,18 @@
 """Ported from ultralytics_sonnn nn/modules/EVC.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class Encoding(nn.Module):
     def __init__(self, in_channels, num_codes):
-        super(Encoding, self).__init__()
+        super().__init__()
         # init codewords and smoothing factor
         self.in_channels, self.num_codes = in_channels, num_codes
         num_codes = 64
@@ -60,7 +61,7 @@ class Encoding(nn.Module):
 
     def forward(self, x):
         assert x.dim() == 4 and x.size(1) == self.in_channels
-        b, in_channels, w, h = x.size()
+        b, _in_channels, _w, _h = x.size()
 
         # [batch_size, height x width, channels]
         x = x.view(b, self.in_channels, -1).transpose(1, 2).contiguous()
@@ -74,9 +75,7 @@ class Encoding(nn.Module):
 
 
 class Mlp(nn.Module):
-    """
-    Implementation of MLP with 1*1 convolutions. Input: tensor with shape [B, C, H, W]
-    """
+    """Implementation of MLP with 1*1 convolutions. Input: tensor with shape [B, C, H, W]."""
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0):
         super().__init__()
@@ -114,7 +113,7 @@ class ConvBlock(nn.Module):
         groups=1,
         norm_layer=partial(nn.BatchNorm2d, eps=1e-6),
     ):
-        super(ConvBlock, self).__init__()
+        super().__init__()
         self.in_channels = in_channels
         expansion = 4
         c = out_channels // expansion
@@ -158,7 +157,7 @@ class ConvBlock(nn.Module):
 
 class Mean(nn.Module):
     def __init__(self, dim, keep_dim=False):
-        super(Mean, self).__init__()
+        super().__init__()
         self.dim = dim
         self.keep_dim = keep_dim
 
@@ -168,7 +167,7 @@ class Mean(nn.Module):
 
 class LVCBlock(nn.Module):
     def __init__(self, in_channels, out_channels, num_codes, channel_ratio=0.25, base_channel=64):
-        super(LVCBlock, self).__init__()
+        super().__init__()
         self.out_channels = out_channels
         self.num_codes = num_codes
         num_codes = 64
@@ -195,9 +194,7 @@ class LVCBlock(nn.Module):
 
 
 class GroupNorm(nn.GroupNorm):
-    """
-    Group Normalization with 1 group.
-    Input: tensor in shape [B, C, H, W]
+    """Group Normalization with 1 group. Input: tensor in shape [B, C, H, W].
     """
 
     def __init__(self, num_channels, **kwargs):
@@ -205,7 +202,7 @@ class GroupNorm(nn.GroupNorm):
 
 
 class DWConv_LMLP(nn.Module):
-    """Depthwise Conv + Conv"""
+    """Depthwise Conv + Conv."""
 
     def __init__(self, in_channels, out_channels, ksize, stride=1, act="silu"):
         super().__init__()
@@ -296,7 +293,7 @@ class EVCBlock(nn.Module):
         self.cnv1 = nn.Conv2d(ch, out_channels, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
-        x1 = self.maxpool((self.conv1(x)))
+        x1 = self.maxpool(self.conv1(x))
         # LVCBlock
         x_lvc = self.lvc(x1)
         # LightMLPBlock

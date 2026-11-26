@@ -1,13 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/NFNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Any
-from typing import List
-from typing import Optional
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from __future__ import annotations
 
+from typing import Any
+
+import torch
+import torch.nn.functional as F
+from torch import nn
 
 nfnet_params = {
     "F0": {
@@ -87,7 +87,7 @@ class VPReLU(nn.Module):
     inplace: bool
 
     def __init__(self, inplace: bool = False):
-        super(VPReLU, self).__init__()
+        super().__init__()
         self.inplace = inplace
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
@@ -114,9 +114,7 @@ class WSConv2D(nn.Conv2d):
         bias: bool = True,
         padding_mode: str = "zeros",
     ):
-        super(WSConv2D, self).__init__(
-            in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode
-        )
+        super().__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode)
 
         nn.init.xavier_normal_(self.weight)
         self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1))
@@ -148,7 +146,7 @@ class WSConv2D(nn.Conv2d):
 
 class SqueezeExcite(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, se_ratio: float = 0.5, activation: str = "gelu"):
-        super(SqueezeExcite, self).__init__()
+        super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -172,7 +170,7 @@ class SqueezeExcite(nn.Module):
 
 class StochDepth(nn.Module):
     def __init__(self, stochdepth_rate: float):
-        super(StochDepth, self).__init__()
+        super().__init__()
         self.drop_rate = stochdepth_rate
 
     def forward(self, x):
@@ -190,7 +188,7 @@ class StochDepth(nn.Module):
 
 class Stem(nn.Module):
     def __init__(self, activation: str = "gelu"):
-        super(Stem, self).__init__()
+        super().__init__()
 
         self.activation = activations_dict[activation]
         # Corrected padding for stride=2 convs to potentially match TF 'SAME' padding behavior
@@ -219,10 +217,10 @@ class NFBlock(nn.Module):
         beta: float = 1.0,
         alpha: float = 0.2,
         group_size: int = 1,
-        stochdepth_rate: Optional[float] = None,
+        stochdepth_rate: float | None = None,
         activation: str = "gelu",
     ):  # Added Optional type hint
-        super(NFBlock, self).__init__()
+        super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -307,22 +305,20 @@ class NFBlock(nn.Module):
 
 
 class NFNet(nn.Module):
-    """
-    NFNet backbone feature extractor.
-    Follows the structure modification inspired by MobileNetV4 implementation.
+    """NFNet backbone feature extractor. Follows the structure modification inspired by MobileNetV4 implementation.
     Outputs a list of feature maps from selected stages.
     """
 
     def __init__(
         self,
         variant: str = "F0",
-        stochdepth_rate: Optional[float] = None,
+        stochdepth_rate: float | None = None,
         alpha: float = 0.2,
         se_ratio: float = 0.5,
         activation: str = "gelu",
         in_channels: int = 3,
     ):  # Added in_channels parameter
-        super(NFNet, self).__init__()
+        super().__init__()
 
         if not variant in nfnet_params:
             raise RuntimeError(f"Variant {variant} does not exist and could not be loaded.")
@@ -445,7 +441,7 @@ class NFNet(nn.Module):
                 stem_out_channels = 128
                 self.width_list = [stem_out_channels] + block_params["width"]
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass returning intermediate features."""
         x_stem = self.stem(x)
         x1 = self.stage1(x_stem)

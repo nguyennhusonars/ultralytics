@@ -1,22 +1,22 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/NextViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
 from functools import partial
-from torch import nn
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import numpy as np
 import torch
-import torch.utils.checkpoint as checkpoint
+from einops import rearrange
+from torch import nn
+from torch.utils import checkpoint
 
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 NORM_EPS = 1e-5
 
 
 class ConvBNReLU(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, groups=1):
-        super(ConvBNReLU, self).__init__()
+        super().__init__()
         self.conv = nn.Conv2d(
             in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=1, groups=groups, bias=False
         )
@@ -42,7 +42,7 @@ def _make_divisible(v, divisor, min_value=None):
 
 class PatchEmbed(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
-        super(PatchEmbed, self).__init__()
+        super().__init__()
         norm_layer = partial(nn.BatchNorm2d, eps=NORM_EPS)
         if stride == 2:
             self.avgpool = nn.AvgPool2d((2, 2), stride=2, ceil_mode=True, count_include_pad=False)
@@ -62,12 +62,10 @@ class PatchEmbed(nn.Module):
 
 
 class MHCA(nn.Module):
-    """
-    Multi-Head Convolutional Attention
-    """
+    """Multi-Head Convolutional Attention."""
 
     def __init__(self, out_channels, head_dim):
-        super(MHCA, self).__init__()
+        super().__init__()
         norm_layer = partial(nn.BatchNorm2d, eps=NORM_EPS)
         self.group_conv3x3 = nn.Conv2d(
             out_channels, out_channels, kernel_size=3, stride=1, padding=1, groups=out_channels // head_dim, bias=False
@@ -104,12 +102,10 @@ class Mlp(nn.Module):
 
 
 class NCB(nn.Module):
-    """
-    Next Convolution Block
-    """
+    """Next Convolution Block."""
 
     def __init__(self, in_channels, out_channels, stride=1, path_dropout=0, drop=0, head_dim=32, mlp_ratio=3):
-        super(NCB, self).__init__()
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         norm_layer = partial(nn.BatchNorm2d, eps=NORM_EPS)
@@ -136,9 +132,7 @@ class NCB(nn.Module):
 
 
 class E_MHSA(nn.Module):
-    """
-    Efficient Multi-Head Self Attention
-    """
+    """Efficient Multi-Head Self Attention."""
 
     def __init__(
         self, dim, out_dim=None, head_dim=32, qkv_bias=True, qk_scale=None, attn_drop=0, proj_drop=0.0, sr_ratio=1
@@ -194,9 +188,7 @@ class E_MHSA(nn.Module):
 
 
 class NTB(nn.Module):
-    """
-    Next Transformer Block
-    """
+    """Next Transformer Block."""
 
     def __init__(
         self,
@@ -211,7 +203,7 @@ class NTB(nn.Module):
         attn_drop=0,
         drop=0,
     ):
-        super(NTB, self).__init__()
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.mix_block_ratio = mix_block_ratio
@@ -239,7 +231,7 @@ class NTB(nn.Module):
 
     def forward(self, x):
         x = self.patch_embed(x)
-        B, C, H, W = x.shape
+        _B, _C, H, _W = x.shape
         if not torch.onnx.is_in_onnx_export() and not self.is_bn_merged:
             out = self.norm1(x)
         else:
@@ -269,13 +261,17 @@ class NextViT(nn.Module):
         attn_drop=0,
         drop=0,
         num_classes=1000,
-        strides=[1, 2, 2, 2],
-        sr_ratios=[8, 4, 2, 1],
+        strides=None,
+        sr_ratios=None,
         head_dim=32,
         mix_block_ratio=0.75,
         use_checkpoint=False,
     ):
-        super(NextViT, self).__init__()
+        if sr_ratios is None:
+            sr_ratios = [8, 4, 2, 1]
+        if strides is None:
+            strides = [1, 2, 2, 2]
+        super().__init__()
         self.use_checkpoint = use_checkpoint
 
         self.stage_out_channels = [
@@ -351,11 +347,7 @@ class NextViT(nn.Module):
             if isinstance(m, (nn.BatchNorm2d, nn.GroupNorm, nn.LayerNorm, nn.BatchNorm1d)):
                 nn.init.constant_(m.weight, 1.0)
                 nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                trunc_normal_(m.weight, std=0.02)
-                if hasattr(m, "bias") and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Conv2d):
+            elif isinstance(m, (nn.Linear, nn.Conv2d)):
                 trunc_normal_(m.weight, std=0.02)
                 if hasattr(m, "bias") and m.bias is not None:
                     nn.init.constant_(m.bias, 0)
@@ -377,7 +369,7 @@ class NextViT(nn.Module):
 def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)

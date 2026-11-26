@@ -1,9 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/repvit.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import SqueezeExcite
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import SqueezeExcite
 
 
 class Conv2d_BN(torch.nn.Sequential):
@@ -106,7 +107,7 @@ class RepVGGDW(torch.nn.Module):
 
 class RepViTBlock(nn.Module):
     def __init__(self, in1, inp, hidden_dim, oup, kernel_size=3, stride=2, use_se=0, use_hs=0):
-        super(RepViTBlock, self).__init__()
+        super().__init__()
         assert stride in [1, 2]
 
         self.identity = stride == 1 and inp == oup

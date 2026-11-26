@@ -1,10 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/EfficientViT_microsoft.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import SqueezeExcite
 import itertools
+
 import numpy as np
 import torch
+
+from ultralytics.nn.zoo._timm import SqueezeExcite
 
 
 class Conv2d_BN(torch.nn.Sequential):
@@ -90,6 +92,7 @@ class FFN(torch.nn.Module):
 
 class CascadedGroupAttention(torch.nn.Module):
     r"""Cascaded Group Attention.
+
     Args:
         dim (int): Number of input channels.
         key_dim (int): The dimension for query and key.
@@ -106,8 +109,10 @@ class CascadedGroupAttention(torch.nn.Module):
         num_heads=8,
         attn_ratio=4,
         resolution=14,
-        kernels=[5, 5, 5, 5],
+        kernels=None,
     ):
+        if kernels is None:
+            kernels = [5, 5, 5, 5]
         super().__init__()
         self.num_heads = num_heads
         self.scale = key_dim**-0.5
@@ -158,7 +163,7 @@ class CascadedGroupAttention(torch.nn.Module):
             self.ab = self.attention_biases[:, self.attention_bias_idxs]
 
     def forward(self, x):  # x (B,C,H,W)
-        B, C, H, W = x.shape
+        B, _C, H, W = x.shape
         trainingab = self.attention_biases[:, self.attention_bias_idxs]
         feats_in = x.chunk(len(self.qkvs), dim=1)
         feats_out = []
@@ -180,6 +185,7 @@ class CascadedGroupAttention(torch.nn.Module):
 
 class LocalWindowAttention(torch.nn.Module):
     r"""Local Window Attention.
+
     Args:
         dim (int): Number of input channels.
         key_dim (int): The dimension for query and key.
@@ -198,8 +204,10 @@ class LocalWindowAttention(torch.nn.Module):
         attn_ratio=4,
         resolution=14,
         window_resolution=7,
-        kernels=[5, 5, 5, 5],
+        kernels=None,
     ):
+        if kernels is None:
+            kernels = [5, 5, 5, 5]
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -259,6 +267,7 @@ class LocalWindowAttention(torch.nn.Module):
 
 class EfficientViTBlock(torch.nn.Module):
     """A basic EfficientViT building block.
+
     Args:
         type (str): Type for token mixer. Default: 's' for self-attention.
         ed (int): Number of input channels.
@@ -279,8 +288,10 @@ class EfficientViTBlock(torch.nn.Module):
         ar=4,
         resolution=14,
         window_resolution=7,
-        kernels=[5, 5, 5, 5],
+        kernels=None,
     ):
+        if kernels is None:
+            kernels = [5, 5, 5, 5]
         super().__init__()
 
         self.dw0 = Residual(Conv2d_BN(ed, ed, 3, 1, 1, groups=ed, bn_weight_init=0.0, resolution=resolution))
@@ -313,17 +324,33 @@ class EfficientViT(torch.nn.Module):
         patch_size=16,
         frozen_stages=0,
         in_chans=3,
-        stages=["s", "s", "s"],
-        embed_dim=[64, 128, 192],
-        key_dim=[16, 16, 16],
-        depth=[1, 2, 3],
-        num_heads=[4, 4, 4],
-        window_size=[7, 7, 7],
-        kernels=[5, 5, 5, 5],
-        down_ops=[["subsample", 2], ["subsample", 2], [""]],
+        stages=None,
+        embed_dim=None,
+        key_dim=None,
+        depth=None,
+        num_heads=None,
+        window_size=None,
+        kernels=None,
+        down_ops=None,
         pretrained=None,
         distillation=False,
     ):
+        if down_ops is None:
+            down_ops = [["subsample", 2], ["subsample", 2], [""]]
+        if kernels is None:
+            kernels = [5, 5, 5, 5]
+        if window_size is None:
+            window_size = [7, 7, 7]
+        if num_heads is None:
+            num_heads = [4, 4, 4]
+        if depth is None:
+            depth = [1, 2, 3]
+        if key_dim is None:
+            key_dim = [16, 16, 16]
+        if embed_dim is None:
+            embed_dim = [64, 128, 192]
+        if stages is None:
+            stages = ["s", "s", "s"]
         super().__init__()
 
         resolution = img_size
@@ -421,7 +448,7 @@ def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
         # k = k[9:]
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)

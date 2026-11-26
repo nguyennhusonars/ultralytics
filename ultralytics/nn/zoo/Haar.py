@@ -1,14 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/Haar.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from pytorch_wavelets import DWTForward
 import torch
-import torch.nn as nn
+from pytorch_wavelets import DWTForward
+from torch import nn
 
 
 class Down_wt(nn.Module):
     def __init__(self, in_ch, out_ch):
-        super(Down_wt, self).__init__()
+        super().__init__()
         self.wt = DWTForward(J=1, mode="zero", wave="haar")
         self.conv_bn_relu = nn.Sequential(
             nn.Conv2d(in_ch * 4, out_ch, kernel_size=1, stride=1),

@@ -1,14 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MALA.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from typing import List
-from typing import Tuple
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class SwishImplementation(torch.autograd.Function):
@@ -43,11 +43,7 @@ def theta_shift(x, sin, cos):
 
 class RoPE(nn.Module):
     def __init__(self, embed_dim, num_heads):
-        """
-        recurrent_chunk_size: (clh clw)
-        num_chunks: (nch ncw)
-        clh * clw == cl
-        nch * ncw == nc
+        """recurrent_chunk_size: (clh clw) num_chunks: (nch ncw) clh * clw == cl nch * ncw == nc.
 
         default: clh==clw, clh != clw is not implemented
         """
@@ -56,11 +52,8 @@ class RoPE(nn.Module):
         angle = angle.unsqueeze(-1).repeat(1, 2).flatten()
         self.register_buffer("angle", angle)
 
-    def forward(self, slen: Tuple[int]):
-        """
-        slen: (h, w)
-        h * w == l
-        recurrent is not implemented
+    def forward(self, slen: tuple[int]):
+        """slen: (h, w) h * w == l recurrent is not implemented.
         """
         index_h = torch.arange(slen[0]).to(self.angle)
         index_w = torch.arange(slen[1]).to(self.angle)
@@ -86,9 +79,7 @@ class LayerNorm2d(nn.Module):
         self.norm = nn.LayerNorm(dim, eps=eps)
 
     def forward(self, x: torch.Tensor):
-        """
-        x: (b c h w)
-        """
+        """X: (b c h w)."""
         x = x.permute(0, 2, 3, 1).contiguous()  # (b h w c)
         x = self.norm(x)  # (b h w c)
         x = x.permute(0, 3, 1, 2).contiguous()
@@ -108,12 +99,9 @@ class AddLinearAttention(nn.Module):
         self.elu = nn.ELU()
 
     def forward(self, x: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor):
+        """x: (b c h w) sin: ((h w) d1) cos: ((h w) d1).
         """
-        x: (b c h w)
-        sin: ((h w) d1)
-        cos: ((h w) d1)
-        """
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         qkvo = self.qkvo(x)  # (b 3*c h w)
         qkv = qkvo[:, : 3 * self.dim, :, :]
         o = qkvo[:, 3 * self.dim :, :, :]
@@ -150,12 +138,9 @@ class VanillaSelfAttention(nn.Module):
         self.proj = nn.Conv2d(dim, dim, 1)
 
     def forward(self, x: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor):
+        """x: (b c h w) sin: ((h w) d1) cos: ((h w) d1).
         """
-        x: (b c h w)
-        sin: ((h w) d1)
-        cos: ((h w) d1)
-        """
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         qkvo = self.qkvo(x)  # (b 3*c h w)
         qkv = qkvo[:, : 3 * self.dim, :, :]
         o = qkvo[:, 3 * self.dim :, :, :]
@@ -190,9 +175,7 @@ class FeedForwardNetwork(nn.Module):
         self.dwconv.reset_parameters()
 
     def forward(self, x: torch.Tensor):
-        """
-        x: (b h w c)
-        """
+        """X: (b h w c)."""
         x = self.fc1(x)
         x = self.activation_fn(x)
         x = self.activation_dropout_module(x)
@@ -242,7 +225,7 @@ class PatchMerging(nn.Module):
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
         dim (int): Number of input channels.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
     """
 
     def __init__(self, dim, out_dim):
@@ -252,9 +235,7 @@ class PatchMerging(nn.Module):
         self.norm = nn.BatchNorm2d(out_dim)
 
     def forward(self, x):
-        """
-        x: B C H W
-        """
+        """X: B C H W."""
         x = self.reduction(x)  # (b oc oh ow)
         x = self.norm(x)
         return x
@@ -314,7 +295,7 @@ class BasicLayer(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    r"""Image to Patch Embedding"""
+    r"""Image to Patch Embedding."""
 
     def __init__(self, in_chans=3, embed_dim=96):
         super().__init__()
@@ -335,7 +316,7 @@ class PatchEmbed(nn.Module):
         )
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
         x = self.proj(x)  # (b c h w)
         return x
 
@@ -346,17 +327,31 @@ class MALA(nn.Module):
         in_chans=3,
         num_classes=1000,
         img_size=224,
-        flagss=[["l"] * 10, ["l"] * 10, ["v", "v"] * 20, ["v"] * 10],
-        embed_dims=[96, 192, 384, 768],
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
-        mlp_ratios=[3, 3, 3, 3],
+        flagss=None,
+        embed_dims=None,
+        depths=None,
+        num_heads=None,
+        mlp_ratios=None,
         drop_path_rate=0.1,
         projection=1024,
-        layerscales=[False, False, False, False],
-        layer_init_values=[1e-6, 1e-6, 1e-6, 1e-6],
+        layerscales=None,
+        layer_init_values=None,
         **kwargs,
     ):
+        if layer_init_values is None:
+            layer_init_values = [1e-06, 1e-06, 1e-06, 1e-06]
+        if layerscales is None:
+            layerscales = [False, False, False, False]
+        if mlp_ratios is None:
+            mlp_ratios = [3, 3, 3, 3]
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        if embed_dims is None:
+            embed_dims = [96, 192, 384, 768]
+        if flagss is None:
+            flagss = [["l"] * 10, ["l"] * 10, ["v", "v"] * 20, ["v"] * 10]
         super().__init__()
 
         self.num_classes = num_classes
@@ -437,10 +432,9 @@ class MALA(nn.Module):
     def no_weight_decay_keywords(self):
         return {"relative_position_bias_table"}
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Forward pass modified to return a list of feature maps from each stage.
-        This is required for use as a backbone in detection/segmentation models.
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Forward pass modified to return a list of feature maps from each stage. This is required for use as a
+        backbone in detection/segmentation models.
         """
         # MODIFIED: The logic is changed to separate feature extraction and downsampling.
         feature_outputs = []

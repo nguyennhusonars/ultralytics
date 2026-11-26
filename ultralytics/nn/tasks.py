@@ -14,8 +14,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn import zoo
+from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
     AIFI,
     C1,
@@ -1420,9 +1420,9 @@ class YOLOEModel(DetectionModel):
             names (list[str]): List of class names.
             embeddings (torch.Tensor): Embeddings tensor.
         """
-        assert not hasattr(
-            self.model[-1], "lrpc"
-        ), "Prompt-free model does not support setting classes. Please try with Text/Visual prompt models."
+        assert not hasattr(self.model[-1], "lrpc"), (
+            "Prompt-free model does not support setting classes. Please try with Text/Visual prompt models."
+        )
         assert embeddings.ndim == 3
         names = check_class_names(names)  # validate before any state is written
         if self.model[-1].is_fused:  # validators drop "/" synonyms

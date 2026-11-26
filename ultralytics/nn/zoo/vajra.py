@@ -3,18 +3,14 @@
 
 from __future__ import annotations
 
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import RepBottleneck
-from ultralytics.nn.modules.block import SPPELAN
-from ultralytics.nn.modules.block import SPPF
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.conv import DWConv
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.modules.block import SPPELAN, SPPF, Bottleneck, RepBottleneck
+from ultralytics.nn.modules.conv import Conv, DWConv
 from ultralytics.nn.zoo.block import RepNCSP
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 
 try:  # optional FlashAttention (Ampere+ GPUs), as in the fork
     from flash_attn.flash_attn_interface import flash_attn_func
@@ -51,7 +47,7 @@ class BottleneckV3(nn.Module):
         """Apply bottleneck with optional shortcut connection."""
         cv1 = self.cv1(x)
         dw_cv1 = self.dw_cv(cv1)
-        cv2 = self.cv2(dw_cv1)
+        self.cv2(dw_cv1)
         return x + self.cv2(self.dw_cv(cv1)) if self.add else self.cv2(self.dw_cv(cv1))
 
 
@@ -523,7 +519,7 @@ class MerudandaDW(nn.Module):
 
 class Squeeze_Excite_Layer(nn.Module):
     def __init__(self, channels, reduction=4):
-        super(Squeeze_Excite_Layer, self).__init__()
+        super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Conv2d(channels, channels // reduction, kernel_size=1, bias=False),

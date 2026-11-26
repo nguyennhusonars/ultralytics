@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/CSPHet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -42,9 +42,9 @@ class HetConv(nn.Module):
         :param input_channels: the number of input channels
         :param output_channels: the number of output channels
         :param stride: convolution stride
-        :param p: the value of P used in HetConv
+        :param p: the value of P used in HetConv.
         """
-        super(HetConv, self).__init__()
+        super().__init__()
         self.p = p
         self.input_channels = input_channels
         self.output_channels = output_channels
@@ -64,9 +64,9 @@ class HetConv(nn.Module):
         """
         Compute the indices of input channels fed to 1x1 convolutional kernels in the i-th branch of filters (i=0, 1, 2,…, P-1). The i-th branch of filters consists of the {i, i+P, i+2P,…, i+N-P}-th filters.
         :param i: the i-th branch of filters in HetConv
-        :return: return the required indices of input channels
+        :return: return the required indices of input channels.
         """
-        index = [j for j in range(0, self.input_channels)]
+        index = [j for j in range(self.input_channels)]
         # Remove the indices of input channels fed to 3x3 convolutional kernels in the i-th branch of filters.
         while i < self.input_channels:
             index.remove(i)
@@ -78,7 +78,7 @@ class HetConv(nn.Module):
         Build N/P filters in HetConv.
         :param stride: convolution stride
         :param p: the value of P used in HetConv
-        :return: return N/P HetConv filters
+        :return: return N/P HetConv filters.
         """
         temp_filters = nn.ModuleList()
         # nn.Conv2d arguments: nn.Conv2d(input_channels, output_channels, kernel_size, stride, padding)
@@ -94,11 +94,11 @@ class HetConv(nn.Module):
         """
         Define how HetConv processes the input images or input feature maps.
         :param input_data: input images or input feature maps
-        :return: return output feature maps
+        :return: return output feature maps.
         """
         output_feature_maps = []
         # Loop P times to get output feature maps. The number of output feature maps = the batch size.
-        for i in range(0, self.p):
+        for i in range(self.p):
             # M/P HetConv filter kernels perform the 3x3 convolution and output to N/P output channels.
             output_feature_3x3 = self.filters[i][0](input_data[:, i :: self.p, :, :])
             # (M-M/P) HetConv filter kernels perform the 1x1 convolution and output to N/P output channels.

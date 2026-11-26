@@ -1,16 +1,19 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/UniNeXt.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import (
+    IMAGENET_DEFAULT_MEAN,
+    IMAGENET_DEFAULT_STD,
+    DropPath,
+    register_model,
+    trunc_normal_,
+)
 
 
 def _cfg(url="", **kwargs):
@@ -36,14 +39,10 @@ default_cfgs = {
 
 
 def local_group(x, H, W, ws, ds):
-    """
-    ws: window size
-    ds: dilated size
-    x: BNC
-    return: BG ds*ds ws*ws C
+    """ws: window size ds: dilated size x: BNC return: BG ds*ds ws*ws C.
     """
     B, _, C = x.shape
-    pad_right, pad_bottom, pad_opt, pad_opt_d = 0, 0, False, False
+    pad_right, pad_bottom, pad_opt, _pad_opt_d = 0, 0, False, False
 
     if H % ws != 0 or W % ws != 0:
         pad_opt = True
@@ -63,9 +62,7 @@ def local_group(x, H, W, ws, ds):
 
 
 def img2group(x, H, W, ws, ds, num_head):
-    """
-    x: B, H*W, C
-    return : (B G) head  N C
+    """x: B, H*W, C return : (B G) head N C.
     """
     x, H, W, pad_right, pad_bottom, pad_opt = local_group(x, H, W, ws, ds)
     B, N, C = x.shape
@@ -77,7 +74,7 @@ def img2group(x, H, W, ws, ds, num_head):
 def group2image(x, H, W, pad_right, pad_bottom, pad_opt, ws):
     # Input x: (BG G) Head n C
     # Output x: B N C
-    BG, Head, n, C = x.shape
+    BG, Head, _n, C = x.shape
     Gh, Gw = H // ws, W // ws
     Gn = Gh * Gw
     nb1 = BG // Gn
@@ -109,7 +106,7 @@ class Mlp(nn.Module):
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
-        B, N, C = x.shape
+        B, _N, C = x.shape
         x1 = x.permute(0, 2, 1).contiguous().view(B, C, H, W)
         x1 = self.dwconv(x1)
         x1 = x1.view(B, C, -1).permute(0, 2, 1).contiguous()
@@ -244,10 +241,10 @@ class DilatedFormer_Windows(nn.Module):
         in_chans=3,
         num_classes=1000,
         embed_dim=96,
-        depth=[2, 2, 6, 2],
-        ws=[7, 7, 7, 7],
-        wd=[7, 7, 7, 7],
-        num_heads=[3, 6, 12, 24],
+        depth=None,
+        ws=None,
+        wd=None,
+        num_heads=None,
         mlp_ratio=4.0,
         qkv_bias=True,
         qk_scale=None,
@@ -257,6 +254,14 @@ class DilatedFormer_Windows(nn.Module):
         norm_layer=nn.LayerNorm,
         use_chk=False,
     ):
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if wd is None:
+            wd = [7, 7, 7, 7]
+        if ws is None:
+            ws = [7, 7, 7, 7]
+        if depth is None:
+            depth = [2, 2, 6, 2]
         super().__init__()
         self.use_chk = use_chk
         self.num_classes = num_classes
@@ -394,8 +399,8 @@ class DilatedFormer_Windows(nn.Module):
 
         # Main stages
         for i in range(self.num_stages):
-            stage = getattr(self, f"stage{i+1}")
-            cpe_layers = getattr(self, f"cpe{i+1}")
+            stage = getattr(self, f"stage{i + 1}")
+            cpe_layers = getattr(self, f"cpe{i + 1}")
             H, W = spatial_dims[i]
             C = x.shape[2]
 
@@ -415,7 +420,7 @@ class DilatedFormer_Windows(nn.Module):
             feature_outputs.append(x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous())
 
             if i < self.num_stages - 1:
-                merge = getattr(self, f"merge{i+1}")
+                merge = getattr(self, f"merge{i + 1}")
                 x = merge(x)
 
         return feature_outputs

@@ -1,12 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FasterBlock.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import C3k
+import torch
+from torch import nn
+
+from ultralytics.nn.modules.block import C2f, C3k
 from ultralytics.nn.zoo._timm import DropPath
 from ultralytics.nn.zoo.block import EMA
-import torch
-import torch.nn as nn
 
 
 class Partial_conv3(nn.Module):
@@ -140,7 +140,7 @@ class FasterBlock(nn.Module):
             self.firstConv = Conv(inc, dim, 1)
 
         if layer_scale_init_value > 0:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             self.forward = self.forward_layer_scale
         else:
             self.forward = self.forward
@@ -181,7 +181,7 @@ class Faster_Block_CGLU(nn.Module):
             self.adjust_channel = Conv(inc, dim, 1)
 
         if layer_scale_init_value > 0:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             self.forward = self.forward_layer_scale
         else:
             self.forward = self.forward
@@ -225,7 +225,7 @@ class FasterBlock_EMA(nn.Module):
             self.adjust_channel = Conv(inc, dim, 1)
 
         if layer_scale_init_value > 0:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             self.forward = self.forward_layer_scale
         else:
             self.forward = self.forward

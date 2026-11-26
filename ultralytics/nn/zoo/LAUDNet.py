@@ -3,14 +3,10 @@
 
 from __future__ import annotations
 
-from torch.hub import load_state_dict_from_url
-from typing import List
-from typing import Optional
-from typing import Tuple
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-
+from torch import nn
+from torch.hub import load_state_dict_from_url
 
 model_urls = {
     "resnet50": "https://download.pytorch.org/models/resnet50-19c8e357.pth",
@@ -19,7 +15,7 @@ model_urls = {
 
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
-    """3x3 convolution with padding"""
+    """3x3 convolution with padding."""
     return nn.Conv2d(
         in_planes,
         out_planes,
@@ -33,12 +29,12 @@ def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
 
 
 def conv1x1(in_planes, out_planes, stride=1, bias=False):
-    """1x1 convolution"""
+    """1x1 convolution."""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias)
 
 
 def apply_channel_mask(x, mask):
-    b, c, h, w = x.shape
+    b, c, _h, _w = x.shape
     if mask is None:  # Allow None mask for non-dynamic paths
         return x
     _, g = mask.shape
@@ -52,7 +48,7 @@ def apply_channel_mask(x, mask):
 def apply_spatial_mask(x, mask):
     if mask is None:  # Allow None mask
         return x
-    b, c, h, w = x.shape
+    b, c, _h, _w = x.shape
     _, g, hw_mask, _ = mask.shape
     if (g > 1) and (g != c):
         mask = mask.unsqueeze(1).repeat(1, c // g, 1, 1, 1).transpose(1, 2).reshape(b, c, hw_mask, hw_mask)
@@ -61,7 +57,7 @@ def apply_spatial_mask(x, mask):
 
 class Masker_spatial(nn.Module):
     def __init__(self, in_channels, mask_channel_group, mask_size):
-        super(Masker_spatial, self).__init__()
+        super().__init__()
         self.mask_channel_group = mask_channel_group
         self.mask_size = mask_size
         self.conv = conv1x1(in_channels, mask_channel_group * 2, bias=True)
@@ -74,7 +70,7 @@ class Masker_spatial(nn.Module):
 
     def forward(self, x, temperature):
         if self.mask_size == 0:  # Handle case where masking is effectively disabled by mask_size
-            b, c, h, w = x.shape
+            b, _c, _h, _w = x.shape
             # Return a dummy mask that doesn't alter the input, and zero sparsity/flops
             dummy_mask = torch.ones(b, self.mask_channel_group, 1, 1, device=x.device)
             return dummy_mask, torch.tensor(1.0, device=x.device), 0.0
@@ -98,7 +94,7 @@ class Masker_spatial(nn.Module):
 
 class ExpandMask(nn.Module):
     def __init__(self, stride, padding=1, mask_channel_group=1):
-        super(ExpandMask, self).__init__()
+        super().__init__()
         self.stride = stride
         self.padding = padding
         self.mask_channel_group = mask_channel_group
@@ -129,7 +125,7 @@ class ExpandMask(nn.Module):
 
 class Masker_channel_MLP(nn.Module):
     def __init__(self, in_channels, channel_dyn_group, layers=2, reduction=16):
-        super(Masker_channel_MLP, self).__init__()
+        super().__init__()
         assert layers in [1, 2]
 
         self.channel_dyn_group = channel_dyn_group
@@ -159,7 +155,7 @@ class Masker_channel_MLP(nn.Module):
         if self.conv is None or self.channel_dyn_group == 0:  # No channel masking
             return None, torch.tensor(1.0, device=x.device), 0.0
 
-        b, c, h, w = x.shape
+        b, c, _h, _w = x.shape
         flops = c  # For the GAP operation (c * h * w -> c)
         mask_input = F.adaptive_avg_pool2d(x, (1, 1)).view(b, c)
 
@@ -180,7 +176,7 @@ class Masker_channel_MLP(nn.Module):
 
 class Masker_channel_conv_linear(nn.Module):
     def __init__(self, in_channels, channel_dyn_group, reduction=16):
-        super(Masker_channel_conv_linear, self).__init__()
+        super().__init__()
         self.channel_dyn_group = channel_dyn_group
 
         if channel_dyn_group == 0:  # Handle case for no channel masking
@@ -209,7 +205,7 @@ class Masker_channel_conv_linear(nn.Module):
             return None, torch.tensor(1.0, device=x.device), 0.0
 
         mask_intermediate = self.conv(x)  # spatial dimensions remain
-        b, c_int, h_int, w_int = mask_intermediate.shape
+        b, c_int, _h_int, _w_int = mask_intermediate.shape
         # Flops for conv part: (in_channels * (in_channels // reduction)) * h_int * w_int (approx)
         # This is tricky to calculate precisely here without knowing input h,w to this module
         # Let's stick to the precomputed self.masker_flops for the masker's own ops.
@@ -257,7 +253,7 @@ class Bottleneck(nn.Module):
         channel_masker_layers=2,
         reduction=16,
     ):
-        super(Bottleneck, self).__init__()
+        super().__init__()
 
         assert dyn_mode in ["channel", "spatial", "both", "layer", "none"]
         assert channel_masker_type in ["conv_linear", "MLP"]
@@ -272,9 +268,9 @@ class Bottleneck(nn.Module):
         if channel_dyn_granularity == 0 or dyn_mode not in ["channel", "both"]:
             channel_dyn_group = 0
         else:
-            assert (
-                bottleneck_planes % channel_dyn_granularity == 0
-            ), f"bottleneck_planes {bottleneck_planes} not divisible by channel_dyn_granularity {channel_dyn_granularity}"
+            assert bottleneck_planes % channel_dyn_granularity == 0, (
+                f"bottleneck_planes {bottleneck_planes} not divisible by channel_dyn_granularity {channel_dyn_granularity}"
+            )
             channel_dyn_group = bottleneck_planes // channel_dyn_granularity
 
         self.conv1 = conv1x1(inplanes, bottleneck_planes)
@@ -332,23 +328,23 @@ class Bottleneck(nn.Module):
 
     def forward(
         self,
-        forward_input: Tuple[
+        forward_input: tuple[
             torch.Tensor,
-            Optional[torch.Tensor],
-            Optional[torch.Tensor],
-            Optional[torch.Tensor],
-            Optional[torch.Tensor],
-            Optional[torch.Tensor],
+            torch.Tensor | None,
+            torch.Tensor | None,
+            torch.Tensor | None,
+            torch.Tensor | None,
+            torch.Tensor | None,
             torch.Tensor,
         ],
         temperature: float = 1.0,
-    ) -> Tuple[
+    ) -> tuple[
         torch.Tensor,
-        Optional[torch.Tensor],
-        Optional[torch.Tensor],
-        Optional[torch.Tensor],
-        Optional[torch.Tensor],
-        Optional[torch.Tensor],
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
         torch.Tensor,
     ]:
         x, s_sparsity_c3_list, s_sparsity_c2_list, s_sparsity_c1_list, c_sparsity_list, flops_p_list, current_flops = (
@@ -356,8 +352,8 @@ class Bottleneck(nn.Module):
         )
         identity = x
 
-        channel_mask: Optional[torch.Tensor] = None
-        spatial_mask_conv3_raw: Optional[torch.Tensor] = None  # Raw output from Masker_spatial
+        channel_mask: torch.Tensor | None = None
+        spatial_mask_conv3_raw: torch.Tensor | None = None  # Raw output from Masker_spatial
 
         channel_sparsity = torch.tensor(1.0, device=x.device)
         spatial_sparsity_conv1 = torch.tensor(1.0, device=x.device)  # For stats
@@ -384,7 +380,7 @@ class Bottleneck(nn.Module):
 
         # This variable will hold the spatial mask interpolated to self.output_size (stage-level resolution)
         # It's used by expanders for stats and as a base for the application mask.
-        base_spatial_mask_for_stats_and_app: Optional[torch.Tensor] = None
+        base_spatial_mask_for_stats_and_app: torch.Tensor | None = None
 
         if spatial_mask_conv3_raw is not None:  # True if masker_spatial ran and produced a mask
             base_spatial_mask_for_stats_and_app = spatial_mask_conv3_raw
@@ -530,26 +526,40 @@ class ResNet(nn.Module):
     def __init__(
         self,
         block: type[Bottleneck],
-        layers: List[int],
+        layers: list[int],
         num_classes: int = 1000,
         zero_init_residual: bool = False,
         groups: int = 1,
         width_per_group: int = 64,
-        replace_stride_with_dilation: Optional[List[bool]] = None,
-        norm_layer: Optional[type[nn.Module]] = None,
+        replace_stride_with_dilation: list[bool] | None = None,
+        norm_layer: type[nn.Module] | None = None,
         width_mult: float = 1.0,
         input_size: int = 224,  # Added for width_list calculation consistency
-        spatial_mask_channel_group: List[int] = [1, 1, 1, 1],
-        mask_spatial_granularity: List[int] = [1, 1, 1, 1],
-        channel_dyn_granularity: List[int] = [1, 1, 1, 1],
-        dyn_mode: List[str] = ["both", "both", "both", "both"],  # 'none' can be used here
-        channel_masker_type: List[str] = ["MLP", "MLP", "MLP", "MLP"],  # Renamed from channel_masker
-        channel_masker_layers: List[int] = [1, 1, 1, 1],
-        reduction_ratio: List[int] = [16, 16, 16, 16],
+        spatial_mask_channel_group: list[int] | None = None,
+        mask_spatial_granularity: list[int] | None = None,
+        channel_dyn_granularity: list[int] | None = None,
+        dyn_mode: list[str] | None = None,  # 'none' can be used here
+        channel_masker_type: list[str] | None = None,  # Renamed from channel_masker
+        channel_masker_layers: list[int] | None = None,
+        reduction_ratio: list[int] | None = None,
         lr_mult: float = 1.0,
         **kwargs,
     ):  # Absorb potential extra kwargs
-        super(ResNet, self).__init__()
+        if reduction_ratio is None:
+            reduction_ratio = [16, 16, 16, 16]
+        if channel_masker_layers is None:
+            channel_masker_layers = [1, 1, 1, 1]
+        if channel_masker_type is None:
+            channel_masker_type = ["MLP", "MLP", "MLP", "MLP"]
+        if dyn_mode is None:
+            dyn_mode = ["both", "both", "both", "both"]
+        if channel_dyn_granularity is None:
+            channel_dyn_granularity = [1, 1, 1, 1]
+        if mask_spatial_granularity is None:
+            mask_spatial_granularity = [1, 1, 1, 1]
+        if spatial_mask_channel_group is None:
+            spatial_mask_channel_group = [1, 1, 1, 1]
+        super().__init__()
 
         self.input_size = input_size  # Store for dummy input
         self.dyn_mode_config = dyn_mode  # Store for reference
@@ -668,12 +678,11 @@ class ResNet(nn.Module):
 
         if zero_init_residual:
             for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    if m.bn3.weight is not None:
-                        nn.init.constant_(m.bn3.weight, 0)
+                if isinstance(m, Bottleneck) and m.bn3.weight is not None:
+                    nn.init.constant_(m.bn3.weight, 0)
 
         # --- Calculate width_list (similar to MSPANet) ---
-        self.width_list: List[int] = []
+        self.width_list: list[int] = []
         try:
             original_mode = self.training
             self.eval()
@@ -765,18 +774,18 @@ class ResNet(nn.Module):
 
     def _forward_stages_dynamic(
         self, x: torch.Tensor, temperature: float = 1.0
-    ) -> Tuple[
+    ) -> tuple[
         torch.Tensor,
-        List[Optional[torch.Tensor]],
-        List[Optional[torch.Tensor]],
-        List[Optional[torch.Tensor]],
-        List[Optional[torch.Tensor]],
-        Optional[torch.Tensor],
+        list[torch.Tensor | None],
+        list[torch.Tensor | None],
+        list[torch.Tensor | None],
+        list[torch.Tensor | None],
+        torch.Tensor | None,
         torch.Tensor,
-        List[torch.Tensor],
+        list[torch.Tensor],
     ]:
-        """
-        Internal forward pass that processes all stages and returns detailed dynamic info + feature list.
+        """Internal forward pass that processes all stages and returns detailed dynamic info + feature list.
+
         Returns:
             - final_tensor_output (after layer4)
             - List of stage-wise spatial_sparsity_conv3 tensors
@@ -785,7 +794,7 @@ class ResNet(nn.Module):
             - List of stage-wise channel_sparsity tensors
             - Concatenated flops_perc_list from all blocks
             - Total accumulated sparse flops
-            - List of feature maps [x_s1, x_s2, x_s3, x_s4]
+            - List of feature maps [x_s1, x_s2, x_s3, x_s4].
         """
         # --- Initial operations + FLOPs for them ---
         c_in = x.shape[1]
@@ -807,15 +816,15 @@ class ResNet(nn.Module):
 
         # --- Initialize accumulators for sparsity and flops percentage ---
         # These will store lists of tensors, one tensor per stage, each tensor containing per-block sparsities
-        s_sparsity_c3_stages: List[Optional[torch.Tensor]] = []
-        s_sparsity_c2_stages: List[Optional[torch.Tensor]] = []
-        s_sparsity_c1_stages: List[Optional[torch.Tensor]] = []
-        c_sparsity_stages: List[Optional[torch.Tensor]] = []
+        s_sparsity_c3_stages: list[torch.Tensor | None] = []
+        s_sparsity_c2_stages: list[torch.Tensor | None] = []
+        s_sparsity_c1_stages: list[torch.Tensor | None] = []
+        c_sparsity_stages: list[torch.Tensor | None] = []
 
         # This will be a single tensor concatenating all per-block flop percentages
-        all_blocks_flops_perc_list: Optional[torch.Tensor] = None
+        all_blocks_flops_perc_list: torch.Tensor | None = None
 
-        intermediate_features: List[torch.Tensor] = []
+        intermediate_features: list[torch.Tensor] = []
 
         # --- Stage 1 ---
         # For each stage, the per-block sparsity lists start as None
@@ -885,32 +894,30 @@ class ResNet(nn.Module):
             intermediate_features,
         )
 
-    def _forward_extract(self, x: torch.Tensor, temperature: float = 1.0) -> List[torch.Tensor]:
+    def _forward_extract(self, x: torch.Tensor, temperature: float = 1.0) -> list[torch.Tensor]:
         """Feature extraction forward, returns list of features from each stage."""
         _, _, _, _, _, _, _, features = self._forward_stages_dynamic(x, temperature)
         return features
 
-    def forward(self, x: torch.Tensor, temperature: float = 1.0) -> List[torch.Tensor]:
-        """
-        Main forward pass for feature extraction (e.g., for YOLO).
-        Returns a list of feature maps from different stages.
+    def forward(self, x: torch.Tensor, temperature: float = 1.0) -> list[torch.Tensor]:
+        """Main forward pass for feature extraction (e.g., for YOLO). Returns a list of feature maps from different
+        stages.
         """
         return self._forward_extract(x, temperature)
 
     def forward_classification(
         self, x: torch.Tensor, temperature: float = 1.0
-    ) -> Tuple[
+    ) -> tuple[
         torch.Tensor,
-        List[Optional[torch.Tensor]],
-        List[Optional[torch.Tensor]],
-        List[Optional[torch.Tensor]],
-        List[Optional[torch.Tensor]],
-        Optional[torch.Tensor],
+        list[torch.Tensor | None],
+        list[torch.Tensor | None],
+        list[torch.Tensor | None],
+        list[torch.Tensor | None],
+        torch.Tensor | None,
         torch.Tensor,
     ]:
-        """
-        Forward pass for classification, returning final logits and all dynamic statistics.
-        This matches the return signature of the original Code 1's ResNet.forward.
+        """Forward pass for classification, returning final logits and all dynamic statistics. This matches the return
+        signature of the original Code 1's ResNet.forward.
         """
         (
             x_s4,
@@ -942,17 +949,14 @@ class ResNet(nn.Module):
             current_flops,
         )
 
-    def get_optim_policies(self) -> List[dict]:  # Type hint for return
+    def get_optim_policies(self) -> list[dict]:  # Type hint for return
         # This method seems fine, just added type hint
-        backbone_params = []
-        masker_params = []
 
         for name, param in self.named_parameters():  # Iterate over parameters directly
             if not param.requires_grad:
                 continue
 
-            module_name = name.split(".")[0]  # e.g. layer1, masker_spatial
-            is_masker_param = False
+            name.split(".")[0]  # e.g. layer1, masker_spatial
             # Check if any part of the name indicates a masker module
             # This is a bit fragile; depends on module naming conventions in Bottleneck
             # A more robust way would be to iterate self.named_modules() and check isinstance,
@@ -965,7 +969,7 @@ class ResNet(nn.Module):
             # (e.g., self.masker_spatial.conv.weight)
 
             # Reverting to module iteration for policy separation:
-            pass  # Will re-implement this part more carefully
+            # Will re-implement this part more carefully
 
         # Re-implementation of get_optim_policies closer to original intent
         backbone_params_set = set()  # Use set to avoid duplicate tensors
@@ -1012,7 +1016,7 @@ class ResNet(nn.Module):
 
 
 def _resnet(
-    arch: str, block: type[Bottleneck], layers: List[int], pretrained: bool, progress: bool, **kwargs
+    arch: str, block: type[Bottleneck], layers: list[int], pretrained: bool, progress: bool, **kwargs
 ) -> ResNet:
     model = ResNet(block, layers, **kwargs)
     if pretrained:
@@ -1040,8 +1044,7 @@ def _resnet(
 
 
 def uni_resnet50(pretrained: bool = False, progress: bool = True, **kwargs) -> ResNet:
-    r"""ResNet-50 model from
-    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>'_
+    r"""ResNet-50 model from `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>'_.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet

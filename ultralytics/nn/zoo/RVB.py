@@ -1,16 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RVB.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import RepVGGDW
-from ultralytics.nn.zoo._timm import SqueezeExcite
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.modules.block import C2f, RepVGGDW
+from ultralytics.nn.zoo._timm import SqueezeExcite
 
 
 class EMA(nn.Module):
     def __init__(self, channels, factor=8):
-        super(EMA, self).__init__()
+        super().__init__()
         self.groups = factor
         assert channels // self.groups > 0
         self.softmax = nn.Softmax(-1)
@@ -69,7 +69,7 @@ class Conv2d_BN(torch.nn.Sequential):
 
 class Residual(nn.Module):
     def __init__(self, fn):
-        super(Residual, self).__init__()
+        super().__init__()
         self.fn = fn
 
     def forward(self, x):
@@ -78,7 +78,7 @@ class Residual(nn.Module):
 
 class RepViTBlock(nn.Module):
     def __init__(self, inp, oup, use_se=True):
-        super(RepViTBlock, self).__init__()
+        super().__init__()
 
         self.identity = inp == oup
         hidden_dim = 2 * inp

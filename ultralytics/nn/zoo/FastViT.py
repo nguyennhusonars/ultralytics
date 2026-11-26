@@ -1,21 +1,21 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FastViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+from __future__ import annotations
+
 import copy
+from functools import partial
+from typing import Tuple
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class ReparamLargeKernelConv(nn.Module):
-    """Building Block of RepLKNet (modified for FastViT use)"""
+    """Building Block of RepLKNet (modified for FastViT use)."""
 
     def __init__(
         self,
@@ -24,11 +24,11 @@ class ReparamLargeKernelConv(nn.Module):
         kernel_size: int,
         stride: int,
         groups: int,
-        small_kernel: Optional[int],  # Made optional
+        small_kernel: int | None,  # Made optional
         inference_mode: bool = False,
         activation: nn.Module = nn.GELU(),
     ) -> None:
-        super(ReparamLargeKernelConv, self).__init__()
+        super().__init__()
 
         self.stride = stride
         self.groups = groups
@@ -57,9 +57,9 @@ class ReparamLargeKernelConv(nn.Module):
         else:
             self.lkb_origin = self._conv_bn(kernel_size=kernel_size, padding=self.padding)
             if small_kernel is not None and small_kernel > 0:  # Check small_kernel > 0
-                assert (
-                    small_kernel <= kernel_size
-                ), "The kernel size for re-param cannot be larger than the large kernel!"
+                assert small_kernel <= kernel_size, (
+                    "The kernel size for re-param cannot be larger than the large kernel!"
+                )
                 self.small_conv = self._conv_bn(kernel_size=small_kernel, padding=small_kernel // 2)
             else:
                 self.small_conv = None  # Ensure it's None if not used
@@ -77,7 +77,7 @@ class ReparamLargeKernelConv(nn.Module):
         # out = self.activation(out) # Remove this line if activation is external
         return out
 
-    def get_kernel_bias(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_kernel_bias(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Method to obtain re-parameterized kernel and bias."""
         eq_k, eq_b = self._fuse_bn(self.lkb_origin.conv, self.lkb_origin.bn)
         if hasattr(self, "small_conv") and self.small_conv is not None:
@@ -113,7 +113,7 @@ class ReparamLargeKernelConv(nn.Module):
         self.inference_mode = True  # Set inference mode flag
 
     @staticmethod
-    def _fuse_bn(conv: nn.Conv2d, bn: nn.BatchNorm2d) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _fuse_bn(conv: nn.Conv2d, bn: nn.BatchNorm2d) -> tuple[torch.Tensor, torch.Tensor]:
         """Fuse batchnorm layer with conv layer."""
         kernel = conv.weight
         running_mean = bn.running_mean
@@ -148,7 +148,7 @@ class SEBlock(nn.Module):
     """Squeeze and Excite module."""
 
     def __init__(self, in_channels: int, rd_ratio: float = 0.0625) -> None:
-        super(SEBlock, self).__init__()
+        super().__init__()
         self.reduce = nn.Conv2d(
             in_channels=in_channels,
             out_channels=int(in_channels * rd_ratio),
@@ -165,7 +165,7 @@ class SEBlock(nn.Module):
         )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = inputs.size()
+        _b, c, h, w = inputs.size()
         x = F.avg_pool2d(inputs, kernel_size=[h, w])
         x = self.reduce(x)
         x = F.relu(x)
@@ -194,7 +194,7 @@ class MobileOneBlock(nn.Module):
         num_conv_branches: int = 1,
         activation: nn.Module = nn.GELU(),  # Use GELU as default like original
     ) -> None:
-        super(MobileOneBlock, self).__init__()
+        super().__init__()
         self.inference_mode = inference_mode
         self.groups = groups
         self.stride = stride
@@ -233,7 +233,7 @@ class MobileOneBlock(nn.Module):
             )
 
             if num_conv_branches > 0:
-                rbr_conv = list()
+                rbr_conv = []
                 for _ in range(self.num_conv_branches):
                     rbr_conv.append(self._conv_bn(kernel_size=kernel_size, padding=padding))
                 self.rbr_conv = nn.ModuleList(rbr_conv)
@@ -295,7 +295,7 @@ class MobileOneBlock(nn.Module):
 
         self.inference_mode = True
 
-    def _get_kernel_bias(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _get_kernel_bias(self) -> tuple[torch.Tensor, torch.Tensor]:
         kernel_scale = 0
         bias_scale = 0
         if self.rbr_scale is not None:
@@ -321,7 +321,7 @@ class MobileOneBlock(nn.Module):
         bias_final = bias_conv + bias_scale + bias_identity
         return kernel_final, bias_final
 
-    def _fuse_bn_tensor(self, branch: Union[nn.Sequential, nn.BatchNorm2d]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _fuse_bn_tensor(self, branch: nn.Sequential | nn.BatchNorm2d) -> tuple[torch.Tensor, torch.Tensor]:
         if isinstance(branch, nn.Sequential):
             kernel = branch.conv.weight
             running_mean = branch.bn.running_mean
@@ -424,8 +424,8 @@ class ConvFFN(nn.Module):
     def __init__(
         self,
         in_channels: int,
-        hidden_channels: Optional[int] = None,
-        out_channels: Optional[int] = None,
+        hidden_channels: int | None = None,
+        out_channels: int | None = None,
         act_layer: nn.Module = nn.GELU,  # Keep GELU default
         drop: float = 0.0,
     ) -> None:
@@ -481,10 +481,10 @@ class RepCPE(nn.Module):
         self,
         in_channels: int,
         embed_dim: int = 768,
-        spatial_shape: Union[int, Tuple[int, int]] = (7, 7),
+        spatial_shape: int | tuple[int, int] = (7, 7),
         inference_mode=False,
     ) -> None:
-        super(RepCPE, self).__init__()
+        super().__init__()
         if isinstance(spatial_shape, int):
             spatial_shape = tuple([spatial_shape] * 2)
         assert isinstance(spatial_shape, Tuple) and len(spatial_shape) == 2
@@ -998,7 +998,7 @@ def basic_blocks(
     dim: int,
     stage_index: int,  # Renamed from block_index for clarity
     num_stages: int,  # Total number of stages (e.g., 4)
-    layers_per_stage: List[int],  # e.g., [2, 2, 4, 2]
+    layers_per_stage: list[int],  # e.g., [2, 2, 4, 2]
     token_mixer_type: str,
     kernel_size: int = 3,
     mlp_ratio: float = 4.0,
@@ -1055,11 +1055,10 @@ def basic_blocks(
 
 
 class FastViT(nn.Module):
-    """
-    Implementation of FastViT architecture.
+    """Implementation of FastViT architecture.
 
-    Modified so the main `forward` method returns a list of features suitable
-    for use as a backbone in detection/segmentation frameworks like Ultralytics YOLO.
+    Modified so the main `forward` method returns a list of features suitable for use as a backbone in
+    detection/segmentation frameworks like Ultralytics YOLO.
     """
 
     def __init__(
@@ -1141,18 +1140,17 @@ class FastViT(nn.Module):
             stage_modules.append(stage_blocks)
             self.stages.append(nn.Sequential(*stage_modules))
 
-            if i < num_stages - 1:
-                if downsamples[i] or embed_dims[i] != embed_dims[i + 1]:
-                    next_dim = embed_dims[i + 1]
-                    patch_embed_layer = PatchEmbed(
-                        patch_size=down_patch_size,
-                        stride=down_stride,
-                        in_channels=curr_dim,
-                        embed_dim=next_dim,
-                        inference_mode=inference_mode,
-                    )
-                    self.stages.append(patch_embed_layer)
-                    curr_dim = next_dim
+            if i < num_stages - 1 and (downsamples[i] or embed_dims[i] != embed_dims[i + 1]):
+                next_dim = embed_dims[i + 1]
+                patch_embed_layer = PatchEmbed(
+                    patch_size=down_patch_size,
+                    stride=down_stride,
+                    in_channels=curr_dim,
+                    embed_dim=next_dim,
+                    inference_mode=inference_mode,
+                )
+                self.stages.append(patch_embed_layer)
+                curr_dim = next_dim
 
         # --- CLASSIFICATION HEAD (Separated from main forward) ---
         # This part is NOT used when FastViT acts as a backbone in Ultralytics
@@ -1200,7 +1198,7 @@ class FastViT(nn.Module):
                 nn.init.constant_(m.bias, 0)
         # Conv2d handled by submodules or ConvFFN internal init
 
-    def _calculate_width_list(self, in_chans: int, resolution: int) -> List[int]:
+    def _calculate_width_list(self, in_chans: int, resolution: int) -> list[int]:
         """Performs a dummy forward pass to get intermediate feature dimensions."""
         # Temporarily switch to eval mode if not already initializing
         original_mode_is_train = self.training
@@ -1244,10 +1242,9 @@ class FastViT(nn.Module):
 
     # --- FORWARD METHODS ---
 
-    def forward_features(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Forward pass through stem and stages, returning intermediate features.
-        This is the core logic used by the main `forward` method now.
+    def forward_features(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Forward pass through stem and stages, returning intermediate features. This is the core logic used by the
+        main `forward` method now.
         """
         x = self.patch_embed(x)
         features = []
@@ -1260,16 +1257,14 @@ class FastViT(nn.Module):
                 features.append(stage_output)
         return features
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Main forward pass. Returns a list of feature maps from different stages.
-        This is expected by frameworks like Ultralytics YOLO when using FastViT as a backbone.
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Main forward pass. Returns a list of feature maps from different stages. This is expected by frameworks like
+        Ultralytics YOLO when using FastViT as a backbone.
         """
         return self.forward_features(x)
 
-    def forward_head(self, features: List[torch.Tensor], pre_logits: bool = False) -> torch.Tensor:
-        """
-        Applies the classification head to the features obtained from `forward` or `forward_features`.
+    def forward_head(self, features: list[torch.Tensor], pre_logits: bool = False) -> torch.Tensor:
+        """Applies the classification head to the features obtained from `forward` or `forward_features`.
 
         Args:
             features: A list of feature tensors (output of `forward` or `forward_features`).

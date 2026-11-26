@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/FFANet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def default_conv(in_channels, out_channels, kernel_size, bias=True):
@@ -11,7 +11,7 @@ def default_conv(in_channels, out_channels, kernel_size, bias=True):
 
 class PALayer(nn.Module):
     def __init__(self, channel):
-        super(PALayer, self).__init__()
+        super().__init__()
         self.pa = nn.Sequential(
             nn.Conv2d(channel, channel // 8, 1, padding=0, bias=True),
             nn.ReLU(inplace=True),
@@ -26,7 +26,7 @@ class PALayer(nn.Module):
 
 class CALayer(nn.Module):
     def __init__(self, channel):
-        super(CALayer, self).__init__()
+        super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.ca = nn.Sequential(
             nn.Conv2d(channel, channel // 8, 1, padding=0, bias=True),
@@ -48,7 +48,7 @@ class Block(nn.Module):
         dim,
         kernel_size,
     ):
-        super(Block, self).__init__()
+        super().__init__()
         self.conv1 = conv(dim, dim, kernel_size, bias=True)
         self.act1 = nn.ReLU(inplace=True)
         self.conv2 = conv(dim, dim, kernel_size, bias=True)
@@ -67,7 +67,7 @@ class Block(nn.Module):
 
 class Group(nn.Module):
     def __init__(self, conv, dim, kernel_size, blocks):
-        super(Group, self).__init__()
+        super().__init__()
         modules = [Block(conv, dim, kernel_size) for _ in range(blocks)]
         modules.append(conv(dim, dim, kernel_size))
         self.gp = nn.Sequential(*modules)
@@ -80,7 +80,7 @@ class Group(nn.Module):
 
 class FFA(nn.Module):
     def __init__(self, gps=3, blocks=1, conv=default_conv):
-        super(FFA, self).__init__()
+        super().__init__()
         self.gps = gps
         self.dim = 8
         kernel_size = 3

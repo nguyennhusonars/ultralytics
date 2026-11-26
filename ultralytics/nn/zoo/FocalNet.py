@@ -1,19 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FocalNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)
@@ -87,7 +86,7 @@ class FocalModulation(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: input features with shape of (B, H, W, C)
+            x: input features with shape of (B, H, W, C).
         """
         C = x.shape[-1]
 
@@ -95,7 +94,7 @@ class FocalModulation(nn.Module):
         x = self.f(x).permute(0, 3, 1, 2).contiguous()
         q, ctx, gates = torch.split(x, (C, C, self.focal_level + 1), 1)
 
-        # context aggreation
+        # context aggregation
         ctx_all = 0
         for l in range(self.focal_level):
             ctx = self.focal_layers[l](ctx)
@@ -114,7 +113,7 @@ class FocalModulation(nn.Module):
         if self.use_postln_in_modulation:
             x_out = self.ln(x_out)
 
-        # post linear porjection
+        # post linear projection
         x_out = self.proj(x_out)
         x_out = self.proj_drop(x_out)
         return x_out
@@ -148,12 +147,12 @@ class FocalNetBlock(nn.Module):
 
     Args:
         dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resulotion.
+        input_resolution (tuple[int]): Input resolution.
         mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
         drop (float, optional): Dropout rate. Default: 0.0
         drop_path (float, optional): Stochastic depth rate. Default: 0.0
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
         focal_level (int): Number of focal levels.
         focal_window (int): Focal window size at first focal level
         use_layerscale (bool): Whether use layerscale
@@ -205,15 +204,15 @@ class FocalNetBlock(nn.Module):
         self.gamma_1 = 1.0
         self.gamma_2 = 1.0
         if use_layerscale:
-            self.gamma_1 = nn.Parameter(layerscale_value * torch.ones((dim)), requires_grad=True)
-            self.gamma_2 = nn.Parameter(layerscale_value * torch.ones((dim)), requires_grad=True)
+            self.gamma_1 = nn.Parameter(layerscale_value * torch.ones(dim), requires_grad=True)
+            self.gamma_2 = nn.Parameter(layerscale_value * torch.ones(dim), requires_grad=True)
 
         self.H = None
         self.W = None
 
     def forward(self, x):
         H, W = self.H, self.W
-        B, L, C = x.shape
+        B, _L, C = x.shape
         shortcut = x
 
         # Focal Modulation
@@ -229,7 +228,7 @@ class FocalNetBlock(nn.Module):
         return x
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, input_resolution={self.input_resolution}, " f"mlp_ratio={self.mlp_ratio}"
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, mlp_ratio={self.mlp_ratio}"
 
     def flops(self):
         flops = 0
@@ -360,10 +359,10 @@ class BasicLayer(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    r"""Image to Patch Embedding
+    r"""Image to Patch Embedding.
 
     Args:
-        img_size (int): Image size.  Default: 224.
+        img_size (int): Image size. Default: 224.
         patch_size (int): Patch token size. Default: 4.
         in_chans (int): Number of input image channels. Default: 3.
         embed_dim (int): Number of linear projection output channels. Default: 96.
@@ -411,7 +410,7 @@ class PatchEmbed(nn.Module):
             self.norm = None
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
 
         x = self.proj(x)
         H, W = x.shape[2:]
@@ -429,7 +428,7 @@ class PatchEmbed(nn.Module):
 
 
 class FocalNet(nn.Module):
-    r"""Focal Modulation Networks (FocalNets)
+    r"""Focal Modulation Networks (FocalNets).
 
     Args:
         img_size (int | tuple(int)): Input image size. Default 224
@@ -444,12 +443,14 @@ class FocalNet(nn.Module):
         norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
         patch_norm (bool): If True, add normalization after patch embedding. Default: True
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
-        focal_levels (list): How many focal levels at all stages. Note that this excludes the finest-grain level. Default: [1, 1, 1, 1]
+        focal_levels (list): How many focal levels at all stages. Note that this excludes the finest-grain level.
+            Default: [1, 1, 1, 1]
         focal_windows (list): The focal window size at all stages. Default: [7, 5, 3, 1]
-        use_conv_embed (bool): Whether use convolutional embedding. We noted that using convolutional embedding usually improve the performance, but we do not use it by default. Default: False
+        use_conv_embed (bool): Whether use convolutional embedding. We noted that using convolutional embedding usually
+            improve the performance, but we do not use it by default. Default: False
         use_layerscale (bool): Whether use layerscale proposed in CaiT. Default: False
         layerscale_value (float): Value for layer scale. Default: 1e-4
-        use_postln (bool): Whether use layernorm after modulation (it helps stablize training of large models)
+        use_postln (bool): Whether use layernorm after modulation (it helps stabilize training of large models)
     """
 
     def __init__(
@@ -459,15 +460,15 @@ class FocalNet(nn.Module):
         in_chans=3,
         num_classes=1000,
         embed_dim=96,
-        depths=[2, 2, 6, 2],
+        depths=None,
         mlp_ratio=4.0,
         drop_rate=0.0,
         drop_path_rate=0.1,
         norm_layer=nn.LayerNorm,
         patch_norm=True,
         use_checkpoint=False,
-        focal_levels=[2, 2, 2, 2],
-        focal_windows=[3, 3, 3, 3],
+        focal_levels=None,
+        focal_windows=None,
         use_conv_embed=False,
         use_layerscale=False,
         layerscale_value=1e-4,
@@ -476,6 +477,12 @@ class FocalNet(nn.Module):
         normalize_modulator=False,
         **kwargs,
     ):
+        if focal_windows is None:
+            focal_windows = [3, 3, 3, 3]
+        if focal_levels is None:
+            focal_levels = [2, 2, 2, 2]
+        if depths is None:
+            depths = [2, 2, 6, 2]
         super().__init__()
 
         self.num_layers = len(depths)
@@ -498,7 +505,6 @@ class FocalNet(nn.Module):
             is_stem=True,
         )
 
-        num_patches = self.patch_embed.num_patches
         patches_resolution = self.patch_embed.patches_resolution
         self.patches_resolution = patches_resolution
         self.pos_drop = nn.Dropout(p=drop_rate)

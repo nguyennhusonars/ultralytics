@@ -3,18 +3,16 @@
 
 from __future__ import annotations
 
+import math
+
+import torch
+import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from fairscale.nn.checkpoint import checkpoint_wrapper
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, register_model, to_2tuple, trunc_normal_
 
 
 class LayerNormProxy(nn.Module):
@@ -29,9 +27,7 @@ class LayerNormProxy(nn.Module):
 
 
 class Attention(nn.Module):
-    """
-    vanilla attention
-    """
+    """Vanilla attention."""
 
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0.0, proj_drop=0.0):
         super().__init__()
@@ -47,10 +43,9 @@ class Attention(nn.Module):
 
     def forward(self, x):
         """
-        args:
+        Args:
             x: NHWC tensor
-        return:
-            NHWC tensor
+            return: NHWC tensor.
         """
         _, H, W, _ = x.size()
         x = rearrange(x, "n h w c -> n (h w) c")
@@ -74,15 +69,15 @@ class Attention(nn.Module):
 
 
 class TopkRouting(nn.Module):
-    """
-    differentiable topk routing with scaling
+    """differentiable topk routing with scaling.
+
     Args:
         qk_dim: int, feature dimension of query and key
         topk: int, the 'topk'
         qk_scale: int or None, temperature (multiply) of softmax activation
         with_param: bool, wether inorporate learnable params in routing unit
         diff_routing: bool, wether make routing differentiable
-        soft_routing: bool, wether make output value multiplied by routing weights
+        soft_routing: bool, wether make output value multiplied by routing weights.
     """
 
     def __init__(self, qk_dim, topk=4, qk_scale=None, param_routing=False, diff_routing=False):
@@ -100,8 +95,9 @@ class TopkRouting(nn.Module):
         """
         Args:
             q, k: (n, p^2, c) tensor
-        Return:
-            r_weight, topk_index: (n, p^2, topk) tensor
+
+        Returns:
+            r_weight, topk_index: (n, p^2, topk) tensor.
         """
         if not self.diff_routing:
             query, key = query.detach(), key.detach()
@@ -120,12 +116,10 @@ class KVGather(nn.Module):
         self.mul_weight = mul_weight
 
     def forward(self, r_idx: torch.Tensor, r_weight: torch.Tensor, kv: torch.Tensor):
-        """
-        r_idx: (n, p^2, topk) tensor
-        r_weight: (n, p^2, topk) tensor
-        kv: (n, p^2, w^2, c_kq+c_v)
-        Return:
-            (n, p^2, topk, w^2, c_kq+c_v) tensor
+        """r_idx: (n, p^2, topk) tensor r_weight: (n, p^2, topk) tensor kv: (n, p^2, w^2, c_kq+c_v).
+
+        Returns:
+            (n, p^2, topk, w^2, c_kq+c_v) tensor.
         """
         # select kv according to routing index
         n, p2, w2, c_kv = kv.size()
@@ -173,14 +167,11 @@ class QKVConv(nn.Module):
 
 
 class BiLevelRoutingAttention(nn.Module):
-    """
-    n_win: number of windows in one side (so the actual number of windows is n_win*n_win)
-    kv_per_win: for kv_downsample_mode='ada_xxxpool' only, number of key/values per window. Similar to n_win, the actual number is kv_per_win*kv_per_win.
-    topk: topk for window filtering
-    param_attention: 'qkvo'-linear for q,k,v and o, 'none': param free attention
-    param_routing: extra linear for routing
-    diff_routing: wether to set routing differentiable
-    soft_routing: wether to multiply soft routing weights
+    """n_win: number of windows in one side (so the actual number of windows is n_win*n_win) kv_per_win: for
+    kv_downsample_mode='ada_xxxpool' only, number of key/values per window. Similar to n_win, the actual number is
+    kv_per_win*kv_per_win. topk: topk for window filtering param_attention: 'qkvo'-linear for q,k,v and o, 'none':
+    param free attention param_routing: extra linear for routing diff_routing: wether to set routing differentiable
+    soft_routing: wether to multiply soft routing weights.
     """
 
     def __init__(
@@ -208,9 +199,9 @@ class BiLevelRoutingAttention(nn.Module):
         self.n_win = n_win  # Wh, Ww
         self.num_heads = num_heads
         self.qk_dim = qk_dim or dim
-        assert (
-            self.qk_dim % num_heads == 0 and self.dim % num_heads == 0
-        ), "qk_dim and dim must be divisible by num_heads!"
+        assert self.qk_dim % num_heads == 0 and self.dim % num_heads == 0, (
+            "qk_dim and dim must be divisible by num_heads!"
+        )
         self.scale = qk_scale or self.qk_dim**-0.5
 
         ################side_dwconv (i.e. LCE in ShuntedTransformer)###########
@@ -251,7 +242,7 @@ class BiLevelRoutingAttention(nn.Module):
             self.qkv = QKVLinear(self.dim, self.qk_dim)
             self.wo = nn.Identity()
         else:
-            raise ValueError(f"param_attention mode {self.param_attention} is not surpported!")
+            raise ValueError(f"param_attention mode {self.param_attention} is not supported!")
 
         self.kv_downsample_mode = kv_downsample_mode
         self.kv_per_win = kv_per_win
@@ -282,7 +273,7 @@ class BiLevelRoutingAttention(nn.Module):
             # TODO: need to consider the case where k != v so that need two downsample modules
             raise NotImplementedError("conv policy is not implemented yet!")
         else:
-            raise ValueError(f"kv_down_sample_mode {self.kv_downsaple_mode} is not surpported!")
+            raise ValueError(f"kv_down_sample_mode {self.kv_downsaple_mode} is not supported!")
 
         # softmax for local attention
         self.attn_act = nn.Softmax(dim=-1)
@@ -290,10 +281,9 @@ class BiLevelRoutingAttention(nn.Module):
         self.auto_pad = auto_pad
 
     def forward(self, x, ret_attn_mask=False):
-        """
-        x: NHWC tensor
+        """x: NHWC tensor.
 
-        Return:
+        Returns:
             NHWC tensor
         """
         # NOTE: use padding for semantic segmentation
@@ -318,7 +308,7 @@ class BiLevelRoutingAttention(nn.Module):
             )  # dim=-3
             _, H, W, _ = x.size()  # padded size
         else:
-            N, H, W, C = x.size()
+            _N, H, W, _C = x.size()
             # This assertion is the reason for the error. Even if commented out,
             # the rearrange operation will fail if dimensions are not divisible.
             if H % self.n_win != 0 or W % self.n_win != 0:
@@ -334,7 +324,7 @@ class BiLevelRoutingAttention(nn.Module):
         #################qkv projection###################
         # q: (n, p^2, w, w, c_qk)
         # kv: (n, p^2, w, w, c_qk+c_v)
-        # NOTE: separte kv if there were memory leak issue caused by gather
+        # NOTE: separate kv if there were memory leak issue caused by gather
         q, kv = self.qkv(x)
 
         # pixel-wise qkv
@@ -444,14 +434,11 @@ class TransformerMLPWithConv(nn.Module):
 
 
 class DeBiLevelRoutingAttention(nn.Module):
-    """
-    n_win: number of windows in one side (so the actual number of windows is n_win*n_win)
-    kv_per_win: for kv_downsample_mode='ada_xxxpool' only, number of key/values per window. Similar to n_win, the actual number is kv_per_win*kv_per_win.
-    topk: topk for window filtering
-    param_attention: 'qkvo'-linear for q,k,v and o, 'none': param free attention
-    param_routing: extra linear for routing
-    diff_routing: wether to set routing differentiable
-    soft_routing: wether to multiply soft routing weights
+    """n_win: number of windows in one side (so the actual number of windows is n_win*n_win) kv_per_win: for
+    kv_downsample_mode='ada_xxxpool' only, number of key/values per window. Similar to n_win, the actual number is
+    kv_per_win*kv_per_win. topk: topk for window filtering param_attention: 'qkvo'-linear for q,k,v and o, 'none':
+    param free attention param_routing: extra linear for routing diff_routing: wether to set routing differentiable
+    soft_routing: wether to multiply soft routing weights.
     """
 
     def __init__(
@@ -632,16 +619,12 @@ class DeBiLevelRoutingAttention(nn.Module):
 
         # qkv mapping (shared by both global routing and local attention)
         self.param_attention = param_attention
-        if self.param_attention == "qkvo":
-            # self.qkv = QKVLinear(self.dim, self.qk_dim)
-            self.qkv_conv = QKVConv(self.dim, self.qk_dim)
-            # self.wo = nn.Linear(dim, dim)
-        elif self.param_attention == "qkv":
+        if self.param_attention == "qkvo" or self.param_attention == "qkv":
             # self.qkv = QKVLinear(self.dim, self.qk_dim)
             self.qkv_conv = QKVConv(self.dim, self.qk_dim)
             # self.wo = nn.Identity()
         else:
-            raise ValueError(f"param_attention mode {self.param_attention} is not surpported!")
+            raise ValueError(f"param_attention mode {self.param_attention} is not supported!")
 
         self.kv_downsample_mode = kv_downsample_mode
         self.kv_per_win = kv_per_win
@@ -666,7 +649,7 @@ class DeBiLevelRoutingAttention(nn.Module):
         elif kv_downsample_mode == "conv":
             raise NotImplementedError("conv policy is not implemented yet!")
         else:
-            raise ValueError(f"kv_down_sample_mode {self.kv_downsaple_mode} is not surpported!")
+            raise ValueError(f"kv_down_sample_mode {self.kv_downsaple_mode} is not supported!")
 
         self.attn_act = nn.Softmax(dim=-1)
 
@@ -796,7 +779,7 @@ class DeBiLevelRoutingAttention(nn.Module):
         q_off = rearrange(q, "b (g c) h w -> (b g) c h w", g=self.n_groups, c=self.n_group_channels)
         offset_q = self.conv_offset_q(q_off).contiguous()  # B * g 2 Sg HWg
         Hk, Wk = offset_q.size(2), offset_q.size(3)
-        n_sample = Hk * Wk
+        Hk * Wk
         Hg, Wg = Hk, Wk  # FIX: Initialize Hg and Wg to non-padded dimensions
 
         if self.offset_range_factor > 0:
@@ -824,7 +807,7 @@ class DeBiLevelRoutingAttention(nn.Module):
 
         if self.auto_pad:
             q_sampled_nhwc = q_sampled.permute(0, 2, 3, 1)
-            Ng, H_old, W_old, Cg = q_sampled_nhwc.size()
+            _Ng, H_old, W_old, _Cg = q_sampled_nhwc.size()
 
             pad_l = pad_t = 0
             pad_rg = (self.n_win - W_old % self.n_win) % self.n_win
@@ -962,7 +945,7 @@ def get_pe_layer(emb_dim, pe_dim=None, name="none"):
     if name == "none":
         return nn.Identity()
     else:
-        raise ValueError(f"PE name {name} is not surpported!")
+        raise ValueError(f"PE name {name} is not supported!")
 
 
 class Block(nn.Module):
@@ -1170,7 +1153,7 @@ class Block(nn.Module):
 
         elif topk == 0:
             self.attn = nn.Sequential(
-                Rearrange("n h w c -> n c h w"),  # compatiability
+                Rearrange("n h w c -> n c h w"),  # compatibility
                 nn.Conv2d(dim, dim, 1),  # pseudo qkv linear
                 nn.Conv2d(dim, dim, 5, padding=2, groups=dim),  # pseudo attention
                 nn.Conv2d(dim, dim, 1),  # pseudo out linear
@@ -1192,18 +1175,16 @@ class Block(nn.Module):
         # tricks: layer scale & pre_norm/post_norm
         if layer_scale_init_value > 0:
             self.use_layer_scale = True
-            self.gamma1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-            self.gamma2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-            self.gamma3 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-            self.gamma4 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.gamma1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+            self.gamma2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+            self.gamma3 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+            self.gamma4 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
         else:
             self.use_layer_scale = False
         self.pre_norm = pre_norm
 
     def forward(self, x):
-        """
-        x: NCHW tensor
-        """
+        """X: NCHW tensor."""
         # conv pos embedding
         x = x + self.pos_embed1(x)
         # permute to NHWC tensor for attention & mlp
@@ -1254,36 +1235,36 @@ class Block(nn.Module):
 class DeBiFormer(nn.Module):
     def __init__(
         self,
-        depth=[3, 4, 8, 3],
+        depth=None,
         in_chans=3,
         num_classes=1000,
-        embed_dim=[64, 128, 320, 512],
+        embed_dim=None,
         head_dim=64,
         qk_scale=None,
         representation_size=None,
         drop_path_rate=0.0,
         drop_rate=0.0,
-        use_checkpoint_stages=[],
+        use_checkpoint_stages=None,
         ########
         n_win=7,
         kv_downsample_mode="ada_avgpool",
-        kv_per_wins=[2, 2, -1, -1],
-        topks=[8, 8, -1, -1],
+        kv_per_wins=None,
+        topks=None,
         side_dwconv=5,
         layer_scale_init_value=-1,
-        qk_dims=[None, None, None, None],
+        qk_dims=None,
         param_routing=False,
         diff_routing=False,
         soft_routing=False,
         pre_norm=True,
         pe=None,
-        pe_stages=[0],
+        pe_stages=None,
         before_attn_dwconv=3,
         auto_pad=False,
         # -----------------------
-        kv_downsample_kernels=[4, 2, 1, 1],
-        kv_downsample_ratios=[4, 2, 1, 1],  # -> kv_per_win = [2, 2, 2, 1]
-        mlp_ratios=[4, 4, 4, 4],
+        kv_downsample_kernels=None,
+        kv_downsample_ratios=None,  # -> kv_per_win = [2, 2, 2, 1]
+        mlp_ratios=None,
         param_attention="qkvo",
         param_size="small",
         mlp_dwconv=False,
@@ -1295,9 +1276,28 @@ class DeBiFormer(nn.Module):
             in_chans (int): number of input channels
             num_classes (int): number of classes for classification head
             embed_dim (list): embedding dimension of each stage
-            head_dim (int): head dimension
-            ... (other args)
+            head_dim (int): head dimension ... (other args).
         """
+        if mlp_ratios is None:
+            mlp_ratios = [4, 4, 4, 4]
+        if kv_downsample_ratios is None:
+            kv_downsample_ratios = [4, 2, 1, 1]
+        if kv_downsample_kernels is None:
+            kv_downsample_kernels = [4, 2, 1, 1]
+        if pe_stages is None:
+            pe_stages = [0]
+        if qk_dims is None:
+            qk_dims = [None, None, None, None]
+        if topks is None:
+            topks = [8, 8, -1, -1]
+        if kv_per_wins is None:
+            kv_per_wins = [2, 2, -1, -1]
+        if use_checkpoint_stages is None:
+            use_checkpoint_stages = []
+        if embed_dim is None:
+            embed_dim = [64, 128, 320, 512]
+        if depth is None:
+            depth = [3, 4, 8, 3]
         super().__init__()
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models

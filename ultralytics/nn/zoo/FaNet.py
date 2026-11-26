@@ -1,19 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/FaNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
+from __future__ import annotations
+
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
-from typing import Union
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
 import torch.nn.functional as F
+from torch import nn
 
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
-FANET_SPECS: Dict[str, Dict[str, Any]] = {
+FANET_SPECS: dict[str, dict[str, Any]] = {
     "fanet_tiny": {
         "depths": [2, 2, 8, 2],
         "dims": [96, 192, 384, 768],  # [96, 192, 384, 768]
@@ -80,7 +78,7 @@ class FeatureRefinementModule(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
 
         dx = self.down(x)
         udx = F.interpolate(dx, size=(H, W), mode="bilinear", align_corners=False)
@@ -91,7 +89,7 @@ class FeatureRefinementModule(nn.Module):
         return out
 
 
-class AFE(nn.Module):  # Attentive Feature Enhancement
+class SAFE(nn.Module):  # Attentive Feature Enhancement
     def __init__(self, dim, kernel_size=3):
         super().__init__()
 
@@ -113,7 +111,7 @@ class AFE(nn.Module):  # Attentive Feature Enhancement
         self.act = nn.GELU()
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
 
         x_res = x
         x = self.act(self.norm1(self.dwconv(x)))  # Original: x = x + self.norm1(self.act(self.dwconv(x)))
@@ -145,7 +143,7 @@ class Block(nn.Module):
             self.mlp = AtrousMLP(dim=dim, mlp_ratio=expan_ratio)
         else:
             self.mlp = MLP(dim=dim, mlp_ratio=expan_ratio)
-        self.attn = AFE(dim, kernel_size=kernel_size)
+        self.attn = SAFE(dim, kernel_size=kernel_size)
 
         self.drop_path_1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.drop_path_2 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -238,7 +236,7 @@ class FANet(nn.Module):
         self,
         model_name: str,
         in_chans: int = 3,
-        input_size: Union[int, Tuple[int, int]] = 224,  # H or (H,W)
+        input_size: int | tuple[int, int] = 224,  # H or (H,W)
         **kwargs,
     ):  # Allow other kwargs like num_classes if a head is re-added
         super().__init__()
@@ -303,7 +301,7 @@ class FANet(nn.Module):
         self.apply(self._init_weights)  # Initialize weights
 
         # Calculate width_list
-        self.width_list: List[int] = []
+        self.width_list: list[int] = []
         self.eval()  # Set to eval mode for dummy pass; affects dropout, batchnorm
         try:
             dummy_input = torch.randn(1, self.in_chans, *self.input_h_w)
@@ -330,7 +328,7 @@ class FANet(nn.Module):
             nn.init.constant_(m.weight, 1.0)
             nn.init.constant_(m.bias, 0)
 
-    def init_weights(self, pretrained: str = None):
+    def init_weights(self, pretrained: str | None = None):
         if pretrained is not None:
             try:
                 checkpoint = torch.load(pretrained, map_location="cpu")
@@ -355,7 +353,7 @@ class FANet(nn.Module):
             # Weights are already initialized by self.apply(self._init_weights) in __init__
             print("No pretrained weights provided, using random initialization.")
 
-    def forward_features(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward_features(self, x: torch.Tensor) -> list[torch.Tensor]:
         feats = []
         x = self.downsample_layers[0](x)  # Stem
         x = self.stages[0](x)
@@ -367,14 +365,14 @@ class FANet(nn.Module):
             feats.append(x)
         return feats  # Returns a list of 4 feature maps
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         # The forward_features method already returns a list of tensors.
         # The original code unpacks and repacks, which is fine but redundant.
         # Directly returning the list from forward_features is cleaner.
         return self.forward_features(x)
 
 
-def fanet_tiny(input_size: Tuple[int, int, int] = (3, 224, 224), pretrained: str = None, **kwargs) -> FANet:
+def fanet_tiny(input_size: tuple[int, int, int] = (3, 224, 224), pretrained: str | None = None, **kwargs) -> FANet:
     """
     Args:
         input_size (Tuple[int, int, int]): Input image size (channels, height, width).

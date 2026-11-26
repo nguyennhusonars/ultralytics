@@ -1,23 +1,21 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SwinTransformerv2_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Any
-from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
+from __future__ import annotations
+
 import math
+from typing import Any
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class FeedForward(nn.Sequential):
-    """
-    Feed forward module used in the transformer encoder.
-    """
+    """Feed forward module used in the transformer encoder."""
 
     def __init__(self, in_features: int, hidden_features: int, out_features: int, dropout: float = 0.0) -> None:
         """
@@ -25,7 +23,7 @@ class FeedForward(nn.Sequential):
         :param in_features: (int) Number of input features
         :param hidden_features: (int) Number of hidden features
         :param out_features: (int) Number of output features
-        :param dropout: (float) Dropout factor
+        :param dropout: (float) Dropout factor.
         """
         # Call super constructor and init modules
         super().__init__(
@@ -41,7 +39,7 @@ def bchw_to_bhwc(input: torch.Tensor) -> torch.Tensor:
     """
     Permutes a tensor to the shape [batch size, height, width, channels]
     :param input: (torch.Tensor) Input tensor of the shape [batch size, channels, height, width]
-    :return: (torch.Tensor) Output tensor of the shape [batch size, height, width, channels]
+    :return: (torch.Tensor) Output tensor of the shape [batch size, height, width, channels].
     """
     return input.permute(0, 2, 3, 1)
 
@@ -50,7 +48,7 @@ def bhwc_to_bchw(input: torch.Tensor) -> torch.Tensor:
     """
     Permutes a tensor to the shape [batch size, channels, height, width]
     :param input: (torch.Tensor) Input tensor of the shape [batch size, height, width, channels]
-    :return: (torch.Tensor) Output tensor of the shape [batch size, channels, height, width]
+    :return: (torch.Tensor) Output tensor of the shape [batch size, channels, height, width].
     """
     return input.permute(0, 3, 1, 2)
 
@@ -60,7 +58,7 @@ def unfold(input: torch.Tensor, window_size: int) -> torch.Tensor:
     Unfolds (non-overlapping) a given feature map by the given window size (stride = window size)
     :param input: (torch.Tensor) Input feature map of the shape [batch size, channels, height, width]
     :param window_size: (int) Window size to be applied
-    :return: (torch.Tensor) Unfolded tensor of the shape [batch size * windows, channels, window size, window size]
+    :return: (torch.Tensor) Unfolded tensor of the shape [batch size * windows, channels, window size, window size].
     """
     # Get original shape
     _, channels, height, width = input.shape  # type: int, int, int, int
@@ -81,8 +79,8 @@ def unfold(input: torch.Tensor, window_size: int) -> torch.Tensor:
     )
     # Reshape to [batch size * windows, channels, window size, window size]
     # The number of windows needs to account for the potentially padded dimensions
-    num_windows_h = height // window_size
-    num_windows_w = width // window_size
+    height // window_size
+    width // window_size
     output: torch.Tensor = output.permute(0, 2, 3, 1, 5, 4).reshape(-1, channels, window_size, window_size)
 
     # Ensure the output shape matches the expectation based on calculated windows
@@ -99,7 +97,7 @@ def fold(input: torch.Tensor, window_size: int, height: int, width: int) -> torc
     :param window_size: (int) Window size to be reversed
     :param height: (int) Height of the *original* feature map (before potential padding in unfold)
     :param width: (int) Width of the *original* feature map (before potential padding in unfold)
-    :return: (torch.Tensor) Folded output tensor of the shape [batch size, channels, height, width]
+    :return: (torch.Tensor) Folded output tensor of the shape [batch size, channels, height, width].
     """
     # Calculate padded height/width based on original dimensions and window size
     padded_height = math.ceil(height / window_size) * window_size
@@ -143,10 +141,8 @@ def fold(input: torch.Tensor, window_size: int, height: int, width: int) -> torc
 
 
 class WindowMultiHeadAttention(nn.Module):
-    """
-    This class implements window-based Multi-Head-Attention.
-    NOTE: Swin v2 uses scaled cosine attention instead of dot-product attention
-          and utilizes log-spaced continuous relative position bias.
+    """This class implements window-based Multi-Head-Attention. NOTE: Swin v2 uses scaled cosine attention instead of
+    dot-product attention and utilizes log-spaced continuous relative position bias.
     """
 
     def __init__(
@@ -167,20 +163,20 @@ class WindowMultiHeadAttention(nn.Module):
         :param dropout_attention: (float) Dropout rate of attention map
         :param dropout_projection: (float) Dropout rate after projection
         :param meta_network_hidden_features: (int) Number of hidden features in the two layer MLP meta network for CPB
-        :param sequential_self_attention: (bool) If true sequential self-attention is performed (memory saving)
+        :param sequential_self_attention: (bool) If true sequential self-attention is performed (memory saving).
         """
         # Call super constructor
-        super(WindowMultiHeadAttention, self).__init__()
+        super().__init__()
         # Check parameter
-        assert (
-            in_features % number_of_heads
-        ) == 0, "The number of input features (in_features) are not divisible by the number of heads (number_of_heads)."
+        assert (in_features % number_of_heads) == 0, (
+            "The number of input features (in_features) are not divisible by the number of heads (number_of_heads)."
+        )
         # Save parameters
         self.in_features: int = in_features
         self.window_size: int = window_size
         self.number_of_heads: int = number_of_heads
         self.sequential_self_attention: bool = sequential_self_attention
-        head_dim = in_features // number_of_heads  # Define head_dim
+        in_features // number_of_heads  # Define head_dim
 
         # Init query, key and value mapping as a single layer
         self.mapping_qkv: nn.Module = nn.Linear(in_features=in_features, out_features=in_features * 3, bias=True)
@@ -207,9 +203,8 @@ class WindowMultiHeadAttention(nn.Module):
         self.__make_pair_wise_relative_positions()
 
     def __make_pair_wise_relative_positions(self) -> None:
-        """
-        Method initializes the pair-wise relative positions to compute the positional biases.
-        Uses log-spaced coordinates as per Swin v2.
+        """Method initializes the pair-wise relative positions to compute the positional biases. Uses log-spaced
+        coordinates as per Swin v2.
         """
         indexes: torch.Tensor = torch.arange(
             self.window_size
@@ -236,7 +231,7 @@ class WindowMultiHeadAttention(nn.Module):
         """
         Method updates the window size and so the pair-wise relative positions
         :param new_window_size: (int) New window size
-        :param kwargs: (Any) Unused
+        :param kwargs: (Any) Unused.
         """
         # Set new window size
         self.window_size: int = new_window_size
@@ -246,7 +241,7 @@ class WindowMultiHeadAttention(nn.Module):
     def __get_relative_positional_encodings(self) -> torch.Tensor:
         """
         Method computes the relative positional encodings using the meta network.
-        :return: (torch.Tensor) Relative positional encodings [num_heads, window_size**2, window_size**2]
+        :return: (torch.Tensor) Relative positional encodings [num_heads, window_size**2, window_size**2].
         """
         # Ensure coordinates are on the same device as the meta network parameters
         relative_coords = self.relative_coordinates_log.to(self.meta_network[0].weight.device)
@@ -263,7 +258,7 @@ class WindowMultiHeadAttention(nn.Module):
         value: torch.Tensor,  # Shape: [B*num_windows, num_heads, N, head_dim]
         batch_size_windows: int,
         tokens: int,  # N = window_size * window_size
-        mask: Optional[torch.Tensor] = None,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         This function performs standard (non-sequential) scaled cosine self-attention (Swin v2).
@@ -273,9 +268,9 @@ class WindowMultiHeadAttention(nn.Module):
         :param batch_size_windows: (int) Size of the first dimension of the input tensor (batch size * windows)
         :param tokens: (int) Number of tokens in the input (N = window_size * window_size)
         :param mask: (Optional[torch.Tensor]) Attention mask for the shift case [num_mask_windows, N, N]
-        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels]
+        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels].
         """
-        head_dim = query.shape[-1]
+        query.shape[-1]
 
         # Scaled Cosine Attention (Swin v2)
         # Normalize query and key
@@ -344,9 +339,9 @@ class WindowMultiHeadAttention(nn.Module):
                 #  print(f"Warning: batch_size_windows ({batch_size_windows}) not divisible by nW_mask ({nW_mask}). "
                 #        f"Mask application might be incorrect for non-aligned inputs.")
                 # Fallback: Use integer division, might lead to shape errors later if size mismatch
-                n_repeats = batch_size_windows // nW_mask
+                batch_size_windows // nW_mask
             else:
-                n_repeats = batch_size_windows // nW_mask
+                batch_size_windows // nW_mask
 
             # Tile the mask: [nW_mask, N, N] -> [B_win, N, N]
             # mask_tiled = mask.repeat(n_repeats, 1, 1)[:batch_size_windows] # Ensure exact size
@@ -381,7 +376,7 @@ class WindowMultiHeadAttention(nn.Module):
         value: torch.Tensor,  # [B*nW, nH, N, head_dim]
         batch_size_windows: int,
         tokens: int,
-        mask: Optional[torch.Tensor] = None,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         This function performs sequential scaled cosine self-attention.
@@ -392,11 +387,11 @@ class WindowMultiHeadAttention(nn.Module):
         :param batch_size_windows: (int) Size of the first dimension of the input tensor (batch size * windows)
         :param tokens: (int) Number of tokens in the input (N)
         :param mask: (Optional[torch.Tensor]) Attention mask for the shift case [num_mask_windows, N, N]
-        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels]
+        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels].
         """
         # Init output tensor
         output: torch.Tensor = torch.zeros_like(query)  # Use zeros_like for correct shape and device
-        head_dim = query.shape[-1]
+        query.shape[-1]
 
         # Precompute relative positional encodings on the correct device
         rel_pos_bias = self.__get_relative_positional_encodings().to(query.device)  # [nH, N, N]
@@ -464,13 +459,13 @@ class WindowMultiHeadAttention(nn.Module):
     def forward(
         self,
         input: torch.Tensor,  # Shape: [B*num_windows, C, Wh, Ww]
-        mask: Optional[torch.Tensor] = None,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Forward pass
         :param input: (torch.Tensor) Input tensor of the shape [batch size * windows, channels, window_size, window_size]
         :param mask: (Optional[torch.Tensor]) Attention mask for the shift case [num_mask_windows, N, N]
-        :return: (torch.Tensor) Output tensor of the shape [batch size * windows, channels, window_size, window_size]
+        :return: (torch.Tensor) Output tensor of the shape [batch size * windows, channels, window_size, window_size].
         """
         # Save original shape
         batch_size_windows, channels, height, width = input.shape  # Wh, Ww = window_size
@@ -509,15 +504,14 @@ class WindowMultiHeadAttention(nn.Module):
 
 
 class SwinTransformerBlock(nn.Module):
-    """
-    This class implements the Swin transformer block (v1 and v2 compatible).
-    Differences for v2 mainly lie within WindowMultiHeadAttention and LayerNorm placement.
+    """This class implements the Swin transformer block (v1 and v2 compatible). Differences for v2 mainly lie within
+    WindowMultiHeadAttention and LayerNorm placement.
     """
 
     def __init__(
         self,
         in_channels: int,
-        input_resolution: Tuple[int, int],
+        input_resolution: tuple[int, int],
         number_of_heads: int,
         window_size: int = 7,
         shift_size: int = 0,
@@ -540,13 +534,13 @@ class SwinTransformerBlock(nn.Module):
         :param dropout_attention: (float) Dropout rate of attention map
         :param dropout_path: (float) Stochastic depth rate
         :param sequential_self_attention: (bool) If true sequential self-attention is performed
-        :param post_norm: (bool) If true, use post-normalization (like ViT, Swin v2), else pre-normalization (Swin v1)
+        :param post_norm: (bool) If true, use post-normalization (like ViT, Swin v2), else pre-normalization (Swin v1).
         """
         # Call super constructor
-        super(SwinTransformerBlock, self).__init__()
+        super().__init__()
         # Save parameters
         self.in_channels: int = in_channels
-        self.input_resolution: Tuple[int, int] = input_resolution
+        self.input_resolution: tuple[int, int] = input_resolution
         self.number_of_heads = number_of_heads  # Needed for Deformable block subclass
         self.post_norm = post_norm
 
@@ -597,11 +591,10 @@ class SwinTransformerBlock(nn.Module):
         self.__make_attention_mask()
 
     def __make_attention_mask(self) -> None:
+        """Method generates the attention mask used in shift case (SW-MSA). The mask ensures that attention is only
+        computed within the same sub-window.
         """
-        Method generates the attention mask used in shift case (SW-MSA).
-        The mask ensures that attention is only computed within the same sub-window.
-        """
-        attention_mask: Optional[torch.Tensor] = None  # Default to None
+        attention_mask: torch.Tensor | None = None  # Default to None
         if self.shift_size > 0 and self.make_windows:
             height, width = self.input_resolution
             # Calculate the image configuration after shifting
@@ -645,20 +638,20 @@ class SwinTransformerBlock(nn.Module):
             # Pairwise comparison: if values are different, they belong to different original sub-windows
             attention_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
             # Fill with -100 (or large negative number) where values differ, 0 where they are the same
-            attention_mask = attention_mask.masked_fill(attention_mask != 0, float(-100.0))
-            attention_mask = attention_mask.masked_fill(attention_mask == 0, float(0.0))
+            attention_mask = attention_mask.masked_fill(attention_mask != 0, (-100.0))
+            attention_mask = attention_mask.masked_fill(attention_mask == 0, 0.0)
 
         # Register the buffer (even if it's None)
         self.register_buffer("attention_mask", attention_mask, persistent=False)
 
-    def update_resolution(self, new_window_size: int, new_input_resolution: Tuple[int, int]) -> None:
+    def update_resolution(self, new_window_size: int, new_input_resolution: tuple[int, int]) -> None:
         """
         Method updates the window size and input resolution, recalculating the mask.
         :param new_window_size: (int) New window size
-        :param new_input_resolution: (Tuple[int, int]) New input resolution
+        :param new_input_resolution: (Tuple[int, int]) New input resolution.
         """
         # Update input resolution
-        self.input_resolution: Tuple[int, int] = new_input_resolution
+        self.input_resolution: tuple[int, int] = new_input_resolution
         # Check if resolution is smaller than the new window size
         if min(self.input_resolution) <= new_window_size:
             self.window_size: int = min(self.input_resolution)
@@ -686,10 +679,10 @@ class SwinTransformerBlock(nn.Module):
         Forward pass for Swin Transformer Block.
         Supports both pre-norm (Swin v1) and post-norm (Swin v2) configurations.
         :param input: (torch.Tensor) Input tensor of the shape [B, C, H, W]
-        :return: (torch.Tensor) Output tensor of the shape [B, C, H, W]
+        :return: (torch.Tensor) Output tensor of the shape [B, C, H, W].
         """
         # Save shape and shortcut
-        batch_size, channels, height, width = input.shape
+        _batch_size, _channels, height, width = input.shape
         shortcut = input
 
         # --- Pre-Normalization Logic (Swin v1 style) ---
@@ -771,16 +764,15 @@ class SwinTransformerBlock(nn.Module):
 
 
 class DeformableSwinTransformerBlock(SwinTransformerBlock):
-    """
-    This class implements a deformable version of the Swin Transformer block.
-    Inspired by: https://arxiv.org/pdf/2201.00520.pdf (Not a direct implementation)
-    This version applies offsets *before* the standard Swin block logic.
+    """This class implements a deformable version of the Swin Transformer block. Inspired by:
+    https://arxiv.org/pdf/2201.00520.pdf (Not a direct implementation) This version applies offsets *before* the
+    standard Swin block logic.
     """
 
     def __init__(
         self,
         in_channels: int,
-        input_resolution: Tuple[int, int],
+        input_resolution: tuple[int, int],
         number_of_heads: int,
         window_size: int = 7,
         shift_size: int = 0,
@@ -809,10 +801,10 @@ class DeformableSwinTransformerBlock(SwinTransformerBlock):
         :param post_norm: (bool) If true, use post-normalization style
         :param offset_downscale_factor: (int) Downscale factor of offset network stride
         :param offset_kernel_size: (int) Kernel size for offset prediction conv
-        :param offset_groups: (int) Groups for offset prediction conv
+        :param offset_groups: (int) Groups for offset prediction conv.
         """
         # Call super constructor
-        super(DeformableSwinTransformerBlock, self).__init__(
+        super().__init__(
             in_channels=in_channels,
             input_resolution=input_resolution,
             number_of_heads=number_of_heads,
@@ -865,9 +857,7 @@ class DeformableSwinTransformerBlock(SwinTransformerBlock):
         nn.init.constant_(self.offset_network[-1].bias, 0)
 
     def __make_default_offsets(self) -> None:
-        """
-        Method generates the default sampling grid (normalized to [-1, 1]).
-        """
+        """Method generates the default sampling grid (normalized to [-1, 1])."""
         height, width = self.input_resolution
         # Handle zero dimensions if they occur
         if height == 0 or width == 0:
@@ -890,16 +880,14 @@ class DeformableSwinTransformerBlock(SwinTransformerBlock):
         # Register in module, not persistent if it depends only on resolution
         self.register_buffer("default_grid", grid, persistent=False)
 
-    def update_resolution(self, new_window_size: int, new_input_resolution: Tuple[int, int]) -> None:
+    def update_resolution(self, new_window_size: int, new_input_resolution: tuple[int, int]) -> None:
         """
         Method updates the window size, input resolution, and recalculates the default grid.
         :param new_window_size: (int) New window size
-        :param new_input_resolution: (Tuple[int, int]) New input resolution
+        :param new_input_resolution: (Tuple[int, int]) New input resolution.
         """
         # Update resolution and window size in the parent class (handles mask etc.)
-        super(DeformableSwinTransformerBlock, self).update_resolution(
-            new_window_size=new_window_size, new_input_resolution=new_input_resolution
-        )
+        super().update_resolution(new_window_size=new_window_size, new_input_resolution=new_input_resolution)
         # Update default sampling grid based on the new resolution
         self.__make_default_offsets()
 
@@ -910,7 +898,7 @@ class DeformableSwinTransformerBlock(SwinTransformerBlock):
         2. Resample input features based on offsets.
         3. Pass resampled features through the standard SwinTransformerBlock logic.
         :param input: (torch.Tensor) Input tensor [B, C, H, W]
-        :return: (torch.Tensor) Output tensor [B, C, H, W]
+        :return: (torch.Tensor) Output tensor [B, C, H, W].
         """
         # Get input shape
         batch_size, channels, height, width = input.shape
@@ -972,16 +960,14 @@ class DeformableSwinTransformerBlock(SwinTransformerBlock):
 
         # 5. Pass the *resampled* input through the standard SwinTransformerBlock forward method
         # We call the *parent* class's forward method using super()
-        output: torch.Tensor = super(DeformableSwinTransformerBlock, self).forward(input=input_resampled)
+        output: torch.Tensor = super().forward(input=input_resampled)
 
         return output
 
 
 class PatchMerging(nn.Module):
-    """
-    Patch Merging Layer. Downsamples the feature map by 2x and increases channels by 2x.
-    Input: B, C, H, W
-    Output: B, 2*C, H/2, W/2
+    """Patch Merging Layer. Downsamples the feature map by 2x and increases channels by 2x. Input: B, C, H, W Output: B,
+    2*C, H/2, W/2.
     """
 
     def __init__(self, in_channels: int, norm_layer=nn.LayerNorm) -> None:  # Allow specifying norm layer
@@ -1001,20 +987,18 @@ class PatchMerging(nn.Module):
         """
         Forward pass
         :param input: (torch.Tensor) Input tensor of the shape [B, C, H, W]
-        :return: (torch.Tensor) Output tensor of the shape [B, 2*C, H/2, W/2]
+        :return: (torch.Tensor) Output tensor of the shape [B, 2*C, H/2, W/2].
         """
         batch_size, channels, height, width = input.shape
 
         # --- Input Checks and Padding ---
         # Ensure height and width are even for 2x2 merging. Pad if necessary.
-        pad_input = False
         if height % 2 == 1 or width % 2 == 1:
-            pad_input = True
             # Pad right and bottom: (padding_left, padding_right, padding_top, padding_bottom)
             padding = (0, width % 2, 0, height % 2)
             input = F.pad(input, padding)
             # Update shape after padding
-            batch_size, channels, height, width = input.shape
+            _batch_size, _channels, height, width = input.shape
 
         # Permute to [B, H, W, C] for easier selection
         input_bhwc = bchw_to_bhwc(input)
@@ -1051,11 +1035,8 @@ class PatchMerging(nn.Module):
 
 
 class PatchEmbedding(nn.Module):
-    """
-    Image to Patch Embedding Layer.
-    Uses a Conv2d layer for patch extraction and embedding.
-    Input: B, C_in, H, W
-    Output: B, C_embed, H/patch_size, W/patch_size
+    """Image to Patch Embedding Layer. Uses a Conv2d layer for patch extraction and embedding. Input: B, C_in, H, W
+    Output: B, C_embed, H/patch_size, W/patch_size.
     """
 
     def __init__(
@@ -1096,10 +1077,10 @@ class PatchEmbedding(nn.Module):
         """
         Forward pass transforms an image into patch embeddings.
         :param input: (torch.Tensor) Input images of the shape [B, C_in, H, W]
-        :return: (torch.Tensor) Patch embedding of the shape [B, C_embed, H/patch_size, W/patch_size]
+        :return: (torch.Tensor) Patch embedding of the shape [B, C_embed, H/patch_size, W/patch_size].
         """
         # Get input shape
-        batch_size, channels, height, width = input.shape
+        _batch_size, _channels, height, width = input.shape
 
         # --- Input Padding (Optional but recommended) ---
         # Ensure H and W are divisible by patch_size. Pad if necessary.
@@ -1127,9 +1108,8 @@ class PatchEmbedding(nn.Module):
 
 
 class SwinTransformerStage(nn.Module):
-    """
-    This class implements a stage of the Swin transformer, consisting of multiple blocks.
-    Optionally includes downsampling via PatchMerging at the beginning.
+    """This class implements a stage of the Swin transformer, consisting of multiple blocks. Optionally includes
+    downsampling via PatchMerging at the beginning.
     """
 
     def __init__(
@@ -1137,13 +1117,13 @@ class SwinTransformerStage(nn.Module):
         in_channels: int,  # Channels from previous stage or embedding
         depth: int,  # Number of transformer blocks in this stage
         downscale: bool,  # Whether to apply PatchMerging at the start
-        input_resolution: Tuple[int, int],  # Input resolution to this stage (H, W)
+        input_resolution: tuple[int, int],  # Input resolution to this stage (H, W)
         number_of_heads: int,  # Number of attention heads in this stage's blocks
         window_size: int = 7,
         ff_feature_ratio: int = 4,
         dropout: float = 0.0,
         dropout_attention: float = 0.0,
-        dropout_path: Union[List[float], float] = 0.0,  # Can be list or float
+        dropout_path: list[float] | float = 0.0,  # Can be list or float
         use_checkpoint: bool = False,  # Use gradient checkpointing for memory saving
         sequential_self_attention: bool = False,
         use_deformable_block: bool = False,
@@ -1166,7 +1146,7 @@ class SwinTransformerStage(nn.Module):
         :param use_deformable_block: (bool) Use DeformableSwinTransformerBlock instead of SwinTransformerBlock.
         :param post_norm: (bool) Use post-normalization style blocks.
         """
-        super(SwinTransformerStage, self).__init__()
+        super().__init__()
         self.use_checkpoint: bool = use_checkpoint
         self.downscale: bool = downscale
 
@@ -1218,7 +1198,7 @@ class SwinTransformerStage(nn.Module):
             ]
         )
 
-    def update_resolution(self, new_window_size: int, new_input_resolution: Tuple[int, int]) -> None:
+    def update_resolution(self, new_window_size: int, new_input_resolution: tuple[int, int]) -> None:
         """
         Method updates the resolution and window size for the stage and its blocks.
         :param new_window_size: (int) New window size.
@@ -1243,7 +1223,7 @@ class SwinTransformerStage(nn.Module):
         Forward pass for the Swin Transformer Stage.
         :param input: (torch.Tensor) Input tensor of the shape [B, C_in, H_in, W_in]
         :return: (torch.Tensor) Output tensor of the shape [B, C_out, H_out, W_out]
-                 (C_out=2*C_in, H_out=H_in/2 etc. if downscale=True)
+                 (C_out=2*C_in, H_out=H_in/2 etc. if downscale=True).
         """
         # 1. Apply downsampling (Patch Merging) if configured
         x: torch.Tensor = self.downsample(input)
@@ -1259,22 +1239,19 @@ class SwinTransformerStage(nn.Module):
 
 
 class SwinTransformerV2(nn.Module):
-    """
-    Swin Transformer V2 backbone.
-    Based on the papers:
-    Swin Transformer V1: https://arxiv.org/abs/2103.14030
-    Swin Transformer V2: https://arxiv.org/abs/2111.09883
-    Deformable Swin: https://arxiv.org/abs/2201.00520 (Optional block type)
+    """Swin Transformer V2 backbone. Based on the papers: Swin Transformer V1: https://arxiv.org/abs/2103.14030 Swin
+    Transformer V2: https://arxiv.org/abs/2111.09883 Deformable Swin: https://arxiv.org/abs/2201.00520 (Optional
+    block type).
     """
 
     def __init__(
         self,
-        input_resolution: Tuple[int, int] = (224, 224),  # Default ImageNet size
+        input_resolution: tuple[int, int] = (224, 224),  # Default ImageNet size
         patch_size: int = 4,
         in_channels: int = 3,
         embedding_channels: int = 96,  # Base channel dimension C (e.g., 96 for T/S, 128 for B)
-        depths: Tuple[int, ...] = (2, 2, 6, 2),  # Number of blocks in each stage
-        number_of_heads: Tuple[int, ...] = (3, 6, 12, 24),  # Number of heads in each stage
+        depths: tuple[int, ...] = (2, 2, 6, 2),  # Number of blocks in each stage
+        number_of_heads: tuple[int, ...] = (3, 6, 12, 24),  # Number of heads in each stage
         window_size: int = 7,
         ff_feature_ratio: int = 4,  # MLP expansion ratio
         dropout: float = 0.0,  # General dropout rate
@@ -1285,7 +1262,7 @@ class SwinTransformerV2(nn.Module):
         patch_norm: bool = True,  # Add norm layer after patch embedding (Swin v1/v2 default)
         use_checkpoint: bool = False,  # Use gradient checkpointing
         sequential_self_attention: bool = False,  # Use memory-efficient sequential attention
-        use_deformable_block_stages: Tuple[bool, ...] = (
+        use_deformable_block_stages: tuple[bool, ...] = (
             False,
             False,
             False,
@@ -1323,9 +1300,9 @@ class SwinTransformerV2(nn.Module):
         self.post_norm = post_norm
         self.patch_size = patch_size  # Store patch size for resolution updates
 
-        assert (
-            len(use_deformable_block_stages) == self.num_layers
-        ), "Length of use_deformable_block_stages must match the number of stages (length of depths)."
+        assert len(use_deformable_block_stages) == self.num_layers, (
+            "Length of use_deformable_block_stages must match the number of stages (length of depths)."
+        )
 
         # --- Patch Embedding ---
         self.patch_embedding: nn.Module = PatchEmbedding(
@@ -1337,7 +1314,7 @@ class SwinTransformerV2(nn.Module):
 
         # Calculate spatial resolution after patch embedding
         # Need integer division
-        patch_resolution: Tuple[int, int] = (input_resolution[0] // patch_size, input_resolution[1] // patch_size)
+        patch_resolution: tuple[int, int] = (input_resolution[0] // patch_size, input_resolution[1] // patch_size)
         self.patch_resolution = patch_resolution
 
         # --- Stochastic Depth ---
@@ -1398,7 +1375,7 @@ class SwinTransformerV2(nn.Module):
             # Extract channel dimensions (dim 1 for BCHW format)
             # Features are from the output of each *stage*
             self.width_list = [f.size(1) for f in dummy_features]
-        except Exception as e:
+        except Exception:
             # print(f"Warning: Could not automatically determine width_list due to error during dummy forward pass: {e}")
             # print("Setting width_list to empty list. Check input_resolution and model parameters.")
             # Fallback if the dummy forward pass fails
@@ -1425,7 +1402,7 @@ class SwinTransformerV2(nn.Module):
 
     @torch.jit.ignore  # Tell torchscript this isn't part of the main forward path
     def no_weight_decay(self):
-        """Which parameters should not have weight decay applied? (e.g., biases, norms, pos embeds)"""
+        """Which parameters should not have weight decay applied? (e.g., biases, norms, pos embeds)."""
         no_decay = set()
         for name, param in self.named_parameters():
             if param.ndim < 2 or "bias" in name or "norm" in name or "tau" in name or "relative_position" in name:
@@ -1433,14 +1410,14 @@ class SwinTransformerV2(nn.Module):
                 no_decay.add(name)
         return no_decay
 
-    def update_resolution(self, new_window_size: int, new_input_resolution: Tuple[int, int]) -> None:
+    def update_resolution(self, new_window_size: int, new_input_resolution: tuple[int, int]) -> None:
         """
         Method updates the window size and input resolution for the entire network.
         :param new_window_size: (int) New window size for all blocks.
         :param new_input_resolution: (Tuple[int, int]) New input image resolution (H, W).
         """
         # Calculate the new patch resolution based on the new input image resolution
-        new_patch_resolution: Tuple[int, int] = (
+        new_patch_resolution: tuple[int, int] = (
             new_input_resolution[0] // self.patch_size,
             new_input_resolution[1] // self.patch_size,
         )
@@ -1458,18 +1435,18 @@ class SwinTransformerV2(nn.Module):
         # resolution. If the resolution changes dynamically *after* init, width_list
         # will not be updated unless manually recalculated.
 
-    def forward_features(self, input: torch.Tensor) -> List[torch.Tensor]:
+    def forward_features(self, input: torch.Tensor) -> list[torch.Tensor]:
         """
         Forward pass through patch embedding and stages, returning features from each stage.
         :param input: (torch.Tensor) Input tensor [B, C_in, H, W]
-        :return: (List[torch.Tensor]) List of feature maps from each stage [B, C_stage, H_stage, W_stage]
+        :return: (List[torch.Tensor]) List of feature maps from each stage [B, C_stage, H_stage, W_stage].
         """
         # 1. Patch Embedding
         # [B, C_in, H, W] -> [B, C_embed, H/p, W/p]
         x: torch.Tensor = self.patch_embedding(input)
 
         # Store features from each stage output
-        stage_features: List[torch.Tensor] = []
+        stage_features: list[torch.Tensor] = []
 
         # 2. Forward pass through each stage
         for stage in self.stages:
@@ -1478,18 +1455,18 @@ class SwinTransformerV2(nn.Module):
 
         return stage_features
 
-    def forward(self, input: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, input: torch.Tensor) -> list[torch.Tensor]:
         """
         Main forward pass. Returns features from each stage.
         :param input: (torch.Tensor) Input tensor [B, C_in, H, W]
-        :return: (List[torch.Tensor]) List of feature maps from each stage [B, C_stage, H_stage, W_stage]
+        :return: (List[torch.Tensor]) List of feature maps from each stage [B, C_stage, H_stage, W_stage].
         """
         features = self.forward_features(input)
         return features
 
 
 def swin_transformer_v2_t(
-    input_resolution: Tuple[int, int] = (224, 224),
+    input_resolution: tuple[int, int] = (224, 224),
     window_size: int = 7,
     in_channels: int = 3,
     use_checkpoint: bool = False,

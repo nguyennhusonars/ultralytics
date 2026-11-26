@@ -1,12 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RepLKNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
 import os
 import sys
+
 import torch
-import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath
 
 
 def get_conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias):
@@ -122,7 +124,7 @@ def fuse_bn(conv, bn):
 
 class ReparamLargeKernelConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, groups, small_kernel, small_kernel_merged=False):
-        super(ReparamLargeKernelConv, self).__init__()
+        super().__init__()
         self.kernel_size = kernel_size
         self.small_kernel = small_kernel
         padding = kernel_size // 2
@@ -148,9 +150,9 @@ class ReparamLargeKernelConv(nn.Module):
                 groups=groups,
             )
             if small_kernel is not None:
-                assert (
-                    small_kernel <= kernel_size
-                ), "The kernel size for re-param cannot be larger than the large kernel!"
+                assert small_kernel <= kernel_size, (
+                    "The kernel size for re-param cannot be larger than the large kernel!"
+                )
                 self.small_conv = conv_bn(
                     in_channels=in_channels,
                     out_channels=out_channels,

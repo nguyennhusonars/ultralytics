@@ -1,12 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/dcnv3.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
-from torch.nn.init import constant_
-from torch.nn.init import xavier_uniform_
+import warnings
+
 import torch
 import torch.nn.functional as F
-import warnings
+from torch import nn
+from torch.nn.init import constant_, xavier_uniform_
 
 
 def _get_reference_points(
@@ -173,7 +173,7 @@ def build_act_layer(act_layer):
 
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
-        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+        raise ValueError(f"invalid input for _is_power_of_2: {n} (type: {type(n)})")
 
     return (n & (n - 1) == 0) and n != 0
 
@@ -211,7 +211,7 @@ class DCNv3(nn.Module):
         :param group
         :param offset_scale
         :param act_layer
-        :param norm_layer
+        :param norm_layer.
         """
         super().__init__()
         if channels % group != 0:

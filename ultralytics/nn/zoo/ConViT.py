@@ -2,13 +2,12 @@
 """Ported from ultralytics_sonnn nn/modules/ConViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, to_2tuple, trunc_normal_
 
 
 class Mlp(nn.Module):
@@ -117,7 +116,7 @@ class GPSA(nn.Module):
         return attn
 
     def get_attention_map(self, x, return_map=False):
-        B, N, C = x.shape
+        _B, N, _C = x.shape
         side = int(N**0.5)
         if self.rel_indices is None or self._last_N_for_rel_indices != (side, side):
             self.get_rel_indices(side, side, x.device)
@@ -190,7 +189,7 @@ class MHSA(nn.Module):
     def get_attention_map(self, x, return_map=False):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        q, k, _v = qkv[0], qkv[1], qkv[2]
         attn_map = (q @ k.transpose(-2, -1)) * self.scale
         attn_map = attn_map.softmax(dim=-1).mean(0)
 
@@ -296,7 +295,7 @@ class PatchEmbed(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         # For dynamic input sizes, don't assert H, W against self.img_size here.
         # The VisionTransformer's pos_embed interpolation will handle size differences.
         # Calculate grid_size based on actual H, W
@@ -403,7 +402,7 @@ class VisionTransformer(nn.Module):
         if out_indices is not None:
             if not all(idx < depth for idx in out_indices):
                 raise ValueError(f"All out_indices must be less than depth ({depth}). Got {out_indices}")
-            self.out_indices = sorted(list(set(out_indices)))
+            self.out_indices = sorted(set(out_indices))
 
         self.feature_channels = []
         self.num_features_out = []
@@ -432,7 +431,7 @@ class VisionTransformer(nn.Module):
                 else:
                     self.feature_channels = [self.embed_dim] * len(self.out_indices)
                     self.width_list = self.feature_channels  # Assign to width_list
-            except Exception as e:
+            except Exception:
                 # print(f"Warning: Could not perform dummy forward pass to get feature_channels/width_list: {e}")
                 # import traceback; traceback.print_exc()
                 self.feature_channels = [self.embed_dim] * len(self.out_indices)
@@ -491,7 +490,7 @@ class VisionTransformer(nn.Module):
         return x_patch_tokens + pos_embed_interp_flat
 
     def forward(self, x_input):
-        B, _, H_in, W_in = x_input.shape
+        B, _, _H_in, _W_in = x_input.shape
 
         x_patch_tokens = self.patch_embed(x_input)  # B, N_current_patches, C
         # Get current patch grid dimensions from PatchEmbed (which calculated it based on H_in, W_in)

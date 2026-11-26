@@ -1,23 +1,22 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/EMO.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from einops import reduce
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from functools import partial
 
+import torch
+import torch.nn.functional as F
+from einops import rearrange, reduce
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 inplace = True
 
 
 class SELayerV2(nn.Module):
     def __init__(self, in_channel, reduction=1):
-        super(SELayerV2, self).__init__()
+        super().__init__()
         assert in_channel >= reduction and in_channel % reduction == 0, "invalid in_channel in SaElayer"
         self.reduction = reduction
         self.cardinality = 4
@@ -99,7 +98,7 @@ class ConvNormAct(nn.Module):
         inplace=True,
         drop_path_rate=0.0,
     ):
-        super(ConvNormAct, self).__init__()
+        super().__init__()
         self.has_skip = skip and dim_in == dim_out
         padding = math.ceil((kernel_size - stride) / 2)
         self.conv = nn.Conv2d(dim_in, dim_out, kernel_size, stride, padding, dilation, groups, bias)
@@ -125,10 +124,12 @@ class MSPatchEmb(nn.Module):
         kernel_size=2,
         c_group=-1,
         stride=1,
-        dilations=[1, 2, 3],
+        dilations=None,
         norm_layer="bn_2d",
         act_layer="silu",
     ):
+        if dilations is None:
+            dilations = [1, 2, 3]
         super().__init__()
         self.dilation_num = len(dilations)
         assert dim_in % c_group == 0
@@ -237,7 +238,7 @@ class iRMB(nn.Module):
     def forward(self, x):
         shortcut = x
         x = self.norm(x)
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         if self.attn_s:
             # padding
             if self.window_size <= 0:
@@ -261,7 +262,7 @@ class iRMB(nn.Module):
             n1, n2 = (H + pad_b) // window_size_H, (W + pad_r) // window_size_W
             x = rearrange(x, "b c (h1 n1) (w1 n2) -> (b n1 n2) c h1 w1", n1=n1, n2=n2).contiguous()
             # attention
-            b, c, h, w = x.shape
+            _b, _c, h, w = x.shape
             qk = self.qk(x)
             qk = rearrange(
                 qk,
@@ -309,17 +310,17 @@ class EMO(nn.Module):
         self,
         dim_in=3,
         factor=1,
-        depths=[1, 2, 4, 2],
+        depths=None,
         stem_dim=16,
-        embed_dims=[64, 128, 256, 512],
-        exp_ratios=[4.0, 4.0, 4.0, 4.0],
-        norm_layers=["bn_2d", "bn_2d", "bn_2d", "bn_2d"],
-        act_layers=["relu", "relu", "relu", "relu"],
-        dw_kss=[3, 3, 5, 5],
-        se_ratios=[0.0, 0.0, 0.0, 0.0],
-        dim_heads=[32, 32, 32, 32],
-        window_sizes=[7, 7, 7, 7],
-        attn_ss=[False, False, True, True],
+        embed_dims=None,
+        exp_ratios=None,
+        norm_layers=None,
+        act_layers=None,
+        dw_kss=None,
+        se_ratios=None,
+        dim_heads=None,
+        window_sizes=None,
+        attn_ss=None,
         qkv_bias=True,
         attn_drop=0.0,
         drop=0.0,
@@ -328,6 +329,26 @@ class EMO(nn.Module):
         attn_pre=False,
         pre_dim=0,
     ):
+        if attn_ss is None:
+            attn_ss = [False, False, True, True]
+        if window_sizes is None:
+            window_sizes = [7, 7, 7, 7]
+        if dim_heads is None:
+            dim_heads = [32, 32, 32, 32]
+        if se_ratios is None:
+            se_ratios = [0.0, 0.0, 0.0, 0.0]
+        if dw_kss is None:
+            dw_kss = [3, 3, 5, 5]
+        if act_layers is None:
+            act_layers = ["relu", "relu", "relu", "relu"]
+        if norm_layers is None:
+            norm_layers = ["bn_2d", "bn_2d", "bn_2d", "bn_2d"]
+        if exp_ratios is None:
+            exp_ratios = [4.0, 4.0, 4.0, 4.0]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
+        if depths is None:
+            depths = [1, 2, 4, 2]
         super().__init__()
         # 放缩系数
         scale_factor = factor  # 比如放大 1.5 倍

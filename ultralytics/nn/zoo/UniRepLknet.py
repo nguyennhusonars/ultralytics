@@ -2,21 +2,20 @@
 """Ported from ultralytics_sonnn nn/modules/UniRepLknet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class GRNwithNHWC(nn.Module):
-    """GRN (Global Response Normalization) layer
-    Originally proposed in ConvNeXt V2 (https://arxiv.org/abs/2301.00808)
-    This implementation is more efficient than the original (https://github.com/facebookresearch/ConvNeXt-V2)
-    We assume the inputs to this layer are (N, H, W, C)
+    """GRN (Global Response Normalization) layer Originally proposed in ConvNeXt V2 (https://arxiv.org/abs/2301.00808)
+    This implementation is more efficient than the original (https://github.com/facebookresearch/ConvNeXt-V2) We
+    assume the inputs to this layer are (N, H, W, C).
     """
 
     def __init__(self, dim, use_bias=True):
@@ -59,11 +58,7 @@ def get_conv2d(
         padding = (kernel_size[0] // 2, kernel_size[1] // 2)
     else:
         padding = to_2tuple(padding)
-    need_large_impl = (
-        kernel_size[0] == kernel_size[1]
-        and kernel_size[0] > 5
-        and padding == (kernel_size[0] // 2, kernel_size[1] // 2)
-    )
+    (kernel_size[0] == kernel_size[1] and kernel_size[0] > 5 and padding == (kernel_size[0] // 2, kernel_size[1] // 2))
 
     # if attempt_use_lk_impl and need_large_impl:
     #     print('---------------- trying to import iGEMM implementation for large-kernel conv')
@@ -97,13 +92,12 @@ def get_bn(dim, use_sync_bn=False):
 
 
 class SEBlock(nn.Module):
-    """
-    Squeeze-and-Excitation Block proposed in SENet (https://arxiv.org/abs/1709.01507)
-    We assume the inputs to this layer are (N, C, H, W)
+    """Squeeze-and-Excitation Block proposed in SENet (https://arxiv.org/abs/1709.01507) We assume the inputs to this
+    layer are (N, C, H, W).
     """
 
     def __init__(self, input_channels, internal_neurons):
-        super(SEBlock, self).__init__()
+        super().__init__()
         self.down = nn.Conv2d(
             in_channels=input_channels, out_channels=internal_neurons, kernel_size=1, stride=1, bias=True
         )
@@ -156,9 +150,8 @@ def merge_dilated_into_large_kernel(large_kernel, dilated_kernel, dilated_r):
 
 
 class DilatedReparamBlock(nn.Module):
-    """
-    Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet)
-    We assume the inputs to this block are (N, C, H, W)
+    """Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet) We assume the inputs to
+    this block are (N, C, H, W).
     """
 
     def __init__(self, channels, kernel_size, deploy, use_sync_bn=False, attempt_use_lk_impl=True):
@@ -205,7 +198,7 @@ class DilatedReparamBlock(nn.Module):
             self.origin_bn = get_bn(channels, use_sync_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
                 self.__setattr__(
-                    "dil_conv_k{}_{}".format(k, r),
+                    f"dil_conv_k{k}_{r}",
                     nn.Conv2d(
                         in_channels=channels,
                         out_channels=channels,
@@ -217,15 +210,15 @@ class DilatedReparamBlock(nn.Module):
                         bias=False,
                     ),
                 )
-                self.__setattr__("dil_bn_k{}_{}".format(k, r), get_bn(channels, use_sync_bn=use_sync_bn))
+                self.__setattr__(f"dil_bn_k{k}_{r}", get_bn(channels, use_sync_bn=use_sync_bn))
 
     def forward(self, x):
         if not hasattr(self, "origin_bn"):  # deploy mode
             return self.lk_origin(x)
         out = self.origin_bn(self.lk_origin(x))
         for k, r in zip(self.kernel_sizes, self.dilates):
-            conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-            bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+            conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+            bn = self.__getattr__(f"dil_bn_k{k}_{r}")
             out = out + bn(conv(x))
         return out
 
@@ -233,8 +226,8 @@ class DilatedReparamBlock(nn.Module):
         if hasattr(self, "origin_bn"):
             origin_k, origin_b = fuse_bn(self.lk_origin, self.origin_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
-                conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-                bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+                conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+                bn = self.__getattr__(f"dil_bn_k{k}_{r}")
                 branch_k, branch_b = fuse_bn(conv, bn)
                 origin_k = merge_dilated_into_large_kernel(origin_k, branch_k, r)
                 origin_b += branch_b
@@ -254,8 +247,8 @@ class DilatedReparamBlock(nn.Module):
             self.lk_origin = merged_conv
             self.__delattr__("origin_bn")
             for k, r in zip(self.kernel_sizes, self.dilates):
-                self.__delattr__("dil_conv_k{}_{}".format(k, r))
-                self.__delattr__("dil_bn_k{}_{}".format(k, r))
+                self.__delattr__(f"dil_conv_k{k}_{r}")
+                self.__delattr__(f"dil_bn_k{k}_{r}")
 
 
 class UniRepLKNetBlock(nn.Module):
@@ -428,8 +421,7 @@ default_depths_to_kernel_sizes = {
 
 
 class UniRepLKNet(nn.Module):
-    r"""UniRepLKNet
-        A PyTorch impl of UniRepLKNet
+    r"""UniRepLKNet A PyTorch impl of UniRepLKNet.
 
     Args:
         in_chans (int): Number of input image channels. Default: 3
@@ -439,11 +431,13 @@ class UniRepLKNet(nn.Module):
         drop_path_rate (float): Stochastic depth rate. Default: 0.
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
         head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
-        kernel_sizes (tuple(tuple(int))): Kernel size for each block. None means using the default settings. Default: None.
+        kernel_sizes (tuple(tuple(int))): Kernel size for each block. None means using the default settings. Default:
+            None.
         deploy (bool): deploy = True means using the inference structure. Default: False
         with_cp (bool): with_cp = True means using torch.utils.checkpoint to save GPU memory. Default: False
         init_cfg (dict): weights to load. The easiest way to use UniRepLKNet with for OpenMMLab family. Default: None
-        attempt_use_lk_impl (bool): try to load the efficient iGEMM large-kernel impl. Setting it to False disabling the iGEMM impl. Default: True
+        attempt_use_lk_impl (bool): try to load the efficient iGEMM large-kernel impl. Setting it to False disabling the
+            iGEMM impl. Default: True
         use_sync_bn (bool): use_sync_bn = True means using sync BN. Use it if your batch size is small. Default: False
     """
 
@@ -567,11 +561,10 @@ class UniRepLKNet(nn.Module):
 
 
 class LayerNorm(nn.Module):
-    r"""LayerNorm implementation used in ConvNeXt
-    LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm implementation used in ConvNeXt LayerNorm that supports two data formats: channels_last (default) or
+    channels_first. The ordering of the dimensions in the inputs. channels_last corresponds to inputs with shape
+    (batch_size, height, width, channels) while channels_first corresponds to inputs with shape (batch_size,
+    channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last", reshape_last_to_first=False):
@@ -599,7 +592,7 @@ class LayerNorm(nn.Module):
 def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)

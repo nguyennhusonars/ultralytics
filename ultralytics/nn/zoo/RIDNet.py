@@ -2,13 +2,13 @@
 """Ported from ultralytics_sonnn nn/modules/RIDNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class MeanShift(nn.Conv2d):
     def __init__(self, rgb_range, rgb_mean, rgb_std, sign=-1):
-        super(MeanShift, self).__init__(3, 3, kernel_size=1)
+        super().__init__(3, 3, kernel_size=1)
         std = torch.Tensor(rgb_std)
         self.weight.data = torch.eye(3).view(3, 3, 1, 1)
         self.weight.data.div_(std.view(3, 1, 1, 1))
@@ -23,7 +23,7 @@ def init_weights(modules):
 
 class Merge_Run_dual(nn.Module):
     def __init__(self, in_channels, out_channels, ksize=3, stride=1, pad=1, dilation=1):
-        super(Merge_Run_dual, self).__init__()
+        super().__init__()
 
         self.body1 = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, ksize, stride, pad),
@@ -52,7 +52,7 @@ class Merge_Run_dual(nn.Module):
 
 class BasicBlock(nn.Module):
     def __init__(self, in_channels, out_channels, ksize=3, stride=1, pad=1):
-        super(BasicBlock, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(nn.Conv2d(in_channels, out_channels, ksize, stride, pad), nn.ReLU(inplace=True))
 
@@ -65,7 +65,7 @@ class BasicBlock(nn.Module):
 
 class BasicBlockSig(nn.Module):
     def __init__(self, in_channels, out_channels, ksize=3, stride=1, pad=1):
-        super(BasicBlockSig, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(nn.Conv2d(in_channels, out_channels, ksize, stride, pad), nn.Sigmoid())
 
@@ -78,7 +78,7 @@ class BasicBlockSig(nn.Module):
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(ResidualBlock, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 3, 1, 1),
@@ -96,7 +96,7 @@ class ResidualBlock(nn.Module):
 
 class EResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, group=1):
-        super(EResidualBlock, self).__init__()
+        super().__init__()
 
         self.body = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 3, 1, 1, groups=group),
@@ -116,7 +116,7 @@ class EResidualBlock(nn.Module):
 
 class CALayer(nn.Module):
     def __init__(self, channel, reduction=16):
-        super(CALayer, self).__init__()
+        super().__init__()
 
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
 
@@ -132,7 +132,7 @@ class CALayer(nn.Module):
 
 class Block(nn.Module):
     def __init__(self, in_channels, out_channels, group=1):
-        super(Block, self).__init__()
+        super().__init__()
 
         self.r1 = Merge_Run_dual(in_channels, out_channels)
         self.r2 = ResidualBlock(in_channels, out_channels)
@@ -152,7 +152,7 @@ class Block(nn.Module):
 
 class RIDNET(nn.Module):
     def __init__(self, args):
-        super(RIDNET, self).__init__()
+        super().__init__()
 
         n_feats = 16
         kernel_size = 3
