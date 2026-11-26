@@ -5,8 +5,8 @@ import collections.abc
 import math
 from itertools import repeat
 
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
@@ -189,7 +189,8 @@ def named_apply(fn, module, name="", depth_first=True, include_root=False):
 def checkpoint_seq(functions, x, every=1, flatten=False, skip_last=False, preserve_rng_state=True):
     """Run modules in sequence with activation checkpointing (timm.models.checkpoint_seq).
 
-    shortcut: checkpoints every module (ignores every/flatten/skip_last); only runs when a model enables grad checkpointing.
+    shortcut: checkpoints every module (ignores every/flatten/skip_last); only runs when a model enables grad
+    checkpointing.
     """
     from torch.utils.checkpoint import checkpoint
 
@@ -199,7 +200,7 @@ def checkpoint_seq(functions, x, every=1, flatten=False, skip_last=False, preser
 
 
 def register_model(fn):
-    """timm's model registry is not used here: return the factory unchanged."""
+    """Timm's model registry is not used here: return the factory unchanged."""
     return fn
 
 
@@ -208,10 +209,10 @@ def _cfg(url="", **kwargs):
 
 
 __all__ = (
-    "DropPath",
-    "EffectiveSEModule",
     "IMAGENET_DEFAULT_MEAN",
     "IMAGENET_DEFAULT_STD",
+    "DropPath",
+    "EffectiveSEModule",
     "LayerNorm2d",
     "Mlp",
     "SEModule",

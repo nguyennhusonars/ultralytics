@@ -2,13 +2,13 @@
 """Ported from ultralytics_sonnn nn/modules/MogaNet_modular.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class DropPath(nn.Module):
     def __init__(self, drop_prob=0.0, scale_by_keep=True):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
         self.scale_by_keep = scale_by_keep
 
@@ -52,7 +52,7 @@ class LayerNorm2d(nn.Module):
 
 class ElementScale(nn.Module):
     def __init__(self, embed_dims, init_value=0.0, requires_grad=True):
-        super(ElementScale, self).__init__()
+        super().__init__()
         self.scale = nn.Parameter(init_value * torch.ones((1, embed_dims, 1, 1)), requires_grad=requires_grad)
 
     def forward(self, x):
@@ -60,8 +60,12 @@ class ElementScale(nn.Module):
 
 
 class MultiOrderDWConv(nn.Module):
-    def __init__(self, embed_dims, dw_dilation=[1, 2, 3], channel_split=[1, 3, 4]):
-        super(MultiOrderDWConv, self).__init__()
+    def __init__(self, embed_dims, dw_dilation=None, channel_split=None):
+        if channel_split is None:
+            channel_split = [1, 3, 4]
+        if dw_dilation is None:
+            dw_dilation = [1, 2, 3]
+        super().__init__()
         self.split_ratio = [i / sum(channel_split) for i in channel_split]
         self.embed_dims_1 = int(self.split_ratio[1] * embed_dims)
         self.embed_dims_2 = int(self.split_ratio[2] * embed_dims)
@@ -107,8 +111,12 @@ class MultiOrderDWConv(nn.Module):
 
 
 class MultiOrderGatedAggregation(nn.Module):
-    def __init__(self, embed_dims, attn_dw_dilation=[1, 2, 3], attn_channel_split=[1, 3, 4], attn_act_type="SiLU"):
-        super(MultiOrderGatedAggregation, self).__init__()
+    def __init__(self, embed_dims, attn_dw_dilation=None, attn_channel_split=None, attn_act_type="SiLU"):
+        if attn_channel_split is None:
+            attn_channel_split = [1, 3, 4]
+        if attn_dw_dilation is None:
+            attn_dw_dilation = [1, 2, 3]
+        super().__init__()
         self.proj_1 = nn.Conv2d(embed_dims, embed_dims, kernel_size=1)
         self.gate = nn.Conv2d(embed_dims, embed_dims, kernel_size=1)
         self.value = MultiOrderDWConv(embed_dims, dw_dilation=attn_dw_dilation, channel_split=attn_channel_split)
@@ -131,7 +139,7 @@ class MultiOrderGatedAggregation(nn.Module):
 
 class ChannelAggregationFFN(nn.Module):
     def __init__(self, embed_dims, feedforward_channels, act_type="GELU", ffn_drop=0.0):
-        super(ChannelAggregationFFN, self).__init__()
+        super().__init__()
         self.fc1 = nn.Conv2d(embed_dims, feedforward_channels, kernel_size=1)
         self.dwconv = nn.Conv2d(
             feedforward_channels,
@@ -170,9 +178,11 @@ class MogaBlock(nn.Module):
         act_type="GELU",
         norm_type="BN",
         init_value=1e-5,
-        attn_dw_dilation=[1, 2, 3],
+        attn_dw_dilation=None,
     ):
-        super(MogaBlock, self).__init__()
+        if attn_dw_dilation is None:
+            attn_dw_dilation = [1, 2, 3]
+        super().__init__()
 
         # Norm layer builder simplified
         def _build_norm(n_type, dims):
@@ -204,9 +214,7 @@ class MogaBlock(nn.Module):
 
 
 class StackConvPatchEmbed(nn.Module):
-    """
-    對應 Stage 1 的 Embedding
-    args: [c2, kernel_size, stride]
+    """對應 Stage 1 的 Embedding args: [c2, kernel_size, stride].
     """
 
     def __init__(self, c1, c2, kernel_size=3, stride=2, act_type="GELU", norm_type="BN"):
@@ -224,9 +232,7 @@ class StackConvPatchEmbed(nn.Module):
 
 
 class ConvPatchEmbed(nn.Module):
-    """
-    對應 Stage 2, 3, 4 的 Embedding
-    args: [c2, kernel_size, stride]
+    """對應 Stage 2, 3, 4 的 Embedding args: [c2, kernel_size, stride].
     """
 
     def __init__(self, c1, c2, kernel_size=3, stride=2, norm_type="BN"):
@@ -241,19 +247,16 @@ class ConvPatchEmbed(nn.Module):
 
 
 class MogaStage(nn.Module):
-    """
-    MogaNet 的一個完整 Stage，包含 N 個 Block 和一個尾部的 Norm。
-    設計這個類是為了處理內部 Block 的 dilation 變化邏輯。
-    YAML args: [c2, depth, ffn_ratio]
-    注意：c1 由上層傳入，若 c1 != c2 則報錯 (除非添加 projection，但 MogaNet 架構通常在 Embed 層改變通道)
+    """MogaNet 的一個完整 Stage，包含 N 個 Block 和一個尾部的 Norm。 設計這個類是為了處理內部 Block 的 dilation 變化邏輯。 YAML args: [c2, depth,
+    ffn_ratio] 注意：c1 由上層傳入，若 c1 != c2 則報錯 (除非添加 projection，但 MogaNet 架構通常在 Embed 層改變通道).
     """
 
     def __init__(self, c1, c2, depth, ffn_ratio=4.0, drop_path_rate=0.0):
         super().__init__()
         # 在 MogaNet 中，Block 不改變通道數，所以 c1 必須等於 c2
-        assert (
-            c1 == c2
-        ), f"MogaStage input channels {c1} must equal output channels {c2}. Change dimensions in PatchEmbed."
+        assert c1 == c2, (
+            f"MogaStage input channels {c1} must equal output channels {c2}. Change dimensions in PatchEmbed."
+        )
 
         self.blocks = nn.ModuleList([])
         # 簡單的 Dilation 循環邏輯

@@ -1,9 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/CGA.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
 import itertools
+
 import torch
+from torch import nn
 
 
 class Conv2d_BN(torch.nn.Sequential):
@@ -36,6 +37,7 @@ class Conv2d_BN(torch.nn.Sequential):
 
 class CascadedGroupAttention(torch.nn.Module):
     r"""Cascaded Group Attention.
+
     Args:
         dim (int): Number of input channels.
         key_dim (int): The dimension for query and key.
@@ -52,8 +54,10 @@ class CascadedGroupAttention(torch.nn.Module):
         num_heads=8,
         attn_ratio=4,
         resolution=14,
-        kernels=[5, 5, 5, 5],
+        kernels=None,
     ):
+        if kernels is None:
+            kernels = [5, 5, 5, 5]
         super().__init__()
         self.num_heads = num_heads
         self.scale = key_dim**-0.5
@@ -104,7 +108,7 @@ class CascadedGroupAttention(torch.nn.Module):
             self.ab = self.attention_biases[:, self.attention_bias_idxs]
 
     def forward(self, x):  # x (B,C,H,W)
-        B, C, H, W = x.shape
+        B, _C, H, W = x.shape
         trainingab = self.attention_biases[:, self.attention_bias_idxs]
         feats_in = x.chunk(len(self.qkvs), dim=1)
         feats_out = []
@@ -126,6 +130,7 @@ class CascadedGroupAttention(torch.nn.Module):
 
 class LocalWindowAttention(torch.nn.Module):
     r"""Local Window Attention.
+
     Args:
         dim (int): Number of input channels.
         key_dim (int): The dimension for query and key.
@@ -143,8 +148,10 @@ class LocalWindowAttention(torch.nn.Module):
         attn_ratio=4,
         resolution=14,
         window_resolution=7,
-        kernels=[5, 5, 5, 5],
+        kernels=None,
     ):
+        if kernels is None:
+            kernels = [5, 5, 5, 5]
         super().__init__()
         key_dim = dim // 16  # 必须放缩16倍否则会报错
         self.dim = dim
@@ -234,18 +241,20 @@ class Conv(nn.Module):
 
 
 class PSABlock(nn.Module):
-    """
-    PSABlock class implementing a Position-Sensitive Attention block for neural networks.
-    This class encapsulates the functionality for applying multi-head attention and feed-forward neural network layers
-    with optional shortcut connections.
+    """PSABlock class implementing a Position-Sensitive Attention block for neural networks. This class encapsulates the
+    functionality for applying multi-head attention and feed-forward neural network layers with optional
+    shortcut connections.
+
     Attributes:
         attn (Attention): Multi-head attention module.
         ffn (nn.Sequential): Feed-forward neural network module.
         add (bool): Flag indicating whether to add shortcut connections.
+
     Methods:
         forward: Performs a forward pass through the PSABlock, applying attention and feed-forward layers.
+
     Examples:
-        Create a PSABlock and perform a forward pass
+        Create a PSABlock and perform a forward pass.
     """
 
     def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
@@ -264,20 +273,21 @@ class PSABlock(nn.Module):
 
 
 class C2PSA_CGA(nn.Module):
-    """
-    C2PSA module with attention mechanism for enhanced feature extraction and processing.
-    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
-    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+    """C2PSA module with attention mechanism for enhanced feature extraction and processing. This module implements a
+    convolutional block with attention mechanisms to enhance feature extraction and processing capabilities. It
+    includes a series of PSABlock modules for self-attention and feed-forward operations.
+
     Attributes:
         c (int): Number of hidden channels.
         cv1 (Conv): 1x1 convolution layer to reduce the number of input channels to 2*c.
         cv2 (Conv): 1x1 convolution layer to reduce the number of output channels to c.
         m (nn.Sequential): Sequential container of PSABlock modules for attention and feed-forward operations.
+
     Methods:
         forward: Performs a forward pass through the C2PSA module, applying attention and feed-forward operations.
+
     Notes:
         This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
-    Examples:
     """
 
     def __init__(self, c1, c2, n=1, e=0.5):

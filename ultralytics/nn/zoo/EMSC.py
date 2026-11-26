@@ -1,17 +1,19 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/EMSC.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.conv import Conv
 import torch
-import torch.nn as nn
+from einops import rearrange
+from torch import nn
+
+from ultralytics.nn.modules.block import Bottleneck, C2f
+from ultralytics.nn.modules.conv import Conv
 
 
 class EMSConv(nn.Module):
     # Efficient Multi-Scale Conv
-    def __init__(self, channel=256, kernels=[3, 5]):
+    def __init__(self, channel=256, kernels=None):
+        if kernels is None:
+            kernels = [3, 5]
         super().__init__()
         self.groups = len(kernels)
         min_ch = channel // 4
@@ -36,7 +38,9 @@ class EMSConv(nn.Module):
 
 class EMSConvP(nn.Module):
     # Efficient Multi-Scale Conv Plus
-    def __init__(self, channel=256, kernels=[1, 3, 5, 7]):
+    def __init__(self, channel=256, kernels=None):
+        if kernels is None:
+            kernels = [1, 3, 5, 7]
         super().__init__()
         self.groups = len(kernels)
         min_ch = channel // self.groups

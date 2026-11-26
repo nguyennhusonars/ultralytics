@@ -1,16 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/OverLoCK.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import einsum
-from einops import rearrange
-from torch import nn
-from torch.utils.checkpoint import checkpoint
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch.distributed
 import torch.nn.functional as F
+from einops import einsum, rearrange
+from torch import nn
+from torch.utils.checkpoint import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, to_2tuple, trunc_normal_
 
 
 def get_conv2d(
@@ -161,10 +158,9 @@ class LayerNorm2d(nn.LayerNorm):
 
 
 class GRN(nn.Module):
-    """GRN (Global Response Normalization) layer
-    Originally proposed in ConvNeXt V2 (https://arxiv.org/abs/2301.00808)
-    This implementation is more efficient than the original (https://github.com/facebookresearch/ConvNeXt-V2)
-    We assume the inputs to this layer are (N, C, H, W)
+    """GRN (Global Response Normalization) layer Originally proposed in ConvNeXt V2 (https://arxiv.org/abs/2301.00808)
+    This implementation is more efficient than the original (https://github.com/facebookresearch/ConvNeXt-V2) We
+    assume the inputs to this layer are (N, C, H, W).
     """
 
     def __init__(self, dim, use_bias=True):
@@ -184,9 +180,8 @@ class GRN(nn.Module):
 
 
 class DilatedReparamBlock(nn.Module):
-    """
-    Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet)
-    We assume the inputs to this block are (N, C, H, W)
+    """Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet) We assume the inputs to
+    this block are (N, C, H, W).
     """
 
     def __init__(self, channels, kernel_size, deploy, use_sync_bn=False, attempt_use_lk_impl=True):
@@ -236,7 +231,7 @@ class DilatedReparamBlock(nn.Module):
             self.origin_bn = get_bn(channels, use_sync_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
                 self.__setattr__(
-                    "dil_conv_k{}_{}".format(k, r),
+                    f"dil_conv_k{k}_{r}",
                     nn.Conv2d(
                         in_channels=channels,
                         out_channels=channels,
@@ -248,15 +243,15 @@ class DilatedReparamBlock(nn.Module):
                         bias=False,
                     ),
                 )
-                self.__setattr__("dil_bn_k{}_{}".format(k, r), get_bn(channels, use_sync_bn=use_sync_bn))
+                self.__setattr__(f"dil_bn_k{k}_{r}", get_bn(channels, use_sync_bn=use_sync_bn))
 
     def forward(self, x):
         if not hasattr(self, "origin_bn"):  # deploy mode
             return self.lk_origin(x)
         out = self.origin_bn(self.lk_origin(x))
         for k, r in zip(self.kernel_sizes, self.dilates):
-            conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-            bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+            conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+            bn = self.__getattr__(f"dil_bn_k{k}_{r}")
             out = out + bn(conv(x))
         return out
 
@@ -264,8 +259,8 @@ class DilatedReparamBlock(nn.Module):
         if hasattr(self, "origin_bn"):
             origin_k, origin_b = fuse_bn(self.lk_origin, self.origin_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
-                conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-                bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+                conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+                bn = self.__getattr__(f"dil_bn_k{k}_{r}")
                 branch_k, branch_b = fuse_bn(conv, bn)
                 origin_k = merge_dilated_into_large_kernel(origin_k, branch_k, r)
                 origin_b += branch_b
@@ -285,8 +280,8 @@ class DilatedReparamBlock(nn.Module):
             self.lk_origin = merged_conv
             self.__delattr__("origin_bn")
             for k, r in zip(self.kernel_sizes, self.dilates):
-                self.__delattr__("dil_conv_k{}_{}".format(k, r))
-                self.__delattr__("dil_bn_k{}_{}".format(k, r))
+                self.__delattr__(f"dil_conv_k{k}_{r}")
+                self.__delattr__(f"dil_bn_k{k}_{r}")
 
 
 class CTXDownsample(nn.Module):
@@ -308,9 +303,7 @@ class CTXDownsample(nn.Module):
 
 
 class ResDWConv(nn.Conv2d):
-    """
-    Depthwise convolution with residual connection
-    """
+    """Depthwise convolution with residual connection."""
 
     def __init__(self, dim, kernel_size=3):
         super().__init__(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim)
@@ -503,9 +496,7 @@ class DynamicConvBlock(nn.Module):
         return (idx_h, idx_w, idx_k)
 
     def apply_rpb(self, attn, rpb, height, width, kernel_size, idx_h, idx_w, idx_k):
-        """
-        RPB implementation directly borrowed from https://tinyurl.com/mrbub4t3
-        """
+        """RPB implementation directly borrowed from https://tinyurl.com/mrbub4t3."""
         num_repeat_h = torch.ones(kernel_size, dtype=torch.long)
         num_repeat_w = torch.ones(kernel_size, dtype=torch.long)
         num_repeat_h[kernel_size // 2] = height - (kernel_size - 1)
@@ -523,7 +514,7 @@ class DynamicConvBlock(nn.Module):
     def _forward_inner(self, x, h_x, h_r):
         input_resoltion = x.shape[2:]
         B, C, H, W = x.shape
-        B, C_h, H_h, W_h = h_x.shape
+        B, C_h, _H_h, _W_h = h_x.shape
 
         if not self.is_first:
             h_x = self.x_scale(h_x) + self.h_scale(h_r)
@@ -629,22 +620,20 @@ class DynamicConvBlock(nn.Module):
 
 
 class OverLoCK(nn.Module):
-    """
-    An Overview-first-Look-Closely-next ConvNet with Context-Mixing Dynamic Kernels
-    https://arxiv.org/abs/2502.20087
+    """An Overview-first-Look-Closely-next ConvNet with Context-Mixing Dynamic Kernels https://arxiv.org/abs/2502.20087.
     """
 
     def __init__(
         self,
-        depth=[2, 2, 2, 2],
-        sub_depth=[4, 2],
+        depth=None,
+        sub_depth=None,
         in_chans=3,
-        embed_dim=[96, 192, 384, 768],
-        kernel_size=[7, 7, 7, 7],
-        mlp_ratio=[4, 4, 4, 4],
-        sub_mlp_ratio=[4, 4],
-        sub_num_heads=[4, 8],
-        ls_init_value=[None, None, 1, 1],
+        embed_dim=None,
+        kernel_size=None,
+        mlp_ratio=None,
+        sub_mlp_ratio=None,
+        sub_num_heads=None,
+        ls_init_value=None,
         res_scale=True,
         smk_size=5,
         deploy=False,
@@ -652,9 +641,27 @@ class OverLoCK(nn.Module):
         drop_path_rate=0,
         norm_layer=LayerNorm2d,
         num_classes=1000,  # Kept for loading pretrained weights, but not used in forward
-        use_checkpoint=[0, 0, 0, 0],
+        use_checkpoint=None,
         **kwargs,  # Accept other unused args
     ):
+        if use_checkpoint is None:
+            use_checkpoint = [0, 0, 0, 0]
+        if ls_init_value is None:
+            ls_init_value = [None, None, 1, 1]
+        if sub_num_heads is None:
+            sub_num_heads = [4, 8]
+        if sub_mlp_ratio is None:
+            sub_mlp_ratio = [4, 4]
+        if mlp_ratio is None:
+            mlp_ratio = [4, 4, 4, 4]
+        if kernel_size is None:
+            kernel_size = [7, 7, 7, 7]
+        if embed_dim is None:
+            embed_dim = [96, 192, 384, 768]
+        if sub_depth is None:
+            sub_depth = [4, 2]
+        if depth is None:
+            depth = [2, 2, 2, 2]
         super().__init__()
 
         self.num_features = self.embed_dim = embed_dim
@@ -814,9 +821,8 @@ class OverLoCK(nn.Module):
                 m.merge_dilated_branches()
 
     def forward(self, x):
-        """
-        Modified forward pass to return a list of four feature maps for use as a backbone.
-        This provides multi-scale features for downstream tasks like object detection.
+        """Modified forward pass to return a list of four feature maps for use as a backbone. This provides multi-scale
+        features for downstream tasks like object detection.
         """
         outputs = []
 

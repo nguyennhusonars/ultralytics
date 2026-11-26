@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MogaNet_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 def build_act_layer(act_type):
@@ -36,10 +37,9 @@ def build_norm_layer(norm_type, embed_dims):
 
 
 class LayerNorm2d(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
@@ -66,7 +66,7 @@ class ElementScale(nn.Module):
     """A learnable element-wise scaler."""
 
     def __init__(self, embed_dims, init_value=0.0, requires_grad=True):
-        super(ElementScale, self).__init__()
+        super().__init__()
         self.scale = nn.Parameter(init_value * torch.ones((1, embed_dims, 1, 1)), requires_grad=requires_grad)
 
     def forward(self, x):
@@ -77,18 +77,15 @@ class ChannelAggregationFFN(nn.Module):
     """An implementation of FFN with Channel Aggregation.
 
     Args:
-        embed_dims (int): The feature dimension. Same as
-            `MultiheadAttention`.
+        embed_dims (int): The feature dimension. Same as `MultiheadAttention`.
         feedforward_channels (int): The hidden dimension of FFNs.
-        kernel_size (int): The depth-wise conv kernel size as the
-            depth-wise convolution. Defaults to 3.
+        kernel_size (int): The depth-wise conv kernel size as the depth-wise convolution. Defaults to 3.
         act_type (str): The type of activation. Defaults to 'GELU'.
-        ffn_drop (float, optional): Probability of an element to be
-            zeroed in FFN. Default 0.0.
+        ffn_drop (float, optional): Probability of an element to be zeroed in FFN. Default 0.0.
     """
 
     def __init__(self, embed_dims, feedforward_channels, kernel_size=3, act_type="GELU", ffn_drop=0.0):
-        super(ChannelAggregationFFN, self).__init__()
+        super().__init__()
 
         self.embed_dims = embed_dims
         self.feedforward_channels = feedforward_channels
@@ -139,24 +136,20 @@ class MultiOrderDWConv(nn.Module):
     Args:
         embed_dims (int): Number of input channels.
         dw_dilation (list): Dilations of three DWConv layers.
-        channel_split (list): The raletive ratio of three splited channels.
+        channel_split (list): The raletive ratio of three split channels.
     """
 
     def __init__(
         self,
         embed_dims,
-        dw_dilation=[
-            1,
-            2,
-            3,
-        ],
-        channel_split=[
-            1,
-            3,
-            4,
-        ],
+        dw_dilation=None,
+        channel_split=None,
     ):
-        super(MultiOrderDWConv, self).__init__()
+        if channel_split is None:
+            channel_split = [1, 3, 4]
+        if dw_dilation is None:
+            dw_dilation = [1, 2, 3]
+        super().__init__()
 
         self.split_ratio = [i / sum(channel_split) for i in channel_split]
         self.embed_dims_1 = int(self.split_ratio[1] * embed_dims)
@@ -217,20 +210,23 @@ class MultiOrderGatedAggregation(nn.Module):
     Args:
         embed_dims (int): Number of input channels.
         attn_dw_dilation (list): Dilations of three DWConv layers.
-        attn_channel_split (list): The raletive ratio of splited channels.
-        attn_act_type (str): The activation type for Spatial Block.
-            Defaults to 'SiLU'.
+        attn_channel_split (list): The raletive ratio of split channels.
+        attn_act_type (str): The activation type for Spatial Block. Defaults to 'SiLU'.
     """
 
     def __init__(
         self,
         embed_dims,
-        attn_dw_dilation=[1, 2, 3],
-        attn_channel_split=[1, 3, 4],
+        attn_dw_dilation=None,
+        attn_channel_split=None,
         attn_act_type="SiLU",
         attn_force_fp32=False,
     ):
-        super(MultiOrderGatedAggregation, self).__init__()
+        if attn_channel_split is None:
+            attn_channel_split = [1, 3, 4]
+        if attn_dw_dilation is None:
+            attn_dw_dilation = [1, 2, 3]
+        super().__init__()
 
         self.embed_dims = embed_dims
         self.attn_force_fp32 = attn_force_fp32
@@ -285,18 +281,15 @@ class MogaBlock(nn.Module):
 
     Args:
         embed_dims (int): Number of input channels.
-        ffn_ratio (float): The expansion ratio of feedforward network hidden
-            layer channels. Defaults to 4.
+        ffn_ratio (float): The expansion ratio of feedforward network hidden layer channels. Defaults to 4.
         drop_rate (float): Dropout rate after embedding. Defaults to 0.
         drop_path_rate (float): Stochastic depth rate. Defaults to 0.1.
-        act_type (str): The activation type for projections and FFNs.
-            Defaults to 'GELU'.
+        act_type (str): The activation type for projections and FFNs. Defaults to 'GELU'.
         norm_cfg (str): The type of normalization layer. Defaults to 'BN'.
         init_value (float): Init value for Layer Scale. Defaults to 1e-5.
         attn_dw_dilation (list): Dilations of three DWConv layers.
-        attn_channel_split (list): The raletive ratio of splited channels.
-        attn_act_type (str): The activation type for the gating branch.
-            Defaults to 'SiLU'.
+        attn_channel_split (list): The raletive ratio of split channels.
+        attn_act_type (str): The activation type for the gating branch. Defaults to 'SiLU'.
     """
 
     def __init__(
@@ -308,12 +301,16 @@ class MogaBlock(nn.Module):
         act_type="GELU",
         norm_type="BN",
         init_value=1e-5,
-        attn_dw_dilation=[1, 2, 3],
-        attn_channel_split=[1, 3, 4],
+        attn_dw_dilation=None,
+        attn_channel_split=None,
         attn_act_type="SiLU",
         attn_force_fp32=False,
     ):
-        super(MogaBlock, self).__init__()
+        if attn_channel_split is None:
+            attn_channel_split = [1, 3, 4]
+        if attn_dw_dilation is None:
+            attn_dw_dilation = [1, 2, 3]
+        super().__init__()
         self.out_channels = embed_dims
 
         self.norm1 = build_norm_layer(norm_type, embed_dims)
@@ -361,14 +358,13 @@ class ConvPatchEmbed(nn.Module):
     Args:
         in_features (int): The feature dimension.
         embed_dims (int): The output dimension of PatchEmbed.
-        kernel_size (int): The conv kernel size of PatchEmbed.
-            Defaults to 3.
+        kernel_size (int): The conv kernel size of PatchEmbed. Defaults to 3.
         stride (int): The conv stride of PatchEmbed. Defaults to 2.
         norm_type (str): The type of normalization layer. Defaults to 'BN'.
     """
 
     def __init__(self, in_channels, embed_dims, kernel_size=3, stride=2, norm_type="BN"):
-        super(ConvPatchEmbed, self).__init__()
+        super().__init__()
 
         self.projection = nn.Conv2d(
             in_channels, embed_dims, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2
@@ -388,16 +384,14 @@ class StackConvPatchEmbed(nn.Module):
     Args:
         in_features (int): The feature dimension.
         embed_dims (int): The output dimension of PatchEmbed.
-        kernel_size (int): The conv kernel size of stack patch embedding.
-            Defaults to 3.
-        stride (int): The conv stride of stack patch embedding.
-            Defaults to 2.
+        kernel_size (int): The conv kernel size of stack patch embedding. Defaults to 3.
+        stride (int): The conv stride of stack patch embedding. Defaults to 2.
         act_type (str): The activation in PatchEmbed. Defaults to 'GELU'.
         norm_type (str): The type of normalization layer. Defaults to 'BN'.
     """
 
     def __init__(self, in_channels, embed_dims, kernel_size=3, stride=2, act_type="GELU", norm_type="BN"):
-        super(StackConvPatchEmbed, self).__init__()
+        super().__init__()
 
         self.projection = nn.Sequential(
             nn.Conv2d(in_channels, embed_dims // 2, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2),
@@ -414,36 +408,17 @@ class StackConvPatchEmbed(nn.Module):
 
 
 class MogaNet(nn.Module):
-    r"""MogaNet
-    A PyTorch implement of : `Efficient Multi-order Gated Aggregation
-    Network <https://arxiv.org/abs/2211.03295>`_
+    r"""MogaNet A PyTorch implement of : `Efficient Multi-order Gated Aggregation Network
+    <https://arxiv.org/abs/2211.03295>`_.
     """
 
     arch_zoo = {
-        **dict.fromkeys(['xt', 'x-tiny', 'xtiny'],
-                        {'embed_dims': [32, 64, 96, 192],
-                         'depths': [3, 3, 10, 2],
-                         'ffn_ratios': [8, 8, 4, 4]}),
-        **dict.fromkeys(['t', 'tiny'],
-                        {'embed_dims': [32, 64, 128, 256],
-                         'depths': [3, 3, 12, 2],
-                         'ffn_ratios': [8, 8, 4, 4]}),
-        **dict.fromkeys(['s', 'small'],
-                        {'embed_dims': [64, 128, 320, 512],
-                         'depths': [2, 3, 12, 2],
-                         'ffn_ratios': [8, 8, 4, 4]}),
-        **dict.fromkeys(['b', 'base'],
-                        {'embed_dims': [64, 160, 320, 512],
-                         'depths': [4, 6, 22, 3],
-                         'ffn_ratios': [8, 8, 4, 4]}),
-        **dict.fromkeys(['l', 'large'],
-                        {'embed_dims': [64, 160, 320, 640],
-                         'depths': [4, 6, 44, 4],
-                         'ffn_ratios': [8, 8, 4, 4]}),
-        **dict.fromkeys(['xl', 'x-large', 'xlarge'],
-                        {'embed_dims': [96, 192, 480, 960],
-                         'depths': [6, 6, 44, 4],
-                         'ffn_ratios': [8, 8, 4, 4]}),
+        **{key: {'embed_dims': [32, 64, 96, 192], 'depths': [3, 3, 10, 2], 'ffn_ratios': [8, 8, 4, 4]} for key in ['xt', 'x-tiny', 'xtiny']},
+        **{key: {'embed_dims': [32, 64, 128, 256], 'depths': [3, 3, 12, 2], 'ffn_ratios': [8, 8, 4, 4]} for key in ['t', 'tiny']},
+        **{key: {'embed_dims': [64, 128, 320, 512], 'depths': [2, 3, 12, 2], 'ffn_ratios': [8, 8, 4, 4]} for key in ['s', 'small']},
+        **{key: {'embed_dims': [64, 160, 320, 512], 'depths': [4, 6, 22, 3], 'ffn_ratios': [8, 8, 4, 4]} for key in ['b', 'base']},
+        **{key: {'embed_dims': [64, 160, 320, 640], 'depths': [4, 6, 44, 4], 'ffn_ratios': [8, 8, 4, 4]} for key in ['l', 'large']},
+        **{key: {'embed_dims': [96, 192, 480, 960], 'depths': [6, 6, 44, 4], 'ffn_ratios': [8, 8, 4, 4]} for key in ['xl', 'x-large', 'xlarge']},
     }  # yapf: disable
 
     def __init__(
@@ -453,22 +428,25 @@ class MogaNet(nn.Module):
         drop_rate=0.0,
         drop_path_rate=0.0,
         init_value=1e-5,
-        patch_sizes=[3, 3, 3, 3],
+        patch_sizes=None,
         stem_norm_type="BN",
         conv_norm_type="BN",
-        patchembed_types=[
-            "ConvEmbed",
-            "Conv",
-            "Conv",
-            "Conv",
-        ],
-        attn_dw_dilation=[1, 2, 3],
-        attn_channel_split=[1, 3, 4],
+        patchembed_types=None,
+        attn_dw_dilation=None,
+        attn_channel_split=None,
         attn_act_type="SiLU",
         attn_final_dilation=True,
         attn_force_fp32=False,
         **kwargs,
     ):
+        if attn_channel_split is None:
+            attn_channel_split = [1, 3, 4]
+        if attn_dw_dilation is None:
+            attn_dw_dilation = [1, 2, 3]
+        if patchembed_types is None:
+            patchembed_types = ["ConvEmbed", "Conv", "Conv", "Conv"]
+        if patch_sizes is None:
+            patch_sizes = [3, 3, 3, 3]
         super().__init__()
 
         if isinstance(arch, str):
@@ -477,9 +455,9 @@ class MogaNet(nn.Module):
             self.arch_settings = self.arch_zoo[arch]
         else:
             essential_keys = {"embed_dims", "depths", "ffn_ratios"}
-            assert (
-                isinstance(arch, dict) and set(arch) == essential_keys
-            ), f"Custom arch needs a dict with keys {essential_keys}"
+            assert isinstance(arch, dict) and set(arch) == essential_keys, (
+                f"Custom arch needs a dict with keys {essential_keys}"
+            )
             self.arch_settings = arch
 
         self.embed_dims = self.arch_settings["embed_dims"]
@@ -551,7 +529,7 @@ class MogaNet(nn.Module):
         self.train()
 
     def _init_weights(self, m):
-        """Init for timm image classification"""
+        """Init for timm image classification."""
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=0.02)
             if isinstance(m, nn.Linear) and m.bias is not None:

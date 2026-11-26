@@ -12,24 +12,23 @@ scales: # model compound scaling constants, i.e. 'model=yolo11n.yaml' will call 
   l: [1.00, 1.00, 512, 0] # summary: 631 layers, 25372160 parameters, 25372144 gradients, 87.6 GFLOPs
   x: [1.00, 1.50, 512, 0] # summary: 631 layers, 56966176 parameters, 56966160 gradients, 196.0 GFLOPs
 
-
 # YOLO11n backbone
 backbone:
   # [from, repeats, module, args]
-  - [-1, 1, HGStem, [32, 48]]  # 0-P2/4
-  - [-1, 6, Light_HGBlock, [48, 128, 3]]  # stage 1
- 
-  - [-1, 1, DWConv, [128, 3, 2, 1, 1]]  # 2-P3/8
-  - [-1, 6, Light_HGBlock, [96, 512, 3]]   # stage 2
- 
-  - [-1, 1, DWConv, [512, 3, 2, 2, False]]  # 4-P3/16
-  - [-1, 6, Light_HGBlock, [192, 1024, 5, 3, False]]  # cm, c2, k, light, shortcut
+  - [-1, 1, HGStem, [32, 48]] # 0-P2/4
+  - [-1, 6, Light_HGBlock, [48, 128, 3]] # stage 1
+
+  - [-1, 1, DWConv, [128, 3, 2, 1, 1]] # 2-P3/8
+  - [-1, 6, Light_HGBlock, [96, 512, 3]] # stage 2
+
+  - [-1, 1, DWConv, [512, 3, 2, 2, False]] # 4-P3/16
+  - [-1, 6, Light_HGBlock, [192, 1024, 5, 3, False]] # cm, c2, k, light, shortcut
   - [-1, 6, Light_HGBlock, [192, 1024, 5, 3, True]]
-  - [-1, 6, Light_HGBlock, [192, 1024, 5, 3, True]]  # stage 3
- 
-  - [-1, 1, DWConv, [1024, 3, 2, 1, False]]  # 8-P4/32
-  - [-1, 6, Light_HGBlock, [384, 2048, 5, 3, False]]  # stage 4
- 
+  - [-1, 6, Light_HGBlock, [192, 1024, 5, 3, True]] # stage 3
+
+  - [-1, 1, DWConv, [1024, 3, 2, 1, False]] # 8-P4/32
+  - [-1, 6, Light_HGBlock, [384, 2048, 5, 3, False]] # stage 4
+
   - [-1, 1, SPPF, [1024, 5]] # 10
   - [-1, 1, C2PSA_SENetV2, [1024]] # 11
 

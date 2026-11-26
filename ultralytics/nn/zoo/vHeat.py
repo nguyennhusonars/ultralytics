@@ -1,16 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/vHeat.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
+import math
 from functools import partial
 from typing import Callable
-from typing import List
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
-import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class LayerNorm2d(nn.LayerNorm):
@@ -157,10 +159,10 @@ class Heat2D(nn.Module):
             weight_cosn = self.get_cos_map(H, device=x.device).detach_()
             weight_cosm = self.get_cos_map(W, device=x.device).detach_()
             weight_exp = self.get_decay_map((H, W), device=x.device).detach_()
-            setattr(self, "__RES__", (H, W))
-            setattr(self, "__WEIGHT_COSN__", weight_cosn)
-            setattr(self, "__WEIGHT_COSM__", weight_cosm)
-            setattr(self, "__WEIGHT_EXP__", weight_exp)
+            self.__RES__ = H, W
+            self.__WEIGHT_COSN__ = weight_cosn
+            self.__WEIGHT_COSM__ = weight_cosm
+            self.__WEIGHT_EXP__ = weight_exp
 
         N, M = weight_cosn.shape[0], weight_cosm.shape[0]
         x = F.conv1d(x.contiguous().view(B, H, -1), weight_cosn.contiguous().view(N, H, 1))
@@ -271,8 +273,8 @@ class vHeat(nn.Module):
         patch_size=4,
         in_chans=3,
         num_classes=1000,
-        depths=[2, 2, 9, 2],
-        dims=[96, 192, 384, 768],
+        depths=None,
+        dims=None,
         drop_path_rate=0.2,
         patch_norm=True,
         post_norm=True,
@@ -284,6 +286,10 @@ class vHeat(nn.Module):
         infer_mode=False,
         **kwargs,
     ):
+        if dims is None:
+            dims = [96, 192, 384, 768]
+        if depths is None:
+            depths = [2, 2, 9, 2]
         super().__init__()
         self.num_classes = num_classes
         self.num_layers = len(depths)
@@ -368,7 +374,7 @@ class vHeat(nn.Module):
         res=14,
         dim=96,
         depth=2,
-        drop_path=[0.1, 0.1],
+        drop_path=None,
         use_checkpoint=False,
         norm_layer=LayerNorm2d,
         post_norm=True,
@@ -377,6 +383,8 @@ class vHeat(nn.Module):
         infer_mode=False,
         **kwargs,
     ):
+        if drop_path is None:
+            drop_path = [0.1, 0.1]
         assert depth == len(drop_path)
         blocks = []
         for d in range(depth):
@@ -411,7 +419,7 @@ class vHeat(nn.Module):
         del self.freq_embed
 
     # --- [修正] 在 forward 方法中加入動態插值 ---
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         x = self.patch_embed(x)
         outputs = []
 
@@ -420,7 +428,7 @@ class vHeat(nn.Module):
                 # 在推斷模式下，freq_embed 已被烘焙，不需要傳遞
                 x = self.stages[i](x)
             else:
-                B, C, H, W = x.shape
+                _B, _C, H, W = x.shape
                 freq_embed_param = self.freq_embed[i]
 
                 # [核心修正] 檢查空間尺寸是否匹配，如果不匹配則進行雙線性插值

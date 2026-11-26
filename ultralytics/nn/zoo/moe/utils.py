@@ -1,15 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/moe/utils.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Tuple
-from typing import Union
-import torch.nn as nn
+from __future__ import annotations
+
+from torch import nn
 
 
 class FlopsUtils:
     @staticmethod
-    def count_conv2d(layer: Union[nn.Conv2d, nn.Sequential], input_shape: Tuple[int, int, int, int]) -> float:
-        B, C, H, W = input_shape
+    def count_conv2d(layer: nn.Conv2d | nn.Sequential, input_shape: tuple[int, int, int, int]) -> float:
+        B, _C, H, W = input_shape
         if isinstance(layer, nn.Sequential):
             total = 0
             curr_shape = input_shape

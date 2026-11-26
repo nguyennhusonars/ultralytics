@@ -2,20 +2,17 @@
 """Ported from ultralytics_sonnn nn/modules/MetaFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, to_2tuple, trunc_normal_
 
 
 class Downsampling(nn.Module):
-    """
-    Downsampling implemented by a layer of convolution.
-    Input: B,C,H,W (if pre_permute=False) or B,H,W,C (if pre_permute=True)
-    Output: B,H',W',C' (always)
+    """Downsampling implemented by a layer of convolution. Input: B,C,H,W (if pre_permute=False) or B,H,W,C (if
+    pre_permute=True) Output: B,H',W',C' (always).
     """
 
     def __init__(
@@ -51,9 +48,7 @@ class Downsampling(nn.Module):
 
 
 class Scale(nn.Module):
-    """
-    Scale vector by element multiplications.
-    """
+    """Scale vector by element multiplications."""
 
     def __init__(self, dim, init_value=1.0, trainable=True):
         super().__init__()
@@ -64,9 +59,7 @@ class Scale(nn.Module):
 
 
 class SquaredReLU(nn.Module):
-    """
-    Squared ReLU: https://arxiv.org/abs/2109.08668
-    """
+    """Squared ReLU: https://arxiv.org/abs/2109.08668."""
 
     def __init__(self, inplace=False):
         super().__init__()
@@ -77,9 +70,7 @@ class SquaredReLU(nn.Module):
 
 
 class StarReLU(nn.Module):
-    """
-    StarReLU: s * relu(x) ** 2 + b
-    """
+    """StarReLU: s * relu(x) ** 2 + b."""
 
     def __init__(
         self, scale_value=1.0, bias_value=0.0, scale_learnable=True, bias_learnable=True, mode=None, inplace=False
@@ -95,11 +86,8 @@ class StarReLU(nn.Module):
 
 
 class Attention(nn.Module):
-    """
-    Vanilla self-attention from Transformer: https://arxiv.org/abs/1706.03762.
-    Modified from timm.
-    Input: B,H,W,C
-    Output: B,H,W,C
+    """Vanilla self-attention from Transformer: https://arxiv.org/abs/1706.03762. Modified from timm. Input: B,H,W,C
+    Output: B,H,W,C.
     """
 
     def __init__(
@@ -122,7 +110,7 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         N = H * W
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
@@ -138,9 +126,7 @@ class Attention(nn.Module):
 
 
 class RandomMixing(nn.Module):
-    """
-    Input: B,H,W,C
-    Output: B,H,W,C
+    """Input: B,H,W,C Output: B,H,W,C.
     """
 
     def __init__(self, num_tokens=196, **kwargs):  # num_tokens depends on feature map size
@@ -163,7 +149,7 @@ class RandomMixing(nn.Module):
             # print(f"Warning: RandomMixing H*W ({H*W}) != num_tokens ({self.num_tokens}). Skipping mixing.")
             # return x
             # Or, better, ensure num_tokens matches.
-            raise ValueError(f"RandomMixing H*W ({H*W}) must match num_tokens ({self.num_tokens})")
+            raise ValueError(f"RandomMixing H*W ({H * W}) must match num_tokens ({self.num_tokens})")
 
         x_flat = x.reshape(B, H * W, C)
         x_mixed = torch.einsum("mn, bnc -> bmc", self.random_matrix, x_flat)
@@ -175,21 +161,17 @@ class LayerNormGeneral(nn.Module):
     r"""General LayerNorm for different situations.
 
     Args:
-        affine_shape (int, list or tuple): The shape of affine weight and bias.
-            Usually the affine_shape=C, but in some implementation, like torch.nn.LayerNorm,
-            the affine_shape is the same as normalized_dim by default.
-            To adapt to different situations, we offer this argument here.
+        affine_shape (int, list or tuple): The shape of affine weight and bias. Usually the affine_shape=C, but in some
+            implementation, like torch.nn.LayerNorm, the affine_shape is the same as normalized_dim by default. To adapt
+            to different situations, we offer this argument here.
         normalized_dim (tuple or list): Which dims to compute mean and variance.
         scale (bool): Flag indicates whether to use scale or not.
         bias (bool): Flag indicates whether to use scale or not.
 
         We give several examples to show how to specify the arguments.
-
-        LayerNorm (https://arxiv.org/abs/1607.06450):
-            For input shape of (B, *, C) like (B, N, C) or (B, H, W, C),
-                affine_shape=C, normalized_dim=(-1, ), scale=True, bias=True;
-            For input shape of (B, C, H, W),
-                affine_shape=(C, 1, 1), normalized_dim=(1, ), scale=True, bias=True.
+        LayerNorm (https: //arxiv.org/abs/1607.06450): For input shape of (B, *, C) like (B, N, C) or (B, H, W, C),
+            affine_shape=C, normalized_dim=(-1, ), scale=True, bias=True; For input shape of (B, C, H, W),
+            affine_shape=(C, 1, 1), normalized_dim=(1, ), scale=True, bias=True.
     """
 
     def __init__(self, affine_shape=None, normalized_dim=(-1,), scale=True, bias=True, eps=1e-5):
@@ -244,9 +226,7 @@ class LayerNormGeneral(nn.Module):
 
 
 class LayerNormWithoutBias(nn.Module):
-    """
-    Equal to partial(LayerNormGeneral, bias=False) but faster,
-    because it directly utilizes otpimized F.layer_norm.
+    """Equal to partial(LayerNormGeneral, bias=False) but faster, because it directly utilizes optimized F.layer_norm.
     Expects input B,...,C and normalizes over the C dimension.
     """
 
@@ -264,10 +244,8 @@ class LayerNormWithoutBias(nn.Module):
 
 
 class SepConv(nn.Module):
-    r"""
-    Inverted separable convolution from MobileNetV2: https://arxiv.org/abs/1801.04381.
-    Input: B,H,W,C
-    Output: B,H,W,C
+    r"""Inverted separable convolution from MobileNetV2: https://arxiv.org/abs/1801.04381. Input: B,H,W,C Output:
+    B,H,W,C.
     """
 
     def __init__(
@@ -304,9 +282,7 @@ class SepConv(nn.Module):
 
 
 class Pooling(nn.Module):
-    """
-    Implementation of pooling for PoolFormer: https://arxiv.org/abs/2111.11418
-    Modfiled for [B, H, W, C] input
+    """Implementation of pooling for PoolFormer: https://arxiv.org/abs/2111.11418 Modfiled for [B, H, W, C] input.
     """
 
     def __init__(self, pool_size=3, **kwargs):
@@ -321,10 +297,8 @@ class Pooling(nn.Module):
 
 
 class Mlp(nn.Module):
-    """MLP as used in MetaFormer models, eg Transformer, MLP-Mixer, PoolFormer, MetaFormer baslines and related networks.
-    Mostly copied from timm.
-    Input: B,H,W,C (or B,N,C)
-    Output: B,H,W,C (or B,N,C)
+    """MLP as used in MetaFormer models, eg Transformer, MLP-Mixer, PoolFormer, MetaFormer baselines and related
+    networks. Mostly copied from timm. Input: B,H,W,C (or B,N,C) Output: B,H,W,C (or B,N,C).
     """
 
     def __init__(self, dim, mlp_ratio=4, out_features=None, act_layer=StarReLU, drop=0.0, bias=False, **kwargs):
@@ -350,9 +324,7 @@ class Mlp(nn.Module):
 
 
 class MlpHead(nn.Module):
-    """MLP classification head
-    Input: B,C (after pooling)
-    Output: B,num_classes
+    """MLP classification head Input: B,C (after pooling) Output: B,num_classes.
     """
 
     def __init__(
@@ -383,10 +355,7 @@ class MlpHead(nn.Module):
 
 
 class MetaFormerBlock(nn.Module):
-    """
-    Implementation of one MetaFormer block.
-    Input: B,H,W,C
-    Output: B,H,W,C
+    """Implementation of one MetaFormer block. Input: B,H,W,C Output: B,H,W,C.
     """
 
     def __init__(
@@ -457,35 +426,34 @@ DOWNSAMPLE_LAYERS_FOUR_STAGES = [
 
 
 class MetaFormer(nn.Module):
-    r"""MetaFormer
-        A PyTorch impl of : `MetaFormer Baselines for Vision`  -
-          https://arxiv.org/abs/2210.13452
+    r"""MetaFormer A PyTorch impl of : `MetaFormer Baselines for Vision` - https://arxiv.org/abs/2210.13452.
+
     Args:
         in_chans (int): Number of input image channels. Default: 3.
-        num_classes (int): Number of classes for classification head. Default: 1000.
-                           Only used if forward_head is called.
+        num_classes (int): Number of classes for classification head. Default: 1000. Only used if forward_head is
+            called.
         depths (list or tuple): Number of blocks at each stage. Default: [2, 2, 6, 2].
         dims (list or tuple): Feature dimension at each stage. Default: [64, 128, 320, 512].
         downsample_layers: (list or tuple): Downsampling layers before each stage.
         token_mixers (list, tuple or token_fcn): Token mixer for each stage. Default: nn.Identity.
         mlps (list, tuple or mlp_fcn): Mlp for each stage. Default: Mlp.
-        norm_layers (list, tuple or norm_fcn): Norm layers for MetaFormerBlock.
-                                                Default: partial(LayerNormWithoutBias, eps=1e-6).
+        norm_layers (list, tuple or norm_fcn): Norm layers for MetaFormerBlock. Default: partial(LayerNormWithoutBias,
+            eps=1e-6).
         drop_path_rate (float): Stochastic depth rate. Default: 0.
         head_dropout (float): dropout for MLP classifier. Default: 0.
         layer_scale_init_values (list, tuple, float or None): Init value for Layer Scale. Default: None.
         res_scale_init_values (list, tuple, float or None): Init value for Layer Scale. Default: [None, None, 1.0, 1.0].
         output_norm: norm before classifier head. Default: partial(nn.LayerNorm, eps=1e-6).
         head_fn: classification head. Default: nn.Linear.
-        input_size_for_width_list (tuple): (H,W) for dummy pass to compute width_list. Default (224,224)
+        input_size_for_width_list (tuple): (H,W) for dummy pass to compute width_list. Default (224,224).
     """
 
     def __init__(
         self,
         in_chans=3,
         num_classes=1000,
-        depths=[2, 2, 6, 2],
-        dims=[64, 128, 320, 512],
+        depths=None,
+        dims=None,
         downsample_layers=DOWNSAMPLE_LAYERS_FOUR_STAGES,
         token_mixers=nn.Identity,
         mlps=Mlp,
@@ -493,12 +461,18 @@ class MetaFormer(nn.Module):
         drop_path_rate=0.0,
         head_dropout=0.0,
         layer_scale_init_values=None,
-        res_scale_init_values=[None, None, 1.0, 1.0],
+        res_scale_init_values=None,
         output_norm=partial(nn.LayerNorm, eps=1e-6),
         head_fn=nn.Linear,
         input_size_for_width_list=(224, 224),
         **kwargs,
     ):
+        if res_scale_init_values is None:
+            res_scale_init_values = [None, None, 1.0, 1.0]
+        if dims is None:
+            dims = [64, 128, 320, 512]
+        if depths is None:
+            depths = [2, 2, 6, 2]
         super().__init__()
         self.num_classes = num_classes
 
@@ -513,7 +487,7 @@ class MetaFormer(nn.Module):
         if not isinstance(downsample_layers, (list, tuple)):
             downsample_layers = [downsample_layers] * num_stage
 
-        down_in_dims = [in_chans] + dims[:-1]
+        down_in_dims = [in_chans, *dims[:-1]]
         down_out_dims = dims
 
         self.downsample_layers = nn.ModuleList()

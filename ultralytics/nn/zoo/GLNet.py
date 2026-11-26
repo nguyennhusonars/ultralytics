@@ -1,19 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/GLNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from fairscale.nn.checkpoint import checkpoint_wrapper
+from __future__ import annotations
+
+import math
 from functools import partial
 from typing import Iterable
-from typing import List
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import LayerNorm2d
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
+import torch
+import torch.nn.functional as F
+from fairscale.nn.checkpoint import checkpoint_wrapper
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, LayerNorm2d, register_model, trunc_normal_
 
 _glnet_ckpt_urls = {
     "glnet_4g": (
@@ -53,7 +52,7 @@ class LayerScale(nn.Module):
         super().__init__()
         assert in_format in {"nlc", "nchw"}
         if in_format == "nlc":
-            self.gamma = nn.Parameter(torch.ones((chans)) * init_value, requires_grad=True)
+            self.gamma = nn.Parameter(torch.ones(chans) * init_value, requires_grad=True)
         else:  # nchw
             self.gamma = nn.Parameter(torch.ones((1, chans, 1, 1)) * init_value, requires_grad=True)
 
@@ -110,7 +109,7 @@ class MHSA_Block(nn.Module):
         # if not self.training and x_norm1.dtype != self.mha_op.in_proj_weight.dtype:
         #    x_norm1 = x_norm1.to(self.mha_op.in_proj_weight.dtype)
 
-        attn_output, attn_weights = self.mha_op(query=x_norm1, key=x_norm1, value=x_norm1, need_weights=False)
+        attn_output, _attn_weights = self.mha_op(query=x_norm1, key=x_norm1, value=x_norm1, need_weights=False)
         x = shortcut + self.drop_path(self.ls1(attn_output))
         x = x + self.drop_path(self.ls2(self.mlp(self.norm2(x))))
         return x
@@ -123,7 +122,7 @@ class GLMixBlock(nn.Module):
         num_heads: int,
         num_slots: int = 64,
         slot_init: str = "ada_avgpool",
-        slot_scale_val: float = None,  # Renamed from slot_scale to avoid conflict with self.slot_scale
+        slot_scale_val: float | None = None,  # Renamed from slot_scale to avoid conflict with self.slot_scale
         scale_mode="learnable",
         local_dw_ks: int = 5,
         mlp_ratio: float = 4.0,
@@ -263,17 +262,13 @@ class GLMixBlock(nn.Module):
             if x.dtype != normed_x.dtype:  # If x was float16, norm output float32, cast back
                 normed_x = normed_x.to(x.dtype)
 
-        x_rel, updt_slots = self._forward_relation(normed_x, current_init_slots)
+        x_rel, _updt_slots = self._forward_relation(normed_x, current_init_slots)
         x = shortcut + self.drop_path(self.ls1(x_rel))
         x = x + self.drop_path(self.ls2(self.mlp(self.norm2(x))))
         return x
 
     def extra_repr(self) -> str:
-        return (
-            f"scale_mode={self.scale_mode}, "
-            f"slot_init={self.slot_init}, "
-            f"use_slot_attention={self.use_slot_attention}"
-        )
+        return f"scale_mode={self.scale_mode}, slot_init={self.slot_init}, use_slot_attention={self.use_slot_attention}"
 
 
 class MHSA_NCHW_Block(nn.Module):
@@ -327,7 +322,7 @@ class MHSA_NCHW_Block(nn.Module):
         # if not self.training and x_norm1.dtype != self.mha_op.in_proj_weight.dtype:
         #    x_norm1 = x_norm1.to(self.mha_op.in_proj_weight.dtype)
 
-        attn_output, attn_weights = self.mha_op(query=x_norm1, key=x_norm1, value=x_norm1, need_weights=False)
+        attn_output, _attn_weights = self.mha_op(query=x_norm1, key=x_norm1, value=x_norm1, need_weights=False)
         x_attn = shortcut + self.drop_path(self.ls1(attn_output))
 
         x_reshaped = x_attn.permute(0, 2, 1).reshape(nchw_shape)  # Back to NCHW
@@ -542,14 +537,14 @@ class GLNet(nn.Module):
         self,
         in_chans=3,
         num_classes=1000,  # Set to 0 for backbone usage
-        depth=[2, 2, 6, 2],
-        embed_dim=[96, 192, 384, 768],
+        depth=None,
+        embed_dim=None,
         head_dim=32,
         # qk_scale=None, # Not directly used in GLNet blocks, but can be passed via kwargs
         drop_path_rate=0.0,
         # drop_rate=0., # Not directly used in GLNet blocks, but can be passed via kwargs
-        use_checkpoint_stages=[],
-        mlp_ratios=[4, 4, 4, 4],
+        use_checkpoint_stages=None,
+        mlp_ratios=None,
         norm_layer=LayerNorm2d,
         pre_head_norm_layer=None,
         mixing_modes=("glmix", "glmix", "glmix", "mha"),
@@ -566,6 +561,14 @@ class GLNet(nn.Module):
         input_image_size: int = 224,  # For width_list calculation
         **kwargs,  # Accepts unused_kwargs
     ):
+        if mlp_ratios is None:
+            mlp_ratios = [4, 4, 4, 4]
+        if use_checkpoint_stages is None:
+            use_checkpoint_stages = []
+        if embed_dim is None:
+            embed_dim = [96, 192, 384, 768]
+        if depth is None:
+            depth = [2, 2, 6, 2]
         super().__init__()
         if kwargs:  # Print unused kwargs like original
             print(f"Unused kwargs in GLNet initialization: {kwargs}")
@@ -709,9 +712,8 @@ class GLNet(nn.Module):
             self.head = None
 
     def forward_head(self, x: torch.Tensor, pre_logits: bool = False):
-        """
-        Forward pass for classification. Assumes x is the output of the last stage.
-        Input x is (N, C, H, W) from the last stage.
+        """Forward pass for classification. Assumes x is the output of the last stage. Input x is (N, C, H, W) from the
+        last stage.
         """
         if self.norm is not None:
             x = self.norm(x)  # NCHW norm
@@ -726,11 +728,9 @@ class GLNet(nn.Module):
             x = self.head(x)
         return x
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Forward pass as a backbone, returning a list of feature maps from each stage.
-        """
-        outputs: List[torch.Tensor] = []
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Forward pass as a backbone, returning a list of feature maps from each stage."""
+        outputs: list[torch.Tensor] = []
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)

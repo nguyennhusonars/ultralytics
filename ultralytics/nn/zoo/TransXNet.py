@@ -1,13 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/TransXNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+import math
+
+import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils import checkpoint
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-import math
-import torch
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple
 
 
 def build_group_norm(num_channels, num_groups=1, eps=1e-6):
@@ -321,9 +322,8 @@ def basic_blocks(
 
 class TransXNet(nn.Module):
     arch_settings = {
-        **dict.fromkeys(
-            ["t", "tiny", "T"],
-            {
+        **{
+            key: {
                 "layers": [3, 3, 9, 3],
                 "embed_dims": [48, 96, 224, 448],
                 "kernel_size": [7, 7, 7, 7],
@@ -331,12 +331,12 @@ class TransXNet(nn.Module):
                 "sr_ratio": [8, 4, 2, 1],
                 "num_heads": [1, 2, 4, 8],
                 "mlp_ratios": [4, 4, 4, 4],
-                "layer_scale_init_value": 1e-5,
-            },
-        ),
-        **dict.fromkeys(
-            ["s", "small", "S"],
-            {
+                "layer_scale_init_value": 1e-05,
+            }
+            for key in ["t", "tiny", "T"]
+        },
+        **{
+            key: {
                 "layers": [4, 4, 12, 4],
                 "embed_dims": [64, 128, 320, 512],
                 "kernel_size": [7, 7, 7, 7],
@@ -344,12 +344,12 @@ class TransXNet(nn.Module):
                 "sr_ratio": [8, 4, 2, 1],
                 "num_heads": [1, 2, 5, 8],
                 "mlp_ratios": [6, 6, 4, 4],
-                "layer_scale_init_value": 1e-5,
-            },
-        ),
-        **dict.fromkeys(
-            ["b", "base", "B"],
-            {
+                "layer_scale_init_value": 1e-05,
+            }
+            for key in ["s", "small", "S"]
+        },
+        **{
+            key: {
                 "layers": [4, 4, 21, 4],
                 "embed_dims": [76, 152, 336, 672],
                 "kernel_size": [7, 7, 7, 7],
@@ -357,9 +357,10 @@ class TransXNet(nn.Module):
                 "sr_ratio": [8, 4, 2, 1],
                 "num_heads": [2, 4, 8, 16],
                 "mlp_ratios": [8, 8, 4, 4],
-                "layer_scale_init_value": 1e-5,
-            },
-        ),
+                "layer_scale_init_value": 1e-05,
+            }
+            for key in ["b", "base", "B"]
+        },
     }
 
     def __init__(

@@ -1,21 +1,19 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/DilatedReparam.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.modules.block import Bottleneck, C2f
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple
 
 
 class GRNwithNHWC(nn.Module):
-    """GRN (Global Response Normalization) layer
-    Originally proposed in ConvNeXt V2 (https://arxiv.org/abs/2301.00808)
-    This implementation is more efficient than the original (https://github.com/facebookresearch/ConvNeXt-V2)
-    We assume the inputs to this layer are (N, H, W, C)
+    """GRN (Global Response Normalization) layer Originally proposed in ConvNeXt V2 (https://arxiv.org/abs/2301.00808)
+    This implementation is more efficient than the original (https://github.com/facebookresearch/ConvNeXt-V2) We
+    assume the inputs to this layer are (N, H, W, C).
     """
 
     def __init__(self, dim, use_bias=True):
@@ -42,11 +40,7 @@ def get_conv2d(
         padding = (kernel_size[0] // 2, kernel_size[1] // 2)
     else:
         padding = to_2tuple(padding)
-    need_large_impl = (
-        kernel_size[0] == kernel_size[1]
-        and kernel_size[0] > 5
-        and padding == (kernel_size[0] // 2, kernel_size[1] // 2)
-    )
+    (kernel_size[0] == kernel_size[1] and kernel_size[0] > 5 and padding == (kernel_size[0] // 2, kernel_size[1] // 2))
 
     return nn.Conv2d(
         in_channels=in_channels,
@@ -68,13 +62,12 @@ def get_bn(dim, use_sync_bn=False):
 
 
 class SEBlock(nn.Module):
-    """
-    Squeeze-and-Excitation Block proposed in SENet (https://arxiv.org/abs/1709.01507)
-    We assume the inputs to this layer are (N, C, H, W)
+    """Squeeze-and-Excitation Block proposed in SENet (https://arxiv.org/abs/1709.01507) We assume the inputs to this
+    layer are (N, C, H, W).
     """
 
     def __init__(self, input_channels, internal_neurons):
-        super(SEBlock, self).__init__()
+        super().__init__()
         self.down = nn.Conv2d(
             in_channels=input_channels, out_channels=internal_neurons, kernel_size=1, stride=1, bias=True
         )
@@ -143,9 +136,8 @@ class NHWCtoNCHW(nn.Module):
 
 
 class DilatedReparamBlock(nn.Module):
-    """
-    Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet)
-    We assume the inputs to this block are (N, C, H, W)
+    """Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet) We assume the inputs to
+    this block are (N, C, H, W).
     """
 
     def __init__(self, channels, kernel_size, deploy=False, use_sync_bn=False, attempt_use_lk_impl=True):
@@ -192,7 +184,7 @@ class DilatedReparamBlock(nn.Module):
             self.origin_bn = get_bn(channels, use_sync_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
                 self.__setattr__(
-                    "dil_conv_k{}_{}".format(k, r),
+                    f"dil_conv_k{k}_{r}",
                     nn.Conv2d(
                         in_channels=channels,
                         out_channels=channels,
@@ -204,15 +196,15 @@ class DilatedReparamBlock(nn.Module):
                         bias=False,
                     ),
                 )
-                self.__setattr__("dil_bn_k{}_{}".format(k, r), get_bn(channels, use_sync_bn=use_sync_bn))
+                self.__setattr__(f"dil_bn_k{k}_{r}", get_bn(channels, use_sync_bn=use_sync_bn))
 
     def forward(self, x):
         if not hasattr(self, "origin_bn"):  # deploy mode
             return self.lk_origin(x)
         out = self.origin_bn(self.lk_origin(x))
         for k, r in zip(self.kernel_sizes, self.dilates):
-            conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-            bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+            conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+            bn = self.__getattr__(f"dil_bn_k{k}_{r}")
             out = out + bn(conv(x))
         return out
 
@@ -220,8 +212,8 @@ class DilatedReparamBlock(nn.Module):
         if hasattr(self, "origin_bn"):
             origin_k, origin_b = fuse_bn(self.lk_origin, self.origin_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
-                conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-                bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+                conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+                bn = self.__getattr__(f"dil_bn_k{k}_{r}")
                 branch_k, branch_b = fuse_bn(conv, bn)
                 origin_k = merge_dilated_into_large_kernel(origin_k, branch_k, r)
                 origin_b += branch_b
@@ -241,8 +233,8 @@ class DilatedReparamBlock(nn.Module):
             self.lk_origin = merged_conv
             self.__delattr__("origin_bn")
             for k, r in zip(self.kernel_sizes, self.dilates):
-                self.__delattr__("dil_conv_k{}_{}".format(k, r))
-                self.__delattr__("dil_bn_k{}_{}".format(k, r))
+                self.__delattr__(f"dil_conv_k{k}_{r}")
+                self.__delattr__(f"dil_bn_k{k}_{r}")
 
 
 class UniRepLKNetBlock(nn.Module):
@@ -383,7 +375,7 @@ class Bottleneck_DRB(Bottleneck):
 
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):  # ch_in, ch_out, shortcut, groups, kernels, expand
         super().__init__(c1, c2, shortcut, g, k, e)
-        c_ = int(c2 * e)  # hidden channels
+        int(c2 * e)  # hidden channels
         self.cv2 = DilatedReparamBlock(c2, 7)
 
 

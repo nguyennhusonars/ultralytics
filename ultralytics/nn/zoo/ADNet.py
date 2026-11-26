@@ -2,18 +2,16 @@
 """Ported from ultralytics_sonnn nn/modules/ADNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class ADNet(nn.Module):
     def __init__(self, channels, num_of_layers=16):
-        super(ADNet, self).__init__()
+        super().__init__()
         kernel_size = 3
         padding = 1
         features = num_of_layers
         groups = 1
-        layers = []
-        kernel_size1 = 1
         self.conv1_1 = nn.Sequential(
             nn.Conv2d(
                 in_channels=channels,
@@ -236,7 +234,6 @@ class ADNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        input = x
         x1 = self.conv1_1(x)
         x1 = self.conv1_2(x1)
         x1 = self.conv1_3(x1)

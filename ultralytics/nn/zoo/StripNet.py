@@ -1,17 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/StripNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 def get_norm_layer(norm_cfg, num_features):
-    """根據配置字典創建標準化層。"""
+    """根據配置字典創建標準化層。."""
     if norm_cfg is None:
         # 預設使用 BatchNorm2d，與原始代碼行為一致
         return nn.BatchNorm2d(num_features)
@@ -95,8 +95,8 @@ class Block(nn.Module):
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         layer_scale_init_value = 1e-2
-        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
 
     def forward(self, x):
         x = x + self.drop_path(self.layer_scale_1.unsqueeze(-1).unsqueeze(-1) * self.attn(self.norm1(x)))
@@ -105,7 +105,7 @@ class Block(nn.Module):
 
 
 class OverlapPatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Image to Patch Embedding."""
 
     def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768, norm_cfg=None):
         super().__init__()
@@ -127,18 +127,28 @@ class StripNet(nn.Module):
         self,
         img_size=224,
         in_chans=3,
-        embed_dims=[64, 128, 256, 512],
-        mlp_ratios=[8, 8, 4, 4],
-        k1s=[1, 1, 1, 1],
-        k2s=[19, 19, 19, 19],
+        embed_dims=None,
+        mlp_ratios=None,
+        k1s=None,
+        k2s=None,
         drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        depths=[3, 4, 6, 3],
+        depths=None,
         num_stages=4,
         pretrained=None,
         norm_cfg=None,
     ):
+        if depths is None:
+            depths = [3, 4, 6, 3]
+        if k2s is None:
+            k2s = [19, 19, 19, 19]
+        if k1s is None:
+            k1s = [1, 1, 1, 1]
+        if mlp_ratios is None:
+            mlp_ratios = [8, 8, 4, 4]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
         super().__init__()
 
         self.depths = depths
@@ -193,7 +203,7 @@ class StripNet(nn.Module):
         # print(f"StripNet initialized. Output channels per stage: {self.width_list}")
 
     def _init_weights(self, m):
-        """權重初始化函數，替代 mmcv.cnn.utils.weight_init"""
+        """權重初始化函數，替代 mmcv.cnn.utils.weight_init."""
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=0.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
@@ -211,7 +221,7 @@ class StripNet(nn.Module):
                 m.bias.data.zero_()
 
     def load_pretrained(self, pretrained_path):
-        """加載預訓練權重"""
+        """加載預訓練權重."""
         if pretrained_path:
             print(f"Loading pretrained weights from {pretrained_path}")
             try:
@@ -280,7 +290,7 @@ class StripNet(nn.Module):
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
 
     def forward(self, x):
@@ -289,9 +299,7 @@ class DWConv(nn.Module):
 
 
 def StripNet_tiny(pretrained=None, **kwargs):
-    """
-    StripNet-Tiny model.
-    """
+    """StripNet-Tiny model."""
     model = StripNet(
         embed_dims=[32, 64, 160, 256],
         k1s=[1, 1, 1, 1],
@@ -300,7 +308,7 @@ def StripNet_tiny(pretrained=None, **kwargs):
         drop_rate=0.1,
         drop_path_rate=0.15,
         depths=[3, 3, 5, 2],
-        norm_cfg=dict(type="BN"),  # 使用普通 BN，或根據需要改為 'SyncBN'
+        norm_cfg={"type": "BN"},  # 使用普通 BN，或根據需要改為 'SyncBN'
         pretrained=pretrained,
         **kwargs,
     )

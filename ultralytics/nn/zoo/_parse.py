@@ -1075,8 +1075,8 @@ NAMES = BASE | REPEAT | BACKBONES | CONCAT | SAME_CH | ATTN_C1 | HEADS | OTHER
 def parse(m, f, n, args, ch, ctx):
     """Return (m, c2, args, n) for zoo layer `m` (class, or backbone factory); ctx holds the scale constants.
 
-    ctx keys: nc, width, max_channels, scale, threshold, reg_max, end2end, legacy (legacy is updated in place).
-    A backbone factory is called here (its width_list needs the built module), so the returned m is an instance.
+    ctx keys: nc, width, max_channels, scale, threshold, reg_max, end2end, legacy (legacy is updated in place). A
+    backbone factory is called here (its width_list needs the built module), so the returned m is an instance.
     """
     name, width, max_ch, scale = m.__name__, ctx["width"], ctx["max_channels"], ctx["scale"] or ""
 

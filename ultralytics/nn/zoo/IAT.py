@@ -1,12 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/IAT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class query_Attention(nn.Module):
@@ -73,7 +73,7 @@ class query_SABlock(nn.Module):
 
 class conv_embedding(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(conv_embedding, self).__init__()
+        super().__init__()
         self.proj = nn.Sequential(
             nn.Conv2d(in_channels, out_channels // 2, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
             nn.BatchNorm2d(out_channels // 2),
@@ -92,12 +92,12 @@ class conv_embedding(nn.Module):
 
 class Global_pred(nn.Module):
     def __init__(self, in_channels=3, out_channels=64, num_heads=4, type="exp"):
-        super(Global_pred, self).__init__()
+        super().__init__()
         if type == "exp":
-            self.gamma_base = nn.Parameter(torch.ones((1)), requires_grad=False)  # False in exposure correction
+            self.gamma_base = nn.Parameter(torch.ones(1), requires_grad=False)  # False in exposure correction
         else:
-            self.gamma_base = nn.Parameter(torch.ones((1)), requires_grad=True)
-        self.color_base = nn.Parameter(torch.eye((3)), requires_grad=True)  # basic color matrix
+            self.gamma_base = nn.Parameter(torch.ones(1), requires_grad=True)
+        self.color_base = nn.Parameter(torch.eye(3), requires_grad=True)  # basic color matrix
         # main blocks
         self.conv_large = conv_embedding(in_channels, out_channels)
         self.generator = query_SABlock(dim=out_channels, num_heads=num_heads)
@@ -238,8 +238,9 @@ def window_partition(x, window_size):
     Args:
         x: (B, H, W, C)
         window_size (int): window size
+
     Returns:
-        windows: (num_windows*B, window_size, window_size, C)
+        windows: (num_windows*B, window_size, window_size, C).
     """
     B, H, W, C = x.shape
     # print(x.shape)
@@ -255,8 +256,9 @@ def window_reverse(windows, window_size, H, W):
         window_size (int): Window size
         H (int): Height of image
         W (int): Width of image
+
     Returns:
-        x: (B, H, W, C)
+        x: (B, H, W, C).
     """
     B = int(windows.shape[0] / (H * W / window_size / window_size))
     x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
@@ -265,16 +267,17 @@ def window_reverse(windows, window_size, H, W):
 
 
 class WindowAttention(nn.Module):
-    r"""Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    r"""Window based multi-head self attention (W-MSA) module with relative position bias. It supports both of shifted
+    and non-shifted window.
+
     Args:
         dim (int): Number of input channels.
         window_size (tuple[int]): The height and width of the window.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
         qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+        proj_drop (float, optional): Dropout ratio of output. Default: 0.0.
     """
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0.0, proj_drop=0.0):
@@ -306,9 +309,10 @@ class WindowAttention(nn.Module):
 
 class SwinTransformerBlock(nn.Module):
     r"""Swin Transformer Block.
+
     Args:
         dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resulotion.
+        input_resolution (tuple[int]): Input resolution.
         num_heads (int): Number of attention heads.
         window_size (int): Window size.
         shift_size (int): Shift size for SW-MSA.
@@ -319,7 +323,7 @@ class SwinTransformerBlock(nn.Module):
         attn_drop (float, optional): Attention dropout rate. Default: 0.0
         drop_path (float, optional): Stochastic depth rate. Default: 0.0
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
     """
 
     def __init__(
@@ -392,7 +396,7 @@ class SwinTransformerBlock(nn.Module):
 
 class Local_pred_S(nn.Module):
     def __init__(self, in_dim=3, dim=16, number=4, type="ccc"):
-        super(Local_pred_S, self).__init__()
+        super().__init__()
         # initial convolution
         self.conv1 = nn.Conv2d(in_dim, dim, 3, padding=1, groups=1)
         self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
@@ -440,7 +444,7 @@ class Local_pred_S(nn.Module):
 
 class IAT(nn.Module):
     def __init__(self, in_dim=3, with_global=True, type="lol"):
-        super(IAT, self).__init__()
+        super().__init__()
         # self.local_net = Local_pred()
         self.local_net = Local_pred_S(in_dim=in_dim)
         self.with_global = with_global

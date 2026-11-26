@@ -1,24 +1,24 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/biformer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from torch import Tensor
-from typing import Tuple
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import Tensor, nn
 
 
 class TopkRouting(nn.Module):
-    """
-    differentiable topk routing with scaling
+    """differentiable topk routing with scaling.
+
     Args:
         qk_dim: int, feature dimension of query and key
         topk: int, the 'topk'
         qk_scale: int or None, temperature (multiply) of softmax activation
         with_param: bool, wether inorporate learnable params in routing unit
         diff_routing: bool, wether make routing differentiable
-        soft_routing: bool, wether make output value multiplied by routing weights
+        soft_routing: bool, wether make output value multiplied by routing weights.
     """
 
     def __init__(self, qk_dim, topk=4, qk_scale=None, param_routing=False, diff_routing=False):
@@ -32,12 +32,13 @@ class TopkRouting(nn.Module):
         # routing activation
         self.routing_act = nn.Softmax(dim=-1)
 
-    def forward(self, query: Tensor, key: Tensor) -> Tuple[Tensor]:
+    def forward(self, query: Tensor, key: Tensor) -> tuple[Tensor]:
         """
         Args:
             q, k: (n, p^2, c) tensor
-        Return:
-            r_weight, topk_index: (n, p^2, topk) tensor
+
+        Returns:
+            r_weight, topk_index: (n, p^2, topk) tensor.
         """
         if not self.diff_routing:
             query, key = query.detach(), key.detach()
@@ -56,12 +57,10 @@ class KVGather(nn.Module):
         self.mul_weight = mul_weight
 
     def forward(self, r_idx: Tensor, r_weight: Tensor, kv: Tensor):
-        """
-        r_idx: (n, p^2, topk) tensor
-        r_weight: (n, p^2, topk) tensor
-        kv: (n, p^2, w^2, c_kq+c_v)
-        Return:
-            (n, p^2, topk, w^2, c_kq+c_v) tensor
+        """r_idx: (n, p^2, topk) tensor r_weight: (n, p^2, topk) tensor kv: (n, p^2, w^2, c_kq+c_v).
+
+        Returns:
+            (n, p^2, topk, w^2, c_kq+c_v) tensor.
         """
         # select kv according to routing index
         n, p2, w2, c_kv = kv.size()
@@ -97,14 +96,11 @@ class QKVLinear(nn.Module):
 
 
 class BiLevelRoutingAttention(nn.Module):
-    """
-    n_win: number of windows in one side (so the actual number of windows is n_win*n_win)
-    kv_per_win: for kv_downsample_mode='ada_xxxpool' only, number of key/values per window. Similar to n_win, the actual number is kv_per_win*kv_per_win.
-    topk: topk for window filtering
-    param_attention: 'qkvo'-linear for q,k,v and o, 'none': param free attention
-    param_routing: extra linear for routing
-    diff_routing: wether to set routing differentiable
-    soft_routing: wether to multiply soft routing weights
+    """n_win: number of windows in one side (so the actual number of windows is n_win*n_win) kv_per_win: for
+    kv_downsample_mode='ada_xxxpool' only, number of key/values per window. Similar to n_win, the actual number is
+    kv_per_win*kv_per_win. topk: topk for window filtering param_attention: 'qkvo'-linear for q,k,v and o, 'none':
+    param free attention param_routing: extra linear for routing diff_routing: wether to set routing differentiable
+    soft_routing: wether to multiply soft routing weights.
     """
 
     def __init__(
@@ -132,9 +128,9 @@ class BiLevelRoutingAttention(nn.Module):
         self.n_win = n_win  # Wh, Ww
         self.num_heads = num_heads
         self.qk_dim = qk_dim or dim
-        assert (
-            self.qk_dim % num_heads == 0 and self.dim % num_heads == 0
-        ), "qk_dim and dim must be divisible by num_heads!"
+        assert self.qk_dim % num_heads == 0 and self.dim % num_heads == 0, (
+            "qk_dim and dim must be divisible by num_heads!"
+        )
         self.scale = qk_scale or self.qk_dim**-0.5
 
         ################side_dwconv (i.e. LCE in ShuntedTransformer)###########
@@ -175,7 +171,7 @@ class BiLevelRoutingAttention(nn.Module):
             self.qkv = QKVLinear(self.dim, self.qk_dim)
             self.wo = nn.Identity()
         else:
-            raise ValueError(f"param_attention mode {self.param_attention} is not surpported!")
+            raise ValueError(f"param_attention mode {self.param_attention} is not supported!")
 
         self.kv_downsample_mode = kv_downsample_mode
         self.kv_per_win = kv_per_win
@@ -206,7 +202,7 @@ class BiLevelRoutingAttention(nn.Module):
             # TODO: need to consider the case where k != v so that need two downsample modules
             raise NotImplementedError("conv policy is not implemented yet!")
         else:
-            raise ValueError(f"kv_down_sample_mode {self.kv_downsaple_mode} is not surpported!")
+            raise ValueError(f"kv_down_sample_mode {self.kv_downsaple_mode} is not supported!")
 
         # softmax for local attention
         self.attn_act = nn.Softmax(dim=-1)
@@ -214,10 +210,10 @@ class BiLevelRoutingAttention(nn.Module):
         self.auto_pad = auto_pad
 
     def forward(self, x, ret_attn_mask=False):
-        """
-        x: NHWC tensor
-        Return:
-            NHWC tensor
+        """x: NHWC tensor.
+
+        Returns:
+            NHWC tensor.
         """
         x = rearrange(x, "n c h w -> n h w c")
         # NOTE: use padding for semantic segmentation
@@ -241,8 +237,8 @@ class BiLevelRoutingAttention(nn.Module):
             )  # dim=-3
             _, H, W, _ = x.size()  # padded size
         else:
-            N, H, W, C = x.size()
-            assert H % self.n_win == 0 and W % self.n_win == 0  #
+            _N, H, W, _C = x.size()
+            assert H % self.n_win == 0 and W % self.n_win == 0
         ###################################################
 
         # patchify, (n, p^2, w, w, c), keep 2d window as we need 2d pooling to reduce kv size
@@ -251,7 +247,7 @@ class BiLevelRoutingAttention(nn.Module):
         #################qkv projection###################
         # q: (n, p^2, w, w, c_qk)
         # kv: (n, p^2, w, w, c_qk+c_v)
-        # NOTE: separte kv if there were memory leak issue caused by gather
+        # NOTE: separate kv if there were memory leak issue caused by gather
         q, kv = self.qkv(x)
 
         # pixel-wise qkv

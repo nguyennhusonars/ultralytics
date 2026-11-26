@@ -1,21 +1,21 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SlabSwinTransformer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from einops import rearrange
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class RepBN(nn.Module):
     def __init__(self, channels):
-        super(RepBN, self).__init__()
+        super().__init__()
         self.alpha = nn.Parameter(torch.ones(1))
         self.bn = nn.BatchNorm1d(channels)
 
@@ -28,7 +28,6 @@ class RepBN(nn.Module):
         elif x.ndim == 2:  # (N, C) - for LayerNorm like behavior in PatchEmbed
             # This case might not be ideal for RepBN which expects Batch.
             # For simplicity, let's assume it's (1, N, C)
-            original_shape = x.shape
             x = x.unsqueeze(0).transpose(1, 2)  # (1, C, N)
             x = self.bn(x) + self.alpha * x
             x = x.transpose(1, 2).squeeze(0)  # (N,C)
@@ -39,7 +38,7 @@ class RepBN(nn.Module):
 
 class LinearNorm(nn.Module):
     def __init__(self, dim, norm1, norm2, warm=0, step=300000, r0=1.0):
-        super(LinearNorm, self).__init__()
+        super().__init__()
         self.register_buffer("warm", torch.tensor(warm))
         self.register_buffer("iter", torch.tensor(step))
         self.register_buffer("total_step", torch.tensor(step))
@@ -99,7 +98,7 @@ def window_partition(x, window_size):
     """
     Args:
         x: (B, H, W, C)
-        window_size (int): window size
+        window_size (int): window size.
 
     Returns:
         windows: (num_windows*B, window_size, window_size, C)
@@ -116,7 +115,7 @@ def window_reverse(windows, window_size, H, W):
         windows: (num_windows*B, window_size, window_size, C)
         window_size (int): Window size
         H (int): Height of image
-        W (int): Width of image
+        W (int): Width of image.
 
     Returns:
         x: (B, H, W, C)
@@ -128,14 +127,14 @@ def window_reverse(windows, window_size, H, W):
 
 
 class WindowAttention(nn.Module):
-    r"""Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    r"""Window based multi-head self attention (W-MSA) module with relative position bias. It supports both of shifted
+    and non-shifted window.
 
     Args:
         dim (int): Number of input channels.
         window_size (tuple[int]): The height and width of the window.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
         qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
@@ -254,7 +253,7 @@ class SimplifiedLinearAttention(nn.Module):
         #       format(window_size, focusing_factor, kernel_size))
 
     def forward(self, x, mask=None):  # Mask is not typically used in global linear attention
-        B_, N, C = x.shape  # num_windows*B, N, C
+        B_, N, _C = x.shape  # num_windows*B, N, C
 
         qkv = self.qkv(x)  # (B_, N, 3*C)
         q, k, v = torch.chunk(qkv, 3, dim=-1)  # Each (B_, N, C)
@@ -352,7 +351,7 @@ class SimplifiedLinearAttention(nn.Module):
         # v is (B_*num_heads, N, head_dim), N = window_h * window_w
         # We need to know window_h, window_w. Assuming square window from self.window_size
         win_h, win_w = self.window_size
-        if not (N == win_h * win_w):  # Should not happen if N is derived from window
+        if N != win_h * win_w:  # Should not happen if N is derived from window
             # Fallback if N is not window_size_h * window_size_w, e.g. dynamic shape
             patch_num_sqrt = int(N**0.5)
             if patch_num_sqrt * patch_num_sqrt != N:  # Not a perfect square
@@ -383,9 +382,10 @@ class SimplifiedLinearAttention(nn.Module):
 
 class SwinTransformerBlock(nn.Module):
     r"""Swin Transformer Block.
+
     Args:
         dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resulotion (used for init, H,W passed to forward).
+        input_resolution (tuple[int]): Input resolution (used for init, H,W passed to forward).
         num_heads (int): Number of attention heads.
         window_size (int): Window size.
         shift_size (int): Shift size for SW-MSA.
@@ -396,8 +396,8 @@ class SwinTransformerBlock(nn.Module):
         attn_drop (float, optional): Attention dropout rate. Default: 0.0
         drop_path (float, optional): Stochastic depth rate. Default: 0.0
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
-        focusing_factor, kernel_size, attn_type: For SimplifiedLinearAttention or choosing WindowAttention
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
+        focusing_factor, kernel_size, attn_type: For SimplifiedLinearAttention or choosing WindowAttention.
     """
 
     def __init__(
@@ -467,7 +467,7 @@ class SwinTransformerBlock(nn.Module):
 
     def forward(self, x, H, W, mask_matrix):  # H, W of the input feature map for this block
         B, L, C = x.shape
-        assert L == H * W, f"input feature has wrong size, L={L}, H={H}, W={W}, H*W={H*W}"
+        assert L == H * W, f"input feature has wrong size, L={L}, H={H}, W={W}, H*W={H * W}"
 
         shortcut = x
         x = self.norm1(x)
@@ -537,9 +537,10 @@ class SwinTransformerBlock(nn.Module):
 
 class PatchMerging(nn.Module):
     r"""Patch Merging Layer.
+
     Args:
         dim (int): Number of input channels.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
     """
 
     def __init__(self, dim, norm_layer=nn.LayerNorm):  # input_resolution removed
@@ -549,9 +550,7 @@ class PatchMerging(nn.Module):
         self.norm = norm_layer(4 * dim)
 
     def forward(self, x, H, W):  # H, W of the input x
-        """
-        x: B, H*W, C
-        """
+        """X: B, H*W, C."""
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
         # assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even." # Padding handles this
@@ -584,14 +583,14 @@ class PatchMerging(nn.Module):
 
 class BasicLayer(nn.Module):
     """A basic Swin Transformer layer for one stage.
+
     Args:
         dim (int): Number of input channels.
         input_resolution (tuple[int]): Input resolution for this stage.
         depth (int): Number of blocks.
         num_heads (int): Number of attention heads.
-        window_size (int): Local window size.
-        attn_type can be 'L', 'S', or 'M<k>' (e.g., 'M2' means first 2 Linear, rest Standard)
-        ... other args
+        window_size (int): Local window size. attn_type can be 'L', 'S', or 'M<k>' (e.g., 'M2' means first 2 Linear,
+            rest Standard) ... other args.
     """
 
     def __init__(
@@ -646,7 +645,6 @@ class BasicLayer(nn.Module):
         # If specific window sizes for 'S' are needed, this logic can be refined.
         _window_sizes = []
         for i in range(depth):
-            current_block_input_res = input_resolution  # This is the resolution for the whole BasicLayer
             # SwinTransformerBlock caps its window_size if too large
             ws = self.window_size
             if _attn_types[i] == "S":  # Potentially different window for standard attention
@@ -715,7 +713,7 @@ class BasicLayer(nn.Module):
         mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
         mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)  # (nW, 1, N) - (nW, N, 1) -> (nW, N, N)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, (-100.0)).masked_fill(attn_mask == 0, 0.0)
         attn_mask = attn_mask.to(x.dtype)  # Ensure dtype match
 
         for blk in self.blocks:
@@ -742,13 +740,14 @@ class BasicLayer(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    r"""Image to Patch Embedding
+    r"""Image to Patch Embedding.
+
     Args:
         img_size (int): Image size. Default: 224. (Not strictly needed if H,W passed to forward)
         patch_size (int): Patch token size. Default: 4.
         in_chans (int): Number of input image channels. Default: 3.
         embed_dim (int): Number of linear projection output channels. Default: 96.
-        norm_layer (nn.Module, optional): Normalization layer. Default: None
+        norm_layer (nn.Module, optional): Normalization layer. Default: None.
     """
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
@@ -770,7 +769,7 @@ class PatchEmbed(nn.Module):
             self.norm = None
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
 
         # Padding (from Code 2 PatchEmbed)
         if W % self.patch_size[1] != 0:
@@ -789,12 +788,12 @@ class PatchEmbed(nn.Module):
 
 
 class SlabSwinTransformer(nn.Module):
-    r"""Slab Swin Transformer (adapted for backbone usage)
+    r"""Slab Swin Transformer (adapted for backbone usage).
+
     Args:
         img_size (int | tuple(int)): Input image size. Default 224. (Used for APE if enabled)
         pretrain_img_size (int | tuple(int)): Pretrained image size for APE. Default 224.
-        patch_size (int | tuple(int)): Patch size. Default: 4.
-        ... other Swin args ...
+        patch_size (int | tuple(int)): Patch size. Default: 4. ... other Swin args ...
         out_indices (tuple[int]): Output from which stages (0, 1, 2, 3).
     """
 
@@ -805,8 +804,8 @@ class SlabSwinTransformer(nn.Module):
         patch_size=4,
         in_chans=3,
         embed_dim=96,
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
+        depths=None,
+        num_heads=None,
         window_size=7,
         mlp_ratio=4.0,
         qkv_bias=True,
@@ -825,6 +824,10 @@ class SlabSwinTransformer(nn.Module):
         frozen_stages=-1,  # Added from Code 2 Swin
         **kwargs,
     ):
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
         super().__init__()
 
         self.pretrain_img_size = to_2tuple(pretrain_img_size)
@@ -847,7 +850,7 @@ class SlabSwinTransformer(nn.Module):
         else:  # Handles M-type like M2LL -> ['M2','L','L'] needs BasicLayer to parse 'M2'
             # Or a single 'M2' for the first layer
             self.attn_types = []
-            temp_attn_type_str = attn_type if isinstance(attn_type, str) else "".join(attn_type)
+            attn_type if isinstance(attn_type, str) else "".join(attn_type)
 
             # This logic is for parsing complex strings like 'M2LS'
             # For simplicity, assume attn_type is either a list of types per layer,
@@ -1029,7 +1032,7 @@ class SlabSwinTransformer(nn.Module):
             # Interpolate APE (Code 2 style)
             # x is (B, N, C), APE is (1, C, Hp, Wp)
             # Need to reshape x to (B, C, Wh, Ww) then add APE, then reshape back
-            B, N, C = x.shape
+            B, _N, C = x.shape
             x = x.view(B, Wh, Ww, C).permute(0, 3, 1, 2).contiguous()  # B, C, Wh, Ww
 
             ape_interp = F.interpolate(self.absolute_pos_embed, size=(Wh, Ww), mode="bicubic", align_corners=False)
@@ -1064,11 +1067,10 @@ class SlabSwinTransformer(nn.Module):
 
 
 def _update_weight_keys(model_dict, weight_dict):
-    """
-    Handles potential key mismatches, e.g. 'layers.0.blocks.0.attn.relative_position_bias_table'
-    vs 'layers.0.blocks.0.attn.relative_position_bias_table.relative_position_bias_table'
-    This is a placeholder; more sophisticated key mapping might be needed if using official Swin weights.
-    For SlabSwin trained weights, keys should match.
+    """Handles potential key mismatches, e.g. 'layers.0.blocks.0.attn.relative_position_bias_table' vs
+    'layers.0.blocks.0.attn.relative_position_bias_table.relative_position_bias_table' This is a placeholder; more
+    sophisticated key mapping might be needed if using official Swin weights. For SlabSwin trained weights, keys
+    should match.
     """
     new_weight_dict = {}
     for k_w, v_w in weight_dict.items():
@@ -1089,7 +1091,7 @@ def update_weight(model_dict, weight_dict):
     processed_weight_dict = _update_weight_keys(model_dict, weight_dict)
 
     for k, v in processed_weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)

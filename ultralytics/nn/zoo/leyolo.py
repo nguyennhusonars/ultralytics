@@ -1,7 +1,7 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/leyolo.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-import torch.nn as nn
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation

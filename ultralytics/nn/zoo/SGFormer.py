@@ -1,22 +1,20 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SGFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
-    """
-    grid_size: int of the grid height and width
-    return:
-    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
+    """grid_size: int of the grid height and width return: pos_embed: [grid_size*grid_size, embed_dim] or
+    [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token).
     """
     grid_h = np.arange(grid_size, dtype=np.float32)
     grid_w = np.arange(grid_size, dtype=np.float32)
@@ -56,11 +54,11 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
 
     def forward(self, x, H, W):
-        B, N, C = x.shape
+        B, _N, C = x.shape
         x = x.transpose(1, 2).view(B, C, H, W)
         x = self.dwconv(x)
         x = x.flatten(2).transpose(1, 2)
@@ -107,7 +105,7 @@ def window_partition(x_in, window_size, H, W):
 
     if H * W != N:
         raise ValueError(
-            f"H ({H}) * W ({W}) = {H*W} does not match N ({N}) in window_partition for input shape {x.shape}"
+            f"H ({H}) * W ({W}) = {H * W} does not match N ({N}) in window_partition for input shape {x.shape}"
         )
 
     # Pad if H or W are not divisible by window_size
@@ -158,7 +156,7 @@ def window_reverse(windows, window_size, H_pad, W_pad, H_orig, W_orig, num_heads
     # B_actual_times_heads_partitioned, H_orig, W_orig, C_head
     # num_heads_partitioned is the number of heads this 'x' belongs to (e.g., num_heads//2)
     B_actual = B_actual_times_heads_partitioned // num_heads_partitioned
-    C_total_for_partition = x.shape[-1] * num_heads_partitioned  # This should be C/2 or C
+    x.shape[-1] * num_heads_partitioned  # This should be C/2 or C
 
     x = x.view(B_actual, num_heads_partitioned, H_orig, W_orig, x.shape[-1])  # B, num_heads_part, H_orig, W_orig, C_h
     x = x.permute(0, 2, 3, 1, 4).contiguous().view(B_actual, H_orig * W_orig, -1)  # B, N_orig, C_part_total
@@ -458,7 +456,7 @@ class Conv2d_BN(torch.nn.Sequential):
 
 class Head(nn.Module):
     def __init__(self, in_chans, embed_dim):
-        super(Head, self).__init__()
+        super().__init__()
         n = embed_dim
         self.conv = nn.Sequential(
             Conv2d_BN(in_chans, n, ks=3, stride=2, pad=1),
@@ -628,7 +626,6 @@ class SGFormer(nn.Module):
 
         if hasattr(self, "pos_embed") and isinstance(self.pos_embed, nn.Parameter):
             grid_dim_for_pe_gen_h = self.num_patches_for_pe_h
-            grid_dim_for_pe_gen_w = self.num_patches_for_pe_w
 
             # For get_2d_sincos_pos_embed, a single grid_size is expected. Use H.
             # If H and W for PE are different, sincos might need adjustment or use only H.
@@ -661,7 +658,7 @@ class SGFormer(nn.Module):
             self.head = nn.Linear(self.embed_dims[-1], num_classes) if num_classes > 0 else nn.Identity()
 
     def _interpolate_pos_embed(self, x_feat_tokens, H_feat, W_feat):
-        B, N_feat, C_feat = x_feat_tokens.shape
+        _B, N_feat, C_feat = x_feat_tokens.shape
         # Check if current feature map dimensions match the PE's original dimensions
         if (
             self.num_patches_for_pe_h == H_feat

@@ -1,15 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/StripNet_modular.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple
 
 
 class DWConv(nn.Module):
     def __init__(self, dim):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
 
     def forward(self, x):
@@ -72,9 +72,7 @@ class StripAttention(nn.Module):
 
 
 class StripDownsample(nn.Module):
-    """
-    對應原始的 OverlapPatchEmbed。
-    在 YAML 中使用: [c2, patch_size, stride]
+    """對應原始的 OverlapPatchEmbed。 在 YAML 中使用: [c2, patch_size, stride].
     """
 
     def __init__(self, c1, c2, patch_size=7, stride=4):
@@ -114,12 +112,12 @@ class StripBlock(nn.Module):
         self.mlp = StripNetMlp(in_features=c1, hidden_features=mlp_hidden_dim, drop=drop)
 
         layer_scale_init_value = 1e-2
-        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((c1)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((c1)), requires_grad=True)
+        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(c1), requires_grad=True)
+        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(c1), requires_grad=True)
 
     def forward(self, x):
         # ... (保持原本的 forward 代碼) ...
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
         x_in = x.permute(0, 2, 3, 1)
         norm1 = self.norm1(x_in).permute(0, 3, 1, 2)
         attn_out = self.attn(norm1)

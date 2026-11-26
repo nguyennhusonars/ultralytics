@@ -2,14 +2,14 @@
 """Ported from ultralytics_sonnn nn/modules/MLLA_2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class RoPE(torch.nn.Module):
     r"""Rotary Positional Embedding."""
 
     def __init__(self, base=10000):
-        super(RoPE, self).__init__()
+        super().__init__()
         self.base = base
 
     def generate_rotations(self, x):
@@ -54,13 +54,16 @@ class RoPE(torch.nn.Module):
 
 class MLLAttention(nn.Module):
     r"""Linear Attention with LePE and RoPE.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True.
     """
 
-    def __init__(self, dim=3, input_resolution=[160, 160], num_heads=4, qkv_bias=True, **kwargs):
+    def __init__(self, dim=3, input_resolution=None, num_heads=4, qkv_bias=True, **kwargs):
+        if input_resolution is None:
+            input_resolution = [160, 160]
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -73,7 +76,7 @@ class MLLAttention(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: input features with shape of (B, N, C)
+            x: input features with shape of (B, N, C).
         """
         x = x.reshape((x.size(0), x.size(2) * x.size(3), x.size(1)))
         b, n, c = x.shape
@@ -140,18 +143,20 @@ class Conv(nn.Module):
 
 
 class PSABlock(nn.Module):
-    """
-    PSABlock class implementing a Position-Sensitive Attention block for neural networks.
-    This class encapsulates the functionality for applying multi-head attention and feed-forward neural network layers
-    with optional shortcut connections.
+    """PSABlock class implementing a Position-Sensitive Attention block for neural networks. This class encapsulates the
+    functionality for applying multi-head attention and feed-forward neural network layers with optional
+    shortcut connections.
+
     Attributes:
         attn (Attention): Multi-head attention module.
         ffn (nn.Sequential): Feed-forward neural network module.
         add (bool): Flag indicating whether to add shortcut connections.
+
     Methods:
         forward: Performs a forward pass through the PSABlock, applying attention and feed-forward layers.
+
     Examples:
-        Create a PSABlock and perform a forward pass
+        Create a PSABlock and perform a forward pass.
     """
 
     def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
@@ -170,20 +175,21 @@ class PSABlock(nn.Module):
 
 
 class C2PSAMLLA(nn.Module):
-    """
-    C2PSA module with attention mechanism for enhanced feature extraction and processing.
-    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
-    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+    """C2PSA module with attention mechanism for enhanced feature extraction and processing. This module implements a
+    convolutional block with attention mechanisms to enhance feature extraction and processing capabilities. It
+    includes a series of PSABlock modules for self-attention and feed-forward operations.
+
     Attributes:
         c (int): Number of hidden channels.
         cv1 (Conv): 1x1 convolution layer to reduce the number of input channels to 2*c.
         cv2 (Conv): 1x1 convolution layer to reduce the number of output channels to c.
         m (nn.Sequential): Sequential container of PSABlock modules for attention and feed-forward operations.
+
     Methods:
         forward: Performs a forward pass through the C2PSA module, applying attention and feed-forward operations.
+
     Notes:
         This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
-    Examples:
     """
 
     def __init__(self, c1, c2, n=1, e=0.5):

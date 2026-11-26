@@ -1,27 +1,22 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/PKINet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch.nn.modules.batchnorm import _BatchNorm
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Sequence
-from typing import Tuple
-from typing import Union
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+from __future__ import annotations
+
 import math
+from typing import Any, Sequence
+
 import torch
-import torch.nn as nn
+from torch import nn
+from torch.nn.modules.batchnorm import _BatchNorm
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
-def _make_divisible(v: float, divisor: int, min_value: Optional[int] = None, min_ratio: float = 0.9) -> int:
-    """
-    Ensures that all layers have a channel number that is divisible by the divisor.
-    This function is taken from the original tf repo.
-    It can be seen here:
-    https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
+def _make_divisible(v: float, divisor: int, min_value: int | None = None, min_ratio: float = 0.9) -> int:
+    """Ensures that all layers have a channel number that is divisible by the divisor. This function is taken from the
+    original tf repo. It can be seen
+    here: https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py.
     """
     if min_value is None:
         min_value = divisor
@@ -32,15 +27,14 @@ def _make_divisible(v: float, divisor: int, min_value: Optional[int] = None, min
     return new_v
 
 
-def _autopad(
-    k: Union[int, Sequence[int]], p: Optional[Union[int, Sequence[int]]] = None, d: int = 1
-) -> Union[int, List[int]]:
-    """
-    Pad to 'same' shape outputs.
+def _autopad(k: int | Sequence[int], p: int | Sequence[int] | None = None, d: int = 1) -> int | list[int]:
+    """Pad to 'same' shape outputs.
+
     Args:
         k (int or Sequence[int]): Kernel size.
         p (int or Sequence[int], optional): Padding. If None, autopad will be applied. Defaults to None.
         d (int): Dilation. Defaults to 1.
+
     Returns:
         Union[int, List[int]]: Padding.
     """
@@ -53,7 +47,7 @@ def _autopad(
 
 
 class _Permute(nn.Module):
-    def __init__(self, dims: List[int]):
+    def __init__(self, dims: list[int]):
         super().__init__()
         self.dims = dims
 
@@ -74,17 +68,21 @@ class ConvNormAct(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: Union[int, Tuple[int, int]],
-        stride: Union[int, Tuple[int, int]] = 1,
-        padding: Optional[Union[int, Tuple[int, int], str]] = None,
-        dilation: Union[int, Tuple[int, int]] = 1,
+        kernel_size: int | tuple[int, int],
+        stride: int | tuple[int, int] = 1,
+        padding: int | tuple[int, int] | str | None = None,
+        dilation: int | tuple[int, int] = 1,
         groups: int = 1,
-        norm_cfg: Optional[Dict[str, Any]] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[Dict[str, Any]] = dict(type="SiLU"),
-        bias: Optional[bool] = None,
+        norm_cfg: dict[str, Any] | None = None,
+        act_cfg: dict[str, Any] | None = None,
+        bias: bool | None = None,
         padding_mode: str = "zeros",
         inplace: bool = True,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
 
         if padding is None:
@@ -162,7 +160,7 @@ class ConvNormAct(nn.Module):
 
 
 class GSiLU(nn.Module):
-    """Global Sigmoid-Gated Linear Unit, reproduced from paper <SIMPLE CNN FOR VISION>"""
+    """Global Sigmoid-Gated Linear Unit, reproduced from paper <SIMPLE CNN FOR VISION>."""
 
     def __init__(self):
         super().__init__()
@@ -173,16 +171,20 @@ class GSiLU(nn.Module):
 
 
 class CAA(nn.Module):
-    """Context Anchor Attention"""
+    """Context Anchor Attention."""
 
     def __init__(
         self,
         channels: int,
         h_kernel_size: int = 11,
         v_kernel_size: int = 11,
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         self.avg_pool = nn.AvgPool2d(7, 1, 3)  # padding = (kernel_size - 1) // 2
         self.conv1 = ConvNormAct(channels, channels, 1, 1, 0, norm_cfg=norm_cfg, act_cfg=act_cfg)
@@ -220,21 +222,25 @@ class CAA(nn.Module):
 
 
 class ConvFFN(nn.Module):
-    """Multi-layer perceptron implemented with ConvModule"""
+    """Multi-layer perceptron implemented with ConvModule."""
 
     def __init__(
         self,
         in_channels: int,
-        out_channels: Optional[int] = None,
+        out_channels: int | None = None,
         hidden_channels_scale: float = 4.0,
         hidden_kernel_size: int = 3,
         dropout_rate: float = 0.0,
         add_identity: bool = True,
         # norm_cfg for internal ConvNormAct, PKIBlock passes None
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
+        norm_cfg: dict | None = None,
         # act_cfg for internal ConvNormAct, PKIBlock passes None
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         out_channels = out_channels or in_channels
         hidden_channels = _make_divisible(int(in_channels * hidden_channels_scale), 8)
@@ -293,16 +299,20 @@ class ConvFFN(nn.Module):
 
 
 class Stem(nn.Module):
-    """Stem layer"""
+    """Stem layer."""
 
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
         expansion: float = 1.0,
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         self.out_channels = out_channels  # Store for width_list
         hidden_channels = _make_divisible(int(out_channels * expansion), 8)
@@ -325,15 +335,19 @@ class Stem(nn.Module):
 
 
 class DownSamplingLayer(nn.Module):
-    """Down sampling layer"""
+    """Down sampling layer."""
 
     def __init__(
         self,
         in_channels: int,
-        out_channels: Optional[int] = None,
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        out_channels: int | None = None,
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         out_channels = out_channels or (in_channels * 2)
         self.out_channels = out_channels  # Store for width_list (though PKIStage will use its own out_channels)
@@ -347,21 +361,25 @@ class DownSamplingLayer(nn.Module):
 
 
 class InceptionBottleneck(nn.Module):
-    """Bottleneck with Inception module"""
+    """Bottleneck with Inception module."""
 
     def __init__(
         self,
         in_channels: int,
-        out_channels: Optional[int] = None,
+        out_channels: int | None = None,
         kernel_sizes: Sequence[int] = (3, 5, 7, 9, 11),
         dilations: Sequence[int] = (1, 1, 1, 1, 1),
         expansion: float = 1.0,  # Expansion for hidden_channels within this block
         add_identity: bool = True,
         with_caa: bool = True,
         caa_kernel_size: int = 11,
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         actual_out_channels = out_channels or in_channels  # This is the final output channels of the block
         hidden_channels = _make_divisible(int(actual_out_channels * expansion), 8)  # internal processing channels
@@ -400,7 +418,6 @@ class InceptionBottleneck(nn.Module):
         self.post_conv = ConvNormAct(hidden_channels, actual_out_channels, 1, 1, 0, norm_cfg=norm_cfg, act_cfg=act_cfg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x  # Save original input for potential skip connection
         x_pre = self.pre_conv(x)
 
         # Apply DW convs and sum their outputs
@@ -412,7 +429,7 @@ class InceptionBottleneck(nn.Module):
         # x = x + self.dw_conv1(x) + self.dw_conv2(x) + self.dw_conv3(x) + self.dw_conv4(x)
         # This is a sequential sum, not parallel from x_pre. Let's replicate that.
 
-        x_dw_processed = x_pre.clone()  # Use clone if inplace operations happen in dw_convs
+        x_pre.clone()  # Use clone if inplace operations happen in dw_convs
         # Assuming dw_convs don't operate inplace on their input directly.
 
         # Replicating: y = x_pre; x_dw = dw_conv0(x_pre); x_dw = x_dw + dw_conv1(x_dw) ...
@@ -495,11 +512,9 @@ class InceptionBottleneck(nn.Module):
         # This implies y is modified by CAA, then used as a multiplier.
 
         if self.caa_factor_module is not None:
-            y_multiplier = caa_mult_factor  # This is already self.caa_factor(y_for_caa_and_skip)
+            pass  # This is already self.caa_factor(y_for_caa_and_skip)
         else:
-            y_multiplier = (
-                y_for_caa_and_skip  # If no CAA, use x_pre as multiplier (this seems odd, usually identity is added)
-            )
+            pass
 
         # Re-interpreting based on typical attention/gating:
         # x_gated = x_processed * caa_mult_factor (if with_caa)
@@ -564,9 +579,9 @@ class InceptionBottleneck(nn.Module):
 
         if self.caa_factor_module:
             # caa_mult_factor = self.caa_factor_module(y_for_caa_and_skip) # Already calculated
-            gated_features = current_features * caa_mult_factor
+            current_features * caa_mult_factor
         else:
-            gated_features = current_features  # No CAA, no gating from it.
+            pass  # No CAA, no gating from it.
 
         # The original code: `if self.add_identity: y = x * y; x = x + y else: x = x * y`
         # This `add_identity` is `self.add_identity` for `InceptionBottleneck`.
@@ -616,12 +631,12 @@ class InceptionBottleneck(nn.Module):
 
 
 class PKIBlock(nn.Module):
-    """Poly Kernel Inception Block"""
+    """Poly Kernel Inception Block."""
 
     def __init__(
         self,
         in_channels: int,  # This will be hidden_channels from PKIStage
-        out_channels: Optional[int] = None,  # This will be hidden_channels from PKIStage
+        out_channels: int | None = None,  # This will be hidden_channels from PKIStage
         kernel_sizes: Sequence[int] = (3, 5, 7, 9, 11),
         dilations: Sequence[int] = (1, 1, 1, 1, 1),
         with_caa: bool = True,
@@ -631,11 +646,15 @@ class PKIBlock(nn.Module):
         ffn_kernel_size: int = 3,
         dropout_rate: float = 0.0,
         drop_path_rate: float = 0.0,
-        layer_scale: Optional[float] = 1e-6,  # Common value for LayerScale
+        layer_scale: float | None = 1e-6,  # Common value for LayerScale
         add_identity: bool = True,  # For the residual connections in this block
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         # In PKIStage, PKIBlock is called with (hidden_channels, hidden_channels, ...)
         # So, `in_channels` here is PKIStage's hidden_channels.
@@ -740,7 +759,7 @@ class PKIBlock(nn.Module):
 
 
 class PKIStage(nn.Module):
-    """Poly Kernel Inception Stage"""
+    """Poly Kernel Inception Stage."""
 
     def __init__(
         self,
@@ -753,17 +772,21 @@ class PKIStage(nn.Module):
         ffn_scale: float = 4.0,  # For PKIBlock's FFN
         ffn_kernel_size: int = 3,  # For PKIBlock's FFN
         dropout_rate: float = 0.0,
-        drop_path_rate: Union[float, list] = 0.0,
-        layer_scale: Optional[float] = 1e-6,
+        drop_path_rate: float | list = 0.0,
+        layer_scale: float | None = 1e-6,
         shortcut_with_ffn: bool = True,
         shortcut_ffn_scale: float = 4.0,
         shortcut_ffn_kernel_size: int = 5,
         add_identity: bool = True,  # For PKIBlock's residual
         with_caa: bool = True,
         caa_kernel_size: int = 11,
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
         self.out_channels = out_channels  # Store for width_list
 
@@ -856,7 +879,7 @@ class PKIStage(nn.Module):
 
 
 class PKINet(nn.Module):
-    """Poly Kernel Inception Network"""
+    """Poly Kernel Inception Network."""
 
     # arch_zoo defines parameters for each stage AFTER the stem
     # Each sub-list corresponds to a PKIStage:
@@ -889,16 +912,20 @@ class PKINet(nn.Module):
     def __init__(
         self,
         c1: int = 3,  # Input channels
-        arch: Union[str, Dict] = "S",
+        arch: str | dict = "S",
         out_indices: Sequence[int] = (1, 2, 3, 4),  # Indices of stages to output: 0 for stem, 1-N for PKIStages
         drop_path_rate: float = 0.1,
         frozen_stages: int = -1,  # Stages to freeze (0=stem, 1=stem+stage1, etc.)
         norm_eval: bool = False,  # Set BN to eval mode during training
-        norm_cfg: Optional[dict] = dict(type="BN", momentum=0.03, eps=0.001),
-        act_cfg: Optional[dict] = dict(type="SiLU"),
+        norm_cfg: dict | None = None,
+        act_cfg: dict | None = None,
         # Kaiming init for Conv2d, specific for others
         default_init_method: str = "kaiming_conv_trunc_normal_linear",
     ):
+        if act_cfg is None:
+            act_cfg = {"type": "SiLU"}
+        if norm_cfg is None:
+            norm_cfg = {"type": "BN", "momentum": 0.03, "eps": 0.001}
         super().__init__()
 
         if isinstance(arch, str):
@@ -916,15 +943,15 @@ class PKINet(nn.Module):
 
         if not out_indices:  # If empty, output from last stage
             out_indices = (self.num_feature_stages - 1,)
-        assert all(
-            i < self.num_feature_stages for i in out_indices
-        ), f"out_indices {out_indices} out of range for {self.num_feature_stages} stages."
+        assert all(i < self.num_feature_stages for i in out_indices), (
+            f"out_indices {out_indices} out of range for {self.num_feature_stages} stages."
+        )
         if frozen_stages not in range(-1, self.num_feature_stages):
             raise ValueError(
                 f"frozen_stages must be in range(-1, {self.num_feature_stages}). But received {frozen_stages}"
             )
 
-        self.out_indices = sorted(list(set(out_indices)))  # Ensure unique and sorted
+        self.out_indices = sorted(set(out_indices))  # Ensure unique and sorted
         self.frozen_stages = frozen_stages
         self.norm_eval = norm_eval
         self.default_init_method = default_init_method
@@ -1050,7 +1077,7 @@ class PKINet(nn.Module):
                     m.eval()
         return self
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         outs = []
         for i, stage_module in enumerate(self.stages_modulelist):
             x = stage_module(x)

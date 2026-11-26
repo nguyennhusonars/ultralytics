@@ -1,17 +1,19 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/mafyolo.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from itertools import repeat
-from ultralytics.nn.modules.conv import DWConv
 import collections.abc
+from itertools import repeat
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.modules.conv import DWConv
 
 
 class Conv(nn.Module):
-    """Normal Conv with SiLU activation"""
+    """Normal Conv with SiLU activation."""
 
     def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, groups=1, bias=False):
         super().__init__()
@@ -43,7 +45,7 @@ class AVG(nn.Module):
         # self.output_size = np.array([H, W])
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         H = int(H / self.down_n)
         W = int(W / self.down_n)
         output_size = np.array([H, W])
@@ -109,9 +111,8 @@ class UniRepLKNetBlock_pro(nn.Module):
 
 
 class DilatedReparamBlock(nn.Module):
-    """
-    Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet)
-    We assume the inputs to this block are (N, C, H, W)
+    """Dilated Reparam Block proposed in UniRepLKNet (https://github.com/AILab-CVC/UniRepLKNet) We assume the inputs to
+    this block are (N, C, H, W).
     """
 
     def __init__(self, channels, kernel_size, deploy, use_sync_bn=False, attempt_use_lk_impl=True):
@@ -146,10 +147,7 @@ class DilatedReparamBlock(nn.Module):
         elif kernel_size == 7:
             self.kernel_sizes = [5, 3]
             self.dilates = [1, 1]
-        elif kernel_size == 5:
-            self.kernel_sizes = [3, 1]
-            self.dilates = [1, 1]
-        elif kernel_size == 3:
+        elif kernel_size == 5 or kernel_size == 3:
             self.kernel_sizes = [3, 1]
             self.dilates = [1, 1]
 
@@ -160,7 +158,7 @@ class DilatedReparamBlock(nn.Module):
             self.origin_bn = get_bn(channels)
             for k, r in zip(self.kernel_sizes, self.dilates):
                 self.__setattr__(
-                    "dil_conv_k{}_{}".format(k, r),
+                    f"dil_conv_k{k}_{r}",
                     nn.Conv2d(
                         in_channels=channels,
                         out_channels=channels,
@@ -172,15 +170,15 @@ class DilatedReparamBlock(nn.Module):
                         bias=False,
                     ),
                 )
-                self.__setattr__("dil_bn_k{}_{}".format(k, r), get_bn(channels))
+                self.__setattr__(f"dil_bn_k{k}_{r}", get_bn(channels))
 
     def forward(self, x):
         if not hasattr(self, "origin_bn"):  # deploy mode
             return self.lk_origin(x)
         out = self.origin_bn(self.lk_origin(x))
         for k, r in zip(self.kernel_sizes, self.dilates):
-            conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-            bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+            conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+            bn = self.__getattr__(f"dil_bn_k{k}_{r}")
             out = out + bn(conv(x))
         return out
 
@@ -188,8 +186,8 @@ class DilatedReparamBlock(nn.Module):
         if hasattr(self, "origin_bn"):
             origin_k, origin_b = fuse_bn(self.lk_origin, self.origin_bn)
             for k, r in zip(self.kernel_sizes, self.dilates):
-                conv = self.__getattr__("dil_conv_k{}_{}".format(k, r))
-                bn = self.__getattr__("dil_bn_k{}_{}".format(k, r))
+                conv = self.__getattr__(f"dil_conv_k{k}_{r}")
+                bn = self.__getattr__(f"dil_bn_k{k}_{r}")
                 branch_k, branch_b = fuse_bn(conv, bn)
                 origin_k = merge_dilated_into_large_kernel(origin_k, branch_k, r)
                 origin_b += branch_b
@@ -209,8 +207,8 @@ class DilatedReparamBlock(nn.Module):
             self.lk_origin = merged_conv
             self.__delattr__("origin_bn")
             for k, r in zip(self.kernel_sizes, self.dilates):
-                self.__delattr__("dil_conv_k{}_{}".format(k, r))
-                self.__delattr__("dil_bn_k{}_{}".format(k, r))
+                self.__delattr__(f"dil_conv_k{k}_{r}")
+                self.__delattr__(f"dil_bn_k{k}_{r}")
 
 
 def _ntuple(n):
@@ -245,11 +243,7 @@ def get_conv2d_uni(
         padding = (kernel_size[0] // 2, kernel_size[1] // 2)
     else:
         padding = to_2tuple(padding)
-    need_large_impl = (
-        kernel_size[0] == kernel_size[1]
-        and kernel_size[0] > 5
-        and padding == (kernel_size[0] // 2, kernel_size[1] // 2)
-    )
+    (kernel_size[0] == kernel_size[1] and kernel_size[0] > 5 and padding == (kernel_size[0] // 2, kernel_size[1] // 2))
 
     return nn.Conv2d(
         in_channels=in_channels,
@@ -303,7 +297,7 @@ class DepthBottleneckUniv2(nn.Module):
         small_kersize=3,
         use_depthwise=True,
     ):
-        super(DepthBottleneckUniv2, self).__init__()
+        super().__init__()
 
         mid_channel = int(in_channels * expansion_depth)
         mid_channel2 = mid_channel
@@ -343,7 +337,7 @@ class RepHMS(nn.Module):
         small_kersize=3,
         use_depthwise=True,
     ):
-        super(RepHMS, self).__init__()
+        super().__init__()
         self.width = width
         self.depth = depth
         c1 = int(out_channels * expansion) * width
@@ -401,7 +395,7 @@ class DepthBottleneckv2(nn.Module):
         small_kersize=3,
         use_depthwise=True,
     ):
-        super(DepthBottleneckv2, self).__init__()
+        super().__init__()
 
         mid_channel = int(in_channels * expansion_depth)
         mid_channel2 = mid_channel
@@ -441,7 +435,7 @@ class ConvMS(nn.Module):
         small_kersize=3,
         use_depthwise=True,
     ):
-        super(ConvMS, self).__init__()
+        super().__init__()
         self.width = width
         self.depth = depth
         c1 = int(out_channels * expansion) * width

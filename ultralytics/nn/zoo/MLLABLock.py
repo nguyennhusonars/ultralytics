@@ -2,16 +2,16 @@
 """Ported from ultralytics_sonnn nn/modules/MLLABLock.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def drop_path(x, drop_prob: float = 0.0, training: bool = False, scale_by_keep: bool = True):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
-    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
-    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
-    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
-    'survival rate' as the argument.
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks). This is the same as the
+    DropConnect impl I created for EfficientNet, etc networks, however, the original name is misleading as 'Drop
+    Connect' is a different form of dropout in a separate paper... See discussion:
+    https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for changing the layer and
+    argument names to 'drop path' rather than mix DropConnect as a layer name and use 'survival rate' as
+    the argument.
     """
     if drop_prob == 0.0 or not training:
         return x
@@ -24,10 +24,10 @@ def drop_path(x, drop_prob: float = 0.0, training: bool = False, scale_by_keep: 
 
 
 class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
 
     def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
         self.scale_by_keep = scale_by_keep
 
@@ -35,7 +35,7 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
 
     def extra_repr(self):
-        return f"drop_prob={round(self.drop_prob,3):0.3f}"
+        return f"drop_prob={round(self.drop_prob, 3):0.3f}"
 
 
 class Mlp(nn.Module):
@@ -61,7 +61,7 @@ class RoPE(torch.nn.Module):
     r"""Rotary Positional Embedding."""
 
     def __init__(self, base=10000):
-        super(RoPE, self).__init__()
+        super().__init__()
         self.base = base
 
     def generate_rotations(self, x):
@@ -106,10 +106,11 @@ class RoPE(torch.nn.Module):
 
 class LinearAttention(nn.Module):
     r"""Linear Attention with LePE and RoPE.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True.
     """
 
     def __init__(self, dim, num_heads=4, qkv_bias=True, **kwargs):
@@ -124,7 +125,7 @@ class LinearAttention(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: input features with shape of (B, N, C)
+            x: input features with shape of (B, N, C).
         """
         b, n, c = x.shape
         h = int(n**0.5)
@@ -160,16 +161,17 @@ class LinearAttention(nn.Module):
 
 class MLLABlock(nn.Module):
     r"""MLLA Block.
+
     Args:
         dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resulotion.
+        input_resolution (tuple[int]): Input resolution.
         num_heads (int): Number of attention heads.
         mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
         qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
         drop (float, optional): Dropout rate. Default: 0.0
         drop_path (float, optional): Stochastic depth rate. Default: 0.0
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
     """
 
     def __init__(

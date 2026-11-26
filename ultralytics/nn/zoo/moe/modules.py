@@ -1,34 +1,38 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/moe/modules.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo.moe.experts import EfficientExpertGroup
-from ultralytics.nn.zoo.moe.experts import FasterExpert
-from ultralytics.nn.zoo.moe.experts import GBCExpert
-from ultralytics.nn.zoo.moe.experts import GhostExpert
-from ultralytics.nn.zoo.moe.experts import InvertedResidualExpert
-from ultralytics.nn.zoo.moe.experts import ShuffleExpert
-from ultralytics.nn.zoo.moe.experts import SimpleExpert
-from ultralytics.nn.zoo.moe.experts import SpatialExpert
-from ultralytics.nn.zoo.moe.experts import UniversalInvertedResidualExpert
-from ultralytics.nn.zoo.moe.loss import MoELoss
-from ultralytics.nn.zoo.moe.routers import AdaptiveRoutingLayer
-from ultralytics.nn.zoo.moe.routers import DynamicRoutingLayer
-from ultralytics.nn.zoo.moe.routers import EfficientSpatialRouter
-from ultralytics.nn.zoo.moe.routers import LocalRoutingLayer
 import copy
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import weakref
 
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo.moe.experts import (
+    EfficientExpertGroup,
+    FasterExpert,
+    GBCExpert,
+    GhostExpert,
+    InvertedResidualExpert,
+    ShuffleExpert,
+    SimpleExpert,
+    SpatialExpert,
+    UniversalInvertedResidualExpert,
+)
+from ultralytics.nn.zoo.moe.loss import MoELoss
+from ultralytics.nn.zoo.moe.routers import (
+    AdaptiveRoutingLayer,
+    DynamicRoutingLayer,
+    EfficientSpatialRouter,
+    LocalRoutingLayer,
+)
 
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
 
 
 def _robust_deepcopy(obj, memo):
-    """
-    Robust deepcopy helper that sanitizes the object's __dict__ to remove
-    any non-leaf tensors (which cause RuntimeError in deepcopy) before copying.
+    """Robust deepcopy helper that sanitizes the object's __dict__ to remove any non-leaf tensors (which cause
+    RuntimeError in deepcopy) before copying.
     """
     cls = obj.__class__
     new_obj = cls.__new__(cls)
@@ -50,7 +54,7 @@ def _robust_deepcopy(obj, memo):
                     )
                     setattr(new_obj, k, torch.tensor(0.0))
                 else:
-                    raise e
+                    raise
             except Exception:
                 # Best effort copy for other errors (e.g. pickling issues)
                 # If it fails, we assume it's transient state and ignore it or shallow copy
@@ -80,9 +84,9 @@ class ES_MOE(nn.Module):
             reduction: Channel reduction ratio for the routing network
             top_k: Number of active experts; None means use all experts
             use_sparse_inference: Enable sparse Top-K expert computation during inference
-            dynamic_threshold: Threshold for pruning low-confidence experts during inference
+            dynamic_threshold: Threshold for pruning low-confidence experts during inference.
         """
-        super(ES_MOE, self).__init__()
+        super().__init__()
 
         if out_channels is None:
             out_channels = in_channels
@@ -164,14 +168,14 @@ class ES_MOE(nn.Module):
 
     def _sparse_forward(self, x, routing_weights):
         """Sparse forward: compute only Top-K experts (used during inference)."""
-        B, E, H, W = routing_weights.shape
+        B, E, _H, _W = routing_weights.shape
 
         # Compute per-expert importance
         routing_weights_flat = routing_weights.view(B, E, -1)
         expert_importance = routing_weights_flat.mean(dim=2)
 
         # Find Top-K experts
-        topk_values, topk_indices = torch.topk(expert_importance, self.top_k, dim=1)
+        _topk_values, topk_indices = torch.topk(expert_importance, self.top_k, dim=1)
 
         # Initialize output
         final_output = torch.zeros_like(x)
@@ -371,7 +375,7 @@ class OptimizedMOEImproved(nn.Module):
                 nn.init.constant_(last_conv.bias, 0)
 
     def _update_sparsity(self):
-        """Progressive Sparsity Scheduling"""
+        """Progressive Sparsity Scheduling."""
         if self.training_step < self.warmup_steps:
             progress = self.training_step.float() / self.warmup_steps
             current_k = self.num_experts - progress * (self.num_experts - self.top_k)
@@ -380,7 +384,7 @@ class OptimizedMOEImproved(nn.Module):
             self.current_top_k.fill_(self.top_k)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        B, _C, H, W = x.shape
 
         if self.training and self.progressive_sparsity:
             self._update_sparsity()

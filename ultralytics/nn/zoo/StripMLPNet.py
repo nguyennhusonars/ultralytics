@@ -1,17 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/StripMLPNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 
 class BN_Activ_Conv(nn.Module):
     def __init__(self, in_channels, activation, out_channels, kernel_size, stride=(1, 1), dilation=(1, 1), groups=1):
-        super(BN_Activ_Conv, self).__init__()
+        super().__init__()
         # For BN -> Act -> Conv pattern, BN operates on its input channels
         self.BN = nn.BatchNorm2d(in_channels)
         self.Activation = activation
@@ -240,7 +239,6 @@ class TokenMixing(nn.Module):
         self.dwsc = DepthWise_Conv(C)
 
     def forward(self, x):
-        x_res = x
         x = self.dwsc(x)
         x = self.smlp_block(x)
         # Original code implies residual connection for TokenMixing as part of BasicBlock
@@ -275,7 +273,6 @@ class ChannelMixing(nn.Module):
         self.grn = GRN(hidden_dim)
 
     def forward(self, x):  # x is (N, C, H, W)
-        x_res = x
         x = self.conv_77(x)
 
         x = x.permute(0, 2, 3, 1)  # (N, H, W, C)
@@ -319,7 +316,7 @@ class StripMLPNet(nn.Module):
         patch_size=4,
         in_chans=3,
         embed_dim=80,
-        layers=[2, 8, 14, 2],
+        layers=None,
         token_mlp_ratio=3,
         drop_rate=0.0,
         drop_path_rate=0.1,
@@ -329,7 +326,9 @@ class StripMLPNet(nn.Module):
         use_checkpoint=False,
         **kwargs,
     ):
-        super(StripMLPNet, self).__init__()
+        if layers is None:
+            layers = [2, 8, 14, 2]
+        super().__init__()
 
         if isinstance(img_size, int):
             img_size = to_2tuple(img_size)

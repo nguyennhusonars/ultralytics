@@ -1,10 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SAConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.conv import autopad
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv, autopad
 
 
 class ConvAWS2d(nn.Conv2d):

@@ -1,14 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RevCol.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from typing import Any
-from typing import List
-from typing import Tuple
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class UpSampleConvnext(nn.Module):
@@ -31,10 +32,9 @@ class UpSampleConvnext(nn.Module):
 
 
 class LayerNorm(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_first", elementwise_affine=True):
@@ -62,10 +62,10 @@ class LayerNorm(nn.Module):
 
 
 class ConvNextBlock(nn.Module):
-    r"""ConvNeXt Block. There are two equivalent implementations:
-    (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
-    (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) -> Linear -> GELU -> Linear; Permute back
-    We use (2) as we find it slightly faster in PyTorch
+    r"""ConvNeXt Block. There are two equivalent implementations: (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv
+    -> GELU -> 1x1 Conv; all in (N, C, H, W) (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) ->
+    Linear -> GELU -> Linear; Permute back We use (2) as we find it slightly faster in PyTorch.
+
     Args:
         dim (int): Number of input channels.
         drop_path (float): Stochastic depth rate. Default: 0.0
@@ -82,7 +82,7 @@ class ConvNextBlock(nn.Module):
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(hidden_dim, out_channel)
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((out_channel)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(out_channel), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
@@ -105,7 +105,7 @@ class ConvNextBlock(nn.Module):
         return x
 
 
-def get_gpu_states(fwd_gpu_devices) -> Tuple[List[int], List[torch.Tensor]]:
+def get_gpu_states(fwd_gpu_devices) -> tuple[list[int], list[torch.Tensor]]:
     # This will not error out if "arg" is a CPU tensor or a non-tensor type because
     # the conditionals short-circuit.
     fwd_gpu_states = []
@@ -117,7 +117,7 @@ def get_gpu_states(fwd_gpu_devices) -> Tuple[List[int], List[torch.Tensor]]:
 
 
 def get_gpu_device(*args):
-    fwd_gpu_devices = list(set(arg.get_device() for arg in args if isinstance(arg, torch.Tensor) and arg.is_cuda))
+    fwd_gpu_devices = list({arg.get_device() for arg in args if isinstance(arg, torch.Tensor) and arg.is_cuda})
     return fwd_gpu_devices
 
 
@@ -128,7 +128,7 @@ def set_device_states(fwd_cpu_state, devices, states) -> None:
             torch.cuda.set_rng_state(state)
 
 
-def detach_and_grad(inputs: Tuple[Any, ...]) -> Tuple[torch.Tensor, ...]:
+def detach_and_grad(inputs: tuple[Any, ...]) -> tuple[torch.Tensor, ...]:
     if isinstance(inputs, tuple):
         out = []
         for inp in inputs:
@@ -193,7 +193,7 @@ class ReverseFunction(torch.autograd.Function):
         x, c0, c1, c2, c3 = ctx.saved_tensors
         l0, l1, l2, l3 = ctx.run_functions
         alpha0, alpha1, alpha2, alpha3 = ctx.alpha
-        gx_right, g0_right, g1_right, g2_right, g3_right = grad_outputs
+        _gx_right, g0_right, g1_right, g2_right, g3_right = grad_outputs
         (x, c0, c1, c2, c3) = detach_and_grad((x, c0, c1, c2, c3))
 
         with torch.enable_grad(), torch.random.fork_rng(
@@ -386,14 +386,18 @@ class SubNet(nn.Module):
 class FullNet(nn.Module):
     def __init__(
         self,
-        channels=[32, 64, 96, 128],
-        layers=[2, 3, 6, 3],
+        channels=None,
+        layers=None,
         num_subnet=5,
         kernel_size=3,
         drop_path=0.0,
         save_memory=True,
         inter_supv=True,
     ) -> None:
+        if layers is None:
+            layers = [2, 3, 6, 3]
+        if channels is None:
+            channels = [32, 64, 96, 128]
         super().__init__()
         self.num_subnet = num_subnet
         self.inter_supv = inter_supv
@@ -407,9 +411,9 @@ class FullNet(nn.Module):
 
         dp_rate = [x.item() for x in torch.linspace(0, drop_path, sum(layers))]
         for i in range(num_subnet):
-            first_col = True if i == 0 else False
+            first_col = i == 0
             self.add_module(
-                f"subnet{str(i)}",
+                f"subnet{i!s}",
                 SubNet(channels, layers, kernel_size, first_col, dp_rates=dp_rate, save_memory=save_memory),
             )
 
@@ -420,14 +424,11 @@ class FullNet(nn.Module):
         c0, c1, c2, c3 = 0, 0, 0, 0
         x = self.stem(x)
         for i in range(self.num_subnet):
-            c0, c1, c2, c3 = getattr(self, f"subnet{str(i)}")(x, c0, c1, c2, c3)
+            c0, c1, c2, c3 = getattr(self, f"subnet{i!s}")(x, c0, c1, c2, c3)
         return [c0, c1, c2, c3]
 
     def _init_weights(self, module):
-        if isinstance(module, nn.Conv2d):
-            trunc_normal_(module.weight, std=0.02)
-            nn.init.constant_(module.bias, 0)
-        elif isinstance(module, nn.Linear):
+        if isinstance(module, (nn.Conv2d, nn.Linear)):
             trunc_normal_(module.weight, std=0.02)
             nn.init.constant_(module.bias, 0)
 

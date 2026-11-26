@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/vHeat_modular.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class LayerNorm2d(nn.LayerNorm):
@@ -142,7 +143,7 @@ class HeatBlock(nn.Module):
 
 
 class vHeatStem(nn.Module):
-    """vHeat 的 Stem 層：將圖像快速下採樣 4 倍"""
+    """vHeat 的 Stem 層：將圖像快速下採樣 4 倍."""
 
     def __init__(self, c1, c2, kernel_size=3, stride=2):
         super().__init__()
@@ -165,7 +166,7 @@ class vHeatStem(nn.Module):
 
 
 class vHeatDownsample(nn.Module):
-    """層間下採樣"""
+    """層間下採樣."""
 
     def __init__(self, c1, c2):
         super().__init__()
@@ -176,9 +177,7 @@ class vHeatDownsample(nn.Module):
 
 
 class vHeatStage(nn.Module):
-    """
-    對應 YOLO 的主要 Block (如 C2f, C3)。
-    包含多個 HeatBlock 以及該 Stage 專屬的 freq_embed。
+    """對應 YOLO 的主要 Block (如 C2f, C3)。 包含多個 HeatBlock 以及該 Stage 專屬的 freq_embed。.
     """
 
     def __init__(self, c1, c2, n=1, res=64, drop_path=0.0):
@@ -197,7 +196,7 @@ class vHeatStage(nn.Module):
         trunc_normal_(self.freq_embed, std=0.02)
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
 
         # 處理 freq_embed 的空間尺寸匹配 (動態插值)
         # vHeat 原論文的核心：Visual Embeddings 隨解析度變化

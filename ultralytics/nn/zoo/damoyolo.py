@@ -3,7 +3,7 @@
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class swish(nn.Module):
@@ -139,7 +139,7 @@ class RepConv(nn.Module):
 
 class BasicBlock_3x3_Reverse(nn.Module):
     def __init__(self, ch_in, ch_hidden_ratio, ch_out, shortcut=True):
-        super(BasicBlock_3x3_Reverse, self).__init__()
+        super().__init__()
         assert ch_in == ch_out
         ch_hidden = int(ch_in * ch_hidden_ratio)
         self.conv1 = Conv(ch_hidden, ch_out, 3, s=1)
@@ -157,11 +157,11 @@ class BasicBlock_3x3_Reverse(nn.Module):
 
 class SPP(nn.Module):
     def __init__(self, ch_in, ch_out, k, pool_size):
-        super(SPP, self).__init__()
+        super().__init__()
         self.pool = []
         for i, size in enumerate(pool_size):
             pool = nn.MaxPool2d(kernel_size=size, stride=1, padding=size // 2, ceil_mode=False)
-            self.add_module("pool{}".format(i), pool)
+            self.add_module(f"pool{i}", pool)
             self.pool.append(pool)
         self.conv = Conv(ch_in, ch_out, k)
 
@@ -178,7 +178,7 @@ class SPP(nn.Module):
 
 class CSPStage(nn.Module):
     def __init__(self, ch_in, ch_out, n, block_fn="BasicBlock_3x3_Reverse", ch_hidden_ratio=1.0, act="silu", spp=False):
-        super(CSPStage, self).__init__()
+        super().__init__()
 
         split_ratio = 2
         ch_first = int(ch_out // split_ratio)

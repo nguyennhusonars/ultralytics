@@ -2,18 +2,22 @@
 """Ported from ultralytics_sonnn nn/modules/InceptionNext.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import checkpoint_seq
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import (
+    IMAGENET_DEFAULT_MEAN,
+    IMAGENET_DEFAULT_STD,
+    DropPath,
+    checkpoint_seq,
+    to_2tuple,
+    trunc_normal_,
+)
 
 
 class InceptionDWConv2d(nn.Module):
-    """Inception depthweise convolution"""
+    """Inception depthweise convolution."""
 
     def __init__(self, in_channels, square_kernel_size=3, band_kernel_size=11, branch_ratio=0.125):
         super().__init__()
@@ -37,8 +41,8 @@ class InceptionDWConv2d(nn.Module):
 
 
 class ConvMlp(nn.Module):
-    """MLP using 1x1 convs that keeps spatial dims
-    copied from timm: https://github.com/huggingface/pytorch-image-models/blob/v0.6.11/timm/models/layers/mlp.py
+    """MLP using 1x1 convs that keeps spatial dims copied from timm:
+    https://github.com/huggingface/pytorch-image-models/blob/v0.6.11/timm/models/layers/mlp.py.
     """
 
     def __init__(
@@ -72,7 +76,7 @@ class ConvMlp(nn.Module):
 
 
 class MlpHead(nn.Module):
-    """MLP classification head"""
+    """MLP classification head."""
 
     def __init__(
         self,
@@ -103,7 +107,8 @@ class MlpHead(nn.Module):
 
 
 class MetaNeXtBlock(nn.Module):
-    """MetaNeXtBlock Block
+    """MetaNeXtBlock Block.
+
     Args:
         dim (int): Number of input channels.
         drop_path (float): Stochastic depth rate. Default: 0.0
@@ -188,8 +193,9 @@ class MetaNeXtStage(nn.Module):
 
 
 class MetaNeXt(nn.Module):
-    r"""MetaNeXt
-        A PyTorch impl of : `InceptionNeXt: When Inception Meets ConvNeXt`  - https://arxiv.org/pdf/2203.xxxxx.pdf
+    r"""MetaNeXt A PyTorch impl of : `InceptionNeXt: When Inception Meets ConvNeXt` -
+    https://arxiv.org/pdf/2203.xxxxx.pdf.
+
     Args:
         in_chans (int): Number of input image channels. Default: 3
         num_classes (int): Number of classes for classification head. Default: 1000
@@ -303,22 +309,22 @@ def _cfg(url="", **kwargs):
     }
 
 
-default_cfgs = dict(
-    inceptionnext_tiny=_cfg(
+default_cfgs = {
+    "inceptionnext_tiny": _cfg(
         url="https://github.com/sail-sg/inceptionnext/releases/download/model/inceptionnext_tiny.pth",
     ),
-    inceptionnext_small=_cfg(
+    "inceptionnext_small": _cfg(
         url="https://github.com/sail-sg/inceptionnext/releases/download/model/inceptionnext_small.pth",
     ),
-    inceptionnext_base=_cfg(
+    "inceptionnext_base": _cfg(
         url="https://github.com/sail-sg/inceptionnext/releases/download/model/inceptionnext_base.pth",
     ),
-    inceptionnext_base_384=_cfg(
+    "inceptionnext_base_384": _cfg(
         url="https://github.com/sail-sg/inceptionnext/releases/download/model/inceptionnext_base_384.pth",
         input_size=(3, 384, 384),
         crop_pct=1.0,
     ),
-)
+}
 
 
 def inceptionnext_tiny(pretrained=False, **kwargs):

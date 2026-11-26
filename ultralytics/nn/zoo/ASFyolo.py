@@ -2,9 +2,10 @@
 """Ported from ultralytics_sonnn nn/modules/ASFyolo.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -39,7 +40,7 @@ class Zoom_cat(nn.Module):
         # self.conv_l_post_down = Conv(in_dim, 2*in_dim, 3, 1, 1)
 
     def forward(self, x):
-        """l,m,s表示大中小三个尺度，最终会被整合到m这个尺度上"""
+        """L,m,s表示大中小三个尺度，最终会被整合到m这个尺度上."""
         l, m, s = x[0], x[1], x[2]
         tgt_size = m.shape[2:]
         l = F.adaptive_max_pool2d(l, tgt_size) + F.adaptive_avg_pool2d(l, tgt_size)
@@ -54,7 +55,7 @@ class Zoom_cat(nn.Module):
 
 class ScalSeq(nn.Module):
     def __init__(self, inc, channel):
-        super(ScalSeq, self).__init__()
+        super().__init__()
         self.conv0 = Conv(inc[0], channel, 1)
         self.conv1 = Conv(inc[1], channel, 1)
         self.conv2 = Conv(inc[2], channel, 1)
@@ -92,8 +93,8 @@ class Add(nn.Module):
 
 class channel_att(nn.Module):
     def __init__(self, channel, b=1, gamma=2):
-        super(channel_att, self).__init__()
-        kernel_size = int(abs((math.log(channel, 2) + b) / gamma))
+        super().__init__()
+        kernel_size = int(abs((math.log2(channel) + b) / gamma))
         kernel_size = kernel_size if kernel_size % 2 else kernel_size + 1
 
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
@@ -111,7 +112,7 @@ class channel_att(nn.Module):
 
 class local_att(nn.Module):
     def __init__(self, channel, reduction=16):
-        super(local_att, self).__init__()
+        super().__init__()
 
         self.conv_1x1 = nn.Conv2d(
             in_channels=channel, out_channels=channel // reduction, kernel_size=1, stride=1, bias=False

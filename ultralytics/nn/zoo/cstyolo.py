@@ -1,23 +1,23 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/cstyolo.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Optional
-from ultralytics.nn.modules.conv import Conv
+from __future__ import annotations
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv
 
 
 def drop_path_f(x, drop_prob: float = 0.0, training: bool = False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 
-    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
-    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
-    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
-    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
-    'survival rate' as the argument.
-
+    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however, the original name is
+    misleading as 'Drop Connect' is a different form of dropout in a separate paper... See discussion:
+    https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for changing the layer and
+    argument names to 'drop path' rather than mix DropConnect as a layer name and use 'survival rate' as the argument.
     """
     if drop_prob == 0.0 or not training:
         return x
@@ -30,10 +30,10 @@ def drop_path_f(x, drop_prob: float = 0.0, training: bool = False):
 
 
 class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
 
     def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
 
     def forward(self, x):
@@ -41,11 +41,11 @@ class DropPath(nn.Module):
 
 
 def window_partition(x, window_size: int):
-    """
-    # Feature map is divided into one without overlapping windows in term of window_size.
+    """# Feature map is divided into one without overlapping windows in term of window_size.
+
     Args:
         x: (B, H, W, C)
-        window_size (int): window size(M)
+        window_size (int): window size(M).
 
     Returns:
         windows: (num_windows*B, window_size, window_size, C)
@@ -59,13 +59,13 @@ def window_partition(x, window_size: int):
 
 
 def window_reverse(windows, window_size: int, H: int, W: int):
-    """
-    # Every window reverted to one feature map.
+    """# Every window reverted to one feature map.
+
     Args:
         windows: (num_windows*B, window_size, window_size, C)
         window_size (int): Window size(M)
         H (int): Height of image
-        W (int): Width of image
+        W (int): Width of image.
 
     Returns:
         x: (B, H, W, C)
@@ -80,7 +80,7 @@ def window_reverse(windows, window_size: int, H: int, W: int):
 
 
 class Mlp(nn.Module):
-    """MLP as used in Vision Transformer, MLP-Mixer and related networks"""
+    """MLP as used in Vision Transformer, MLP-Mixer and related networks."""
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0):
         super().__init__()
@@ -103,14 +103,14 @@ class Mlp(nn.Module):
 
 
 class WindowAttention(nn.Module):
-    r"""Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    r"""Window based multi-head self attention (W-MSA) module with relative position bias. It supports both of shifted
+    and non-shifted window.
 
     Args:
         dim (int): Number of input channels.
         window_size (tuple[int]): The height and width of the window.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
@@ -150,11 +150,11 @@ class WindowAttention(nn.Module):
         nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask: Optional[torch.Tensor] = None):
+    def forward(self, x, mask: torch.Tensor | None = None):
         """
         Args:
             x: input features with shape of (num_windows*B, Mh*Mw, C)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None.
         """
         # [batch_size*num_windows, Mh*Mw, total_embed_dim]
         B_, N, C = x.shape
@@ -268,7 +268,7 @@ class SwinTransformerLayer(nn.Module):
         return attn_mask
 
     def forward(self, x):
-        b, c, w, h = x.shape
+        _b, c, w, h = x.shape
         x = x.permute(0, 3, 2, 1).contiguous()  # [b,h,w,c]
 
         attn_mask = self.create_mask(x, h, w)  # [nW, Mh*Mw, Mh*Mw]
@@ -338,10 +338,10 @@ class SwinTransformerBlock(nn.Module):
 
 
 class DPUP(nn.Module):
-    def __init__(self, c1, kernal=(16, 16), scale=1.25):
+    def __init__(self, c1, kernel=(16, 16), scale=1.25):
         super().__init__()
-        self.dp = nn.AdaptiveAvgPool2d(kernal[0])
-        self.kernal = kernal
+        self.dp = nn.AdaptiveAvgPool2d(kernel[0])
+        self.kernel = kernel
         self.conv = Conv(c1, 256, k=1)
         self.up = nn.Upsample(scale_factor=scale, mode="bilinear")
 
@@ -355,10 +355,10 @@ class DPUP(nn.Module):
 class MCS(nn.Module):
     def __init__(self, c1, c2=0, k=0):
         super().__init__()
-        self.dp1 = DPUP(c1, kernal=(16, 16), scale=1.25)
-        self.dp2 = DPUP(c1, kernal=(10, 10), scale=2)
-        self.dp3 = DPUP(c1, kernal=(8, 8), scale=2.5)
-        self.dp4 = DPUP(c1, kernal=(5, 5), scale=4)
+        self.dp1 = DPUP(c1, kernel=(16, 16), scale=1.25)
+        self.dp2 = DPUP(c1, kernel=(10, 10), scale=2)
+        self.dp3 = DPUP(c1, kernel=(8, 8), scale=2.5)
+        self.dp4 = DPUP(c1, kernel=(5, 5), scale=4)
 
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Conv1d(1, 1, kernel_size=3, padding=1, bias=False)
@@ -386,7 +386,7 @@ class MCS(nn.Module):
 
 class MyConcat4(nn.Module):
     def __init__(self, dimension=1):
-        super(MyConcat4, self).__init__()
+        super().__init__()
         self.d = dimension
         self.w = nn.Parameter(torch.ones(4, dtype=torch.float32), requires_grad=True)
         self.epsilon = 0.0001
@@ -400,7 +400,7 @@ class MyConcat4(nn.Module):
 
 class MyConcat6(nn.Module):
     def __init__(self, dimension=1):
-        super(MyConcat6, self).__init__()
+        super().__init__()
         self.d = dimension
         self.w = nn.Parameter(torch.ones(6, dtype=torch.float32), requires_grad=True)
         self.epsilon = 0.0001

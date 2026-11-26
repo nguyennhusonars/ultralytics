@@ -1,13 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/CAS_ViT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import os
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, to_2tuple, trunc_normal_
 
 
 def stem(in_chs, out_chs):
@@ -22,10 +21,8 @@ def stem(in_chs, out_chs):
 
 
 class Embedding(nn.Module):
-    """
-    Patch Embedding that is implemented by a layer of conv.
-    Input: tensor in shape [B, C, H, W]
-    Output: tensor in shape [B, C, H/stride, W/stride]
+    """Patch Embedding that is implemented by a layer of conv. Input: tensor in shape [B, C, H, W] Output: tensor in
+    shape [B, C, H/stride, W/stride].
     """
 
     def __init__(self, patch_size=16, stride=16, padding=0, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
@@ -90,7 +87,7 @@ class ChannelOperation(nn.Module):
 
 
 class LocalIntegration(nn.Module):
-    """ """
+    """"""
 
     def __init__(
         self, dim, ratio=1, act_layer=nn.ReLU, norm_layer_mlp=nn.GELU
@@ -126,7 +123,7 @@ class LocalIntegration(nn.Module):
 
 
 class AdditiveTokenMixer(nn.Module):
-    """ """
+    """"""
 
     def __init__(self, dim=512, attn_bias=False, proj_drop=0.0):
         super().__init__()
@@ -154,7 +151,7 @@ class AdditiveTokenMixer(nn.Module):
 
 
 class AdditiveBlock(nn.Module):
-    """ """
+    """"""
 
     def __init__(
         self, dim, mlp_ratio=4.0, attn_bias=False, drop=0.0, drop_path=0.0, act_layer=nn.ReLU, norm_layer=nn.BatchNorm2d
@@ -193,7 +190,7 @@ def Stage(
     drop=0.0,
     drop_path_rate=0.0,
 ):
-    """ """
+    """"""
     blocks = []
     for block_idx in range(layers[index]):
         block_dpr = drop_path_rate * (block_idx + sum(layers[:index])) / (sum(layers) - 1)
@@ -219,7 +216,7 @@ class RCViT(nn.Module):
         layers,
         embed_dims,
         mlp_ratios=4,
-        downsamples=[True, True, True, True],
+        downsamples=None,
         norm_layer=nn.BatchNorm2d,
         attn_bias=False,
         act_layer=nn.GELU,
@@ -232,6 +229,8 @@ class RCViT(nn.Module):
         dummy_input_size=(224, 224),
         **kwargs,
     ):  # Added dummy_input_size
+        if downsamples is None:
+            downsamples = [True, True, True, True]
         super().__init__()
 
         self.fork_feat = fork_feat
@@ -336,7 +335,7 @@ class RCViT(nn.Module):
                 # Remove classifier specific weights if we are in fork_feat mode
                 # and the checkpoint contains them.
                 for k in list(state_dict.keys()):
-                    if k.startswith("head.") or k.startswith("norm."):  # final norm before head
+                    if k.startswith(("head.", "norm.")):  # final norm before head
                         if not hasattr(self, k.split(".")[0]):  # if self doesn't have 'head' or 'norm' (final one)
                             print(f"  Ignoring {k} from pretrained checkpoint for fork_feat=True mode.")
                             del state_dict[k]

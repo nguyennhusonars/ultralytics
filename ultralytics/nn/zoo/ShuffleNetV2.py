@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/ShuffleNetV2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def conv_bn(inp, oup, stride):
@@ -27,7 +27,7 @@ def channel_shuffle(x, groups):
 
 class InvertedResidual(nn.Module):
     def __init__(self, inp, oup, stride, benchmodel):
-        super(InvertedResidual, self).__init__()
+        super().__init__()
         self.benchmodel = benchmodel
         self.stride = stride
         assert stride in [1, 2]
@@ -92,7 +92,7 @@ class InvertedResidual(nn.Module):
 
 class ShuffleNetV2(nn.Module):
     def __init__(self, n_class=1000, input_size=224, width_mult=1.0):
-        super(ShuffleNetV2, self).__init__()
+        super().__init__()
 
         assert input_size % 32 == 0
 

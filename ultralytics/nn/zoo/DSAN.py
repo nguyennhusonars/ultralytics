@@ -2,26 +2,23 @@
 """Ported from ultralytics_sonnn nn/modules/DSAN.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from torch.nn.init import constant_
-from torch.nn.init import xavier_uniform_
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
+
+from torch.nn.init import constant_, xavier_uniform_
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, register_model, to_2tuple, trunc_normal_
 
 try:
     import DSCN  # optional compiled CUDA op
 except ImportError:
     DSCN = None
 import math
+import warnings
+
 import torch
+from torch import nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 from torch.cuda.amp import custom_bwd, custom_fwd
-import torch.nn as nn
-import warnings
-
 
 # 如果 DSCN 導入失敗，則定義一個虛擬的 Function 以避免錯誤
 if DSCN is None:
@@ -236,7 +233,7 @@ def build_act_layer(act_layer):
 
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
-        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+        raise ValueError(f"invalid input for _is_power_of_2: {n} (type: {type(n)})")
 
     return (n & (n - 1) == 0) and n != 0
 
@@ -256,9 +253,7 @@ class DSCNX(nn.Module):
         norm_layer="LN",
         remove_center=False,
     ):
-        """
-        DSCNX Module
-        """
+        """DSCNX Module."""
         super().__init__()
         if channels % group != 0:
             raise ValueError(f"channels must be divisible by group, but got {channels} and {group}")
@@ -361,9 +356,7 @@ class DSCNY(nn.Module):
         norm_layer="LN",
         remove_center=False,
     ):
-        """
-        DSCNY Module
-        """
+        """DSCNY Module."""
         super().__init__()
         if channels % group != 0:
             raise ValueError(f"channels must be divisible by group, but got {channels} and {group}")
@@ -527,12 +520,12 @@ class DSA(nn.Module):
         self.proj_2 = nn.Conv2d(d_model, d_model, 1)
 
     def forward(self, x):
-        shorcut = x.clone()
+        shortcut = x.clone()
         x = self.proj_1(x)
         x = self.activation(x)
         x = self.spatial_gating_unit(x)
         x = self.proj_2(x)
-        x = x + shorcut
+        x = x + shortcut
         return x
 
 
@@ -560,8 +553,8 @@ class Block(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         layer_scale_init_value = 1e-2
-        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
 
         self.apply(self._init_weights)
 
@@ -587,7 +580,7 @@ class Block(nn.Module):
 
 
 class OverlapPatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Image to Patch Embedding."""
 
     def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768):
         super().__init__()
@@ -627,21 +620,39 @@ class DSAN(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[64, 128, 256, 512],
-        kernel_sizes=[11, 11, 7, 5],
-        dw_kernel_sizes=[5, 5, 5, 5],
-        pads=[5, 5, 3, 2],
-        strides=[1, 1, 1, 1],
-        dilations=[1, 1, 1, 1],
-        groups=[1, 4, 8, 8],
-        mlp_ratios=[4, 4, 4, 4],
+        embed_dims=None,
+        kernel_sizes=None,
+        dw_kernel_sizes=None,
+        pads=None,
+        strides=None,
+        dilations=None,
+        groups=None,
+        mlp_ratios=None,
         drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=nn.LayerNorm,
-        depths=[3, 4, 6, 3],
+        depths=None,
         num_stages=4,
         flag=False,
     ):
+        if depths is None:
+            depths = [3, 4, 6, 3]
+        if mlp_ratios is None:
+            mlp_ratios = [4, 4, 4, 4]
+        if groups is None:
+            groups = [1, 4, 8, 8]
+        if dilations is None:
+            dilations = [1, 1, 1, 1]
+        if strides is None:
+            strides = [1, 1, 1, 1]
+        if pads is None:
+            pads = [5, 5, 3, 2]
+        if dw_kernel_sizes is None:
+            dw_kernel_sizes = [5, 5, 5, 5]
+        if kernel_sizes is None:
+            kernel_sizes = [11, 11, 7, 5]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
         super().__init__()
         if flag == False:
             self.num_classes = num_classes
@@ -753,9 +764,7 @@ class DSAN(nn.Module):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features_for_classification(self, x):
-        """
-        用於分類任務的原始 forward_features 邏輯。
-        """
+        """用於分類任務的原始 forward_features 邏輯。."""
         B = x.shape[0]
         for i in range(self.num_stages):
             patch_embed = getattr(self, f"patch_embed{i + 1}")
@@ -771,17 +780,13 @@ class DSAN(nn.Module):
         return x.mean(dim=1)
 
     def forward_head(self, x):
-        """
-        分類頭的前向傳播。
-        """
+        """分類頭的前向傳播。."""
         x = self.forward_features_for_classification(x)
         x = self.head(x)
         return x
 
     def forward(self, x):
-        """
-        修改後的前向傳播，返回每個階段的特徵圖列表。
-        這適用於作為檢測/分割模型的骨幹網路。
+        """修改後的前向傳播，返回每個階段的特徵圖列表。 這適用於作為檢測/分割模型的骨幹網路。.
         """
         B = x.shape[0]
         feature_outputs = []
@@ -804,7 +809,7 @@ class DSAN(nn.Module):
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
 
     def forward(self, x):

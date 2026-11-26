@@ -27,7 +27,6 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 NAMES = ["hat", "helmet", "hood", "no_helmet"]
@@ -172,10 +171,7 @@ def main():
                 before_ratios[c].append(r)
                 if c in targets:
                     cy2, h2, mod, cut = adapt_lower_edge(
-                        cy, h, r,
-                        min_ratio=args.min_ratio,
-                        max_ratio=args.max_ratio,
-                        allow_shrink=allow_shrink
+                        cy, h, r, min_ratio=args.min_ratio, max_ratio=args.max_ratio, allow_shrink=allow_shrink
                     )
                     r2 = (w * img_w) / (h2 * img_h + 1e-12)
                     if mod:
@@ -205,17 +201,21 @@ def main():
                     print(f"{split}: removed stale {cache.name}")
 
         print(f"[{split.upper()}] ({len(data)} images)")
-        print(f"  {'class':12s}{'total':>7s}{'kept':>7s}{'modified':>10s}{'clipped':>9s} | "
-              f"{'med_in':>7s} -> {'med_out':>7s} | {'min_in':>7s} -> {'min_out':>7s} | {'max_in':>7s} -> {'max_out':>7s}")
+        print(
+            f"  {'class':12s}{'total':>7s}{'kept':>7s}{'modified':>10s}{'clipped':>9s} | "
+            f"{'med_in':>7s} -> {'med_out':>7s} | {'min_in':>7s} -> {'min_out':>7s} | {'max_in':>7s} -> {'max_out':>7s}"
+        )
         print("  " + "-" * 88)
 
         for c in sorted(before_ratios):
             b = before_ratios[c]
             a = after_ratios[c]
-            print(f"  {name(c):12s}{len(b):7d}{kept_count[c]:7d}{modified_count[c]:10d}{clipped_count[c]:9d} | "
-                  f"{statistics.median(b):7.2f} -> {statistics.median(a):7.2f} | "
-                  f"{min(b):7.2f} -> {min(a):7.2f} | "
-                  f"{max(b):7.2f} -> {max(a):7.2f}")
+            print(
+                f"  {name(c):12s}{len(b):7d}{kept_count[c]:7d}{modified_count[c]:10d}{clipped_count[c]:9d} | "
+                f"{statistics.median(b):7.2f} -> {statistics.median(a):7.2f} | "
+                f"{min(b):7.2f} -> {min(a):7.2f} | "
+                f"{max(b):7.2f} -> {max(a):7.2f}"
+            )
         print()
 
 

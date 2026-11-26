@@ -3,12 +3,12 @@
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class ResSPP(nn.Module):  # res SPP
     def __init__(self, c1=1024, c2=384, n=3, act="swish", k=(5, 9, 13)):
-        super(ResSPP, self).__init__()
+        super().__init__()
         c_ = c2
         if c2 == 1024:
             c_ = c2 // 2
@@ -50,7 +50,7 @@ class ResSPP(nn.Module):  # res SPP
 
 class CSPResNet(nn.Module):
     def __init__(self, c1, c2, n, conv_down, infor="backbone", act="swish"):
-        super(CSPResNet, self).__init__()
+        super().__init__()
         self.backbone = CSPResStage(BasicBlock, c1, c2, n, conv_down, infor, act=act)
 
     def forward(self, x):
@@ -60,7 +60,7 @@ class CSPResNet(nn.Module):
 
 class CSPResNet_CBS(nn.Module):
     def __init__(self, c1=3, c2=64, use_large_stem=True, act="swish"):
-        super(CSPResNet_CBS, self).__init__()
+        super().__init__()
         if use_large_stem:
             self.stem = nn.Sequential(
                 (ConvBNLayer(c1, c2 // 2, 3, stride=2, padding=1, act=act)),
@@ -80,7 +80,7 @@ class CSPResNet_CBS(nn.Module):
 
 class ConvBNLayer(nn.Module):  # CBS,CBR
     def __init__(self, ch_in, ch_out, filter_size=3, stride=1, groups=1, padding=0, act="swish"):
-        super(ConvBNLayer, self).__init__()
+        super().__init__()
         self.conv = nn.Conv2d(
             in_channels=ch_in,
             out_channels=ch_out,
@@ -102,7 +102,7 @@ class ConvBNLayer(nn.Module):  # CBS,CBR
 
 class CSPResStage(nn.Module):
     def __init__(self, block_fn, c1, c2, n, stride, infor="backbone", act="relu", attn="eca"):
-        super(CSPResStage, self).__init__()
+        super().__init__()
         ch_mid = (c1 + c2) // 2
         if stride == 2:
             self.conv_down = ConvBNLayer(c1, ch_mid, 3, stride=2, padding=1, act=act)
@@ -143,7 +143,7 @@ class CSPResStage(nn.Module):
 
 class RepVggBlock(nn.Module):
     def __init__(self, ch_in, ch_out, act="relu", deploy=False):
-        super(RepVggBlock, self).__init__()
+        super().__init__()
         self.ch_in = ch_in
         self.ch_out = ch_out
         self.deploy = deploy
@@ -220,7 +220,7 @@ class RepVggBlock(nn.Module):
 
 class EffectiveSELayer(nn.Module):
     def __init__(self, channels, act="hardsigmoid"):
-        super(EffectiveSELayer, self).__init__()
+        super().__init__()
         self.fc = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
         self.act = get_activation(act) if act is None or isinstance(act, (str, dict)) else act
 
@@ -232,7 +232,7 @@ class EffectiveSELayer(nn.Module):
 
 class BasicBlock(nn.Module):
     def __init__(self, ch_in, ch_out, act="relu", shortcut=True, use_alpha=False):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         assert ch_in == ch_out
         self.conv1 = ConvBNLayer(ch_in, ch_out, 3, stride=1, padding=1, act=act)
         self.conv2 = RepVggBlock(ch_out, ch_out, act=act)
@@ -263,17 +263,17 @@ def get_activation(name="silu", inplace=True):
         elif name == "hardsigmoid":
             module = nn.Hardsigmoid(inplace=inplace)
         else:
-            raise AttributeError("Unsupported act type: {}".format(name))
+            raise AttributeError(f"Unsupported act type: {name}")
         return module
     elif isinstance(name, nn.Module):
         return name
     else:
-        raise AttributeError("Unsupported act type: {}".format(name))
+        raise AttributeError(f"Unsupported act type: {name}")
 
 
 class Swish(nn.Module):
     def __init__(self, inplace=True):
-        super(Swish, self).__init__()
+        super().__init__()
         self.inplace = inplace
 
     def forward(self, x):

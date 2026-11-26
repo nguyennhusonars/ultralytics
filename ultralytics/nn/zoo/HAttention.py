@@ -1,18 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/HAttention.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from basicsr.archs.arch_util import to_2tuple
-from basicsr.archs.arch_util import trunc_normal_
+import math
+
+import torch
+from basicsr.archs.arch_util import to_2tuple, trunc_normal_
 from basicsr.utils.registry import ARCH_REGISTRY
 from einops import rearrange
-import math
-import torch
-import torch.nn as nn
+from torch import nn
 
 
 def drop_path(x, drop_prob: float = 0.0, training: bool = False):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-    From: https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks). From:
+    https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py.
     """
     if drop_prob == 0.0 or not training:
         return x
@@ -25,12 +25,12 @@ def drop_path(x, drop_prob: float = 0.0, training: bool = False):
 
 
 class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
-    From: https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks). From:
+    https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py.
     """
 
     def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
 
     def forward(self, x):
@@ -39,13 +39,14 @@ class DropPath(nn.Module):
 
 class ChannelAttention(nn.Module):
     """Channel attention used in RCAN.
+
     Args:
         num_feat (int): Channel number of intermediate features.
         squeeze_factor (int): Channel squeeze factor. Default: 16.
     """
 
     def __init__(self, num_feat, squeeze_factor=16):
-        super(ChannelAttention, self).__init__()
+        super().__init__()
         self.attention = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(num_feat, num_feat // squeeze_factor, 1, padding=0),
@@ -61,7 +62,7 @@ class ChannelAttention(nn.Module):
 
 class CAB(nn.Module):
     def __init__(self, num_feat, compress_ratio=3, squeeze_factor=30):
-        super(CAB, self).__init__()
+        super().__init__()
 
         self.cab = nn.Sequential(
             nn.Conv2d(num_feat, num_feat // compress_ratio, 3, 1, 1),
@@ -98,8 +99,9 @@ def window_partition(x, window_size):
     Args:
         x: (b, h, w, c)
         window_size (int): window size
+
     Returns:
-        windows: (num_windows*b, window_size, window_size, c)
+        windows: (num_windows*b, window_size, window_size, c).
     """
     b, h, w, c = x.shape
     x = x.view(b, h // window_size, window_size, w // window_size, window_size, c)
@@ -114,8 +116,9 @@ def window_reverse(windows, window_size, h, w):
         window_size (int): Window size
         h (int): Height of image
         w (int): Width of image
+
     Returns:
-        x: (b, h, w, c)
+        x: (b, h, w, c).
     """
     b = int(windows.shape[0] / (h * w / window_size / window_size))
     x = windows.view(b, h // window_size, w // window_size, window_size, window_size, -1)
@@ -124,16 +127,17 @@ def window_reverse(windows, window_size, h, w):
 
 
 class WindowAttention(nn.Module):
-    r"""Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    r"""Window based multi-head self attention (W-MSA) module with relative position bias. It supports both of shifted
+    and non-shifted window.
+
     Args:
         dim (int): Number of input channels.
         window_size (tuple[int]): The height and width of the window.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
         qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+        proj_drop (float, optional): Dropout ratio of output. Default: 0.0.
     """
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0.0, proj_drop=0.0):
@@ -162,7 +166,7 @@ class WindowAttention(nn.Module):
         """
         Args:
             x: input features with shape of (num_windows*b, n, c)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None.
         """
         b_, n, c = x.shape
         qkv = self.qkv(x).reshape(b_, n, 3, self.num_heads, c // self.num_heads).permute(2, 0, 3, 1, 4)
@@ -195,6 +199,7 @@ class WindowAttention(nn.Module):
 
 class HAB(nn.Module):
     r"""Hybrid Attention Block.
+
     Args:
         dim (int): Number of input channels.
         input_resolution (tuple[int]): Input resolution.
@@ -208,7 +213,7 @@ class HAB(nn.Module):
         attn_drop (float, optional): Attention dropout rate. Default: 0.0
         drop_path (float, optional): Stochastic depth rate. Default: 0.0
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
     """
 
     def __init__(
@@ -415,6 +420,7 @@ class OCAB(nn.Module):
 
 class AttenBlocks(nn.Module):
     """A series of attention blocks for one RHAG.
+
     Args:
         dim (int): Number of input channels.
         input_resolution (tuple[int]): Input resolution.
@@ -515,6 +521,7 @@ class AttenBlocks(nn.Module):
 
 class RHAG(nn.Module):
     """Residual Hybrid Attention Group (RHAG).
+
     Args:
         dim (int): Number of input channels.
         input_resolution (tuple[int]): Input resolution.
@@ -559,7 +566,7 @@ class RHAG(nn.Module):
         patch_size=4,
         resi_connection="1conv",
     ):
-        super(RHAG, self).__init__()
+        super().__init__()
 
         self.dim = dim
         self.input_resolution = input_resolution
@@ -603,13 +610,14 @@ class RHAG(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    r"""Image to Patch Embedding
+    r"""Image to Patch Embedding.
+
     Args:
-        img_size (int): Image size.  Default: 224.
+        img_size (int): Image size. Default: 224.
         patch_size (int): Patch token size. Default: 4.
         in_chans (int): Number of input image channels. Default: 3.
         embed_dim (int): Number of linear projection output channels. Default: 96.
-        norm_layer (nn.Module, optional): Normalization layer. Default: None
+        norm_layer (nn.Module, optional): Normalization layer. Default: None.
     """
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
@@ -638,13 +646,14 @@ class PatchEmbed(nn.Module):
 
 
 class PatchUnEmbed(nn.Module):
-    r"""Image to Patch Unembedding
+    r"""Image to Patch Unembedding.
+
     Args:
-        img_size (int): Image size.  Default: 224.
+        img_size (int): Image size. Default: 224.
         patch_size (int): Patch token size. Default: 4.
         in_chans (int): Number of input image channels. Default: 3.
         embed_dim (int): Number of linear projection output channels. Default: 96.
-        norm_layer (nn.Module, optional): Normalization layer. Default: None
+        norm_layer (nn.Module, optional): Normalization layer. Default: None.
     """
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
@@ -667,6 +676,7 @@ class PatchUnEmbed(nn.Module):
 
 class Upsample(nn.Sequential):
     """Upsample module.
+
     Args:
         scale (int): Scale factor. Supported scales: 2^n and 3.
         num_feat (int): Channel number of intermediate features.
@@ -675,22 +685,22 @@ class Upsample(nn.Sequential):
     def __init__(self, scale, num_feat):
         m = []
         if (scale & (scale - 1)) == 0:  # scale = 2^n
-            for _ in range(int(math.log(scale, 2))):
+            for _ in range(int(math.log2(scale))):
                 m.append(nn.Conv2d(num_feat, 4 * num_feat, 3, 1, 1))
                 m.append(nn.PixelShuffle(2))
         elif scale == 3:
             m.append(nn.Conv2d(num_feat, 9 * num_feat, 3, 1, 1))
             m.append(nn.PixelShuffle(3))
         else:
-            raise ValueError(f"scale {scale} is not supported. " "Supported scales: 2^n and 3.")
-        super(Upsample, self).__init__(*m)
+            raise ValueError(f"scale {scale} is not supported. Supported scales: 2^n and 3.")
+        super().__init__(*m)
 
 
 @ARCH_REGISTRY.register()
 class HAT(nn.Module):
-    r"""Hybrid Attention Transformer
-        A PyTorch implementation of : `Activating More Pixels in Image Super-Resolution Transformer`.
-        Some codes are based on SwinIR.
+    r"""Hybrid Attention Transformer A PyTorch implementation of : `Activating More Pixels in Image Super-Resolution
+    Transformer`. Some codes are based on SwinIR.
+
     Args:
         img_size (int | tuple(int)): Input image size. Default 64
         patch_size (int | tuple(int)): Patch size. Default: 1
@@ -712,7 +722,7 @@ class HAT(nn.Module):
         upscale: Upscale factor. 2/3/4/8 for image SR, 1 for denoising and compress artifact reduction
         img_range: Image range. 1. or 255.
         upsampler: The reconstruction reconstruction module. 'pixelshuffle'/'pixelshuffledirect'/'nearest+conv'/None
-        resi_connection: The convolutional block before residual connection. '1conv'/'3conv'
+        resi_connection: The convolutional block before residual connection. '1conv'/'3conv'.
     """
 
     def __init__(
@@ -744,7 +754,7 @@ class HAT(nn.Module):
         resi_connection="1conv",
         **kwargs,
     ):
-        super(HAT, self).__init__()
+        super().__init__()
 
         self.window_size = window_size
         self.shift_size = window_size // 2
@@ -927,7 +937,7 @@ class HAT(nn.Module):
         mask_windows = window_partition(img_mask, self.window_size)  # nw, window_size, window_size, 1
         mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, (-100.0)).masked_fill(attn_mask == 0, 0.0)
 
         return attn_mask
 

@@ -1,10 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/moe/experts.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo.moe.utils import FlopsUtils
 import math
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo.moe.utils import FlopsUtils
 
 
 class SimpleExpert(nn.Module):
@@ -74,7 +76,7 @@ class GhostExpert(nn.Module):
         return torch.cat([x1, x2], dim=1)[:, : self.out_channels, :, :]
 
     def compute_flops(self, input_shape):
-        B, C, H, W = input_shape
+        B, _C, H, W = input_shape
         flops = FlopsUtils.count_conv2d(self.primary_conv, input_shape)
         # Compute input shape to cheap op (output of primary conv)
         p_out = self.primary_conv[0].out_channels
@@ -83,9 +85,8 @@ class GhostExpert(nn.Module):
 
 
 class InvertedResidualExpert(nn.Module):
-    """
-    Highly efficient expert module: Uses Inverted Residual structure (MobileNetV2 style).
-    2-3x faster than standard convolution experts, fewer parameters, stronger non-linearity.
+    """Highly efficient expert module: Uses Inverted Residual structure (MobileNetV2 style). 2-3x faster than standard
+    convolution experts, fewer parameters, stronger non-linearity.
     """
 
     def __init__(self, in_channels, out_channels, expand_ratio=2, kernel_size=3):
@@ -114,7 +115,7 @@ class InvertedResidualExpert(nn.Module):
 
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1):
-        super(DepthwiseSeparableConv, self).__init__()
+        super().__init__()
         padding = (kernel_size - 1) // 2
         self.depthwise = nn.Conv2d(
             in_channels, in_channels, kernel_size, stride=stride, padding=padding, groups=in_channels, bias=False
@@ -133,7 +134,7 @@ class DepthwiseSeparableConv(nn.Module):
 
 class EfficientExpertGroup(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1):
-        super(EfficientExpertGroup, self).__init__()
+        super().__init__()
         self.conv = DepthwiseSeparableConv(in_channels, out_channels, kernel_size, stride)
 
     def forward(self, x):
@@ -144,9 +145,7 @@ class EfficientExpertGroup(nn.Module):
 
 
 def make_divisible(v, divisor=8, min_value=None):
-    """
-    Ensure that all layers have a channel number that is divisible by 8
-    (It is common for MobileNet optimization).
+    """Ensure that all layers have a channel number that is divisible by 8 (It is common for MobileNet optimization).
     """
     if min_value is None:
         min_value = divisor
@@ -158,9 +157,7 @@ def make_divisible(v, divisor=8, min_value=None):
 
 
 class ConvNormAct(nn.Module):
-    """
-    Standard block: Conv2d -> BatchNorm2d -> SiLU (or Identity)
-    """
+    """Standard block: Conv2d -> BatchNorm2d -> SiLU (or Identity)."""
 
     def __init__(self, in_chs, out_chs, kernel_size=3, stride=1, padding=None, groups=1, bias=False, apply_act=True):
         super().__init__()
@@ -179,9 +176,7 @@ class ConvNormAct(nn.Module):
 
 
 class SELayer(nn.Module):
-    """
-    Squeeze-and-Excitation Layer
-    """
+    """Squeeze-and-Excitation Layer."""
 
     def __init__(self, channel, reduction=4):
         super().__init__()
@@ -212,9 +207,8 @@ class UniversalInvertedResidualExpert(nn.Module):
         expand_ratio=2,
         use_se=True,
     ):
-        """
-        Universal Inverted Bottleneck (UIB) Block for MobileNetV4.
-        Combines flexible Depthwise Convolutions (Start, Mid, End).
+        """Universal Inverted Bottleneck (UIB) Block for MobileNetV4. Combines flexible Depthwise Convolutions (Start,
+        Mid, End).
         """
         super().__init__()
 
@@ -295,15 +289,13 @@ class UniversalInvertedResidualExpert(nn.Module):
             return x
 
     def compute_flops(self, input_shape):
-        """
-        Calculates approximate FLOPs for this block.
-        Mimics the interface of Code 1's FlopsUtils.
-        input_shape: (C, H, W) or (B, C, H, W)
+        """Calculates approximate FLOPs for this block. Mimics the interface of Code 1's FlopsUtils. input_shape: (C, H,
+        W) or (B, C, H, W).
         """
         if len(input_shape) == 4:
-            c, h, w = input_shape[1], input_shape[2], input_shape[3]
+            _c, h, w = input_shape[1], input_shape[2], input_shape[3]
         else:
-            c, h, w = input_shape
+            _c, h, w = input_shape
 
         flops = 0.0
 
@@ -368,9 +360,7 @@ class UniversalInvertedResidualExpert(nn.Module):
 
 
 def channel_shuffle(x, groups=2):
-    """
-    Code 3 中的 Channel Shuffle 函數
-    """
+    """Code 3 中的 Channel Shuffle 函數."""
     bat_size, channels, w, h = x.shape
     group_c = channels // groups
     x = x.view(bat_size, groups, group_c, w, h)
@@ -489,9 +479,7 @@ class ShuffleExpert(nn.Module):
 
 
 class Partial_conv3(nn.Module):
-    """
-    FasterNet 中的 PConv (Partial Convolution)
-    """
+    """FasterNet 中的 PConv (Partial Convolution)."""
 
     def __init__(self, dim, n_div, forward="split_cat"):
         super().__init__()
@@ -521,9 +509,7 @@ class Partial_conv3(nn.Module):
 
 
 class FasterExpert(nn.Module):
-    """
-    結合 SimpleExpert 接口與 FasterBlock 邏輯的 Expert 模塊
-    ** 已移除殘差邏輯 (No Residual) **
+    """結合 SimpleExpert 接口與 FasterBlock 邏輯的 Expert 模塊 ** 已移除殘差邏輯 (No Residual) **.
     """
 
     def __init__(self, in_channels, out_channels, expand_ratio=2, n_div=4, drop_path=0.0):
@@ -569,12 +555,10 @@ class FasterExpert(nn.Module):
         return x
 
     def compute_flops(self, input_shape):
-        """
-        計算 FLOPs
-        """
+        """計算 FLOPs."""
         if self.in_channels != self.out_channels:
             flops = FlopsUtils.count_conv2d(self.adapter, input_shape)
-            c, h, w = input_shape
+            _c, h, w = input_shape
             mid_shape = (self.out_channels, h, w)
         else:
             flops = 0
@@ -592,13 +576,11 @@ class FasterExpert(nn.Module):
 
 
 class BottConv(nn.Module):
-    """
-    基於 SCSegamba 的 BottConv 結構
-    Pointwise -> Depthwise -> Pointwise
+    """基於 SCSegamba 的 BottConv 結構 Pointwise -> Depthwise -> Pointwise.
     """
 
     def __init__(self, in_channels, out_channels, mid_channels, kernel_size, stride=1, padding=0, bias=True):
-        super(BottConv, self).__init__()
+        super().__init__()
         self.pointwise_1 = nn.Conv2d(in_channels, mid_channels, 1, bias=bias)
         self.depthwise = nn.Conv2d(
             mid_channels, mid_channels, kernel_size, stride, padding, groups=mid_channels, bias=False
@@ -613,9 +595,7 @@ class BottConv(nn.Module):
 
 
 class GBCExpert(nn.Module):
-    """
-    已移除殘差路徑 (No Residual) 的 GBCExpert
-    """
+    """已移除殘差路徑 (No Residual) 的 GBCExpert."""
 
     def __init__(self, in_channels, out_channels, expand_ratio=2):
         super().__init__()
@@ -675,11 +655,9 @@ class GBCExpert(nn.Module):
         return x
 
     def compute_flops(self, input_shape):
-        """
-        計算 FLOPs
-        """
+        """計算 FLOPs."""
         # 確保 input_shape 是 list 或 tuple
-        c, h, w = input_shape[-3:]
+        _c, _h, _w = input_shape[-3:]
 
         flops = 0
         # Block 1, 2, 3 的輸入形狀皆為 input_shape
