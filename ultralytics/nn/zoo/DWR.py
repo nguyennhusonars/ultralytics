@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/DWR.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation

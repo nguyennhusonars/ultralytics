@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/moe/routers.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Dict
-from typing import Tuple
-from ultralytics.nn.zoo.moe.utils import FlopsUtils
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo.moe.utils import FlopsUtils
 
 
 class BaseRouter(nn.Module):
@@ -18,9 +19,9 @@ class BaseRouter(nn.Module):
 
     def _process_logits(
         self, logits: torch.Tensor, noise_std: float, training: bool
-    ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """Unified logic to process logits into Top-K selection."""
-        B = logits.shape[0]
+        logits.shape[0]
 
         # 1) Add noise during training (simplified Gumbel-Softmax trick)
         if training and noise_std > 0:
@@ -62,7 +63,7 @@ class EfficientSpatialRouter(BaseRouter):
         )
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         # Pre-pooling optimization
         if H > self.pool_scale and W > self.pool_scale:
             x_in = F.avg_pool2d(x, kernel_size=self.pool_scale, stride=self.pool_scale)
@@ -142,9 +143,9 @@ class DynamicRoutingLayer(nn.Module):
     def __init__(self, in_channels, num_experts=3, reduction=8, top_k=None):
         """
         Args:
-            top_k: Number of active experts; if None uses all experts (Softmax)
+            top_k: Number of active experts; if None uses all experts (Softmax).
         """
-        super(DynamicRoutingLayer, self).__init__()
+        super().__init__()
         reduced_channels = max(in_channels // reduction, 8)
 
         self.num_experts = num_experts

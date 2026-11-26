@@ -1,19 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/ConvNeXtV1.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, trunc_normal_
 
 
 class Block(nn.Module):
-    r"""ConvNeXt Block. There are two equivalent implementations:
-    (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
-    (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) -> Linear -> GELU -> Linear; Permute back
-    We use (2) as we find it slightly faster in PyTorch
+    r"""ConvNeXt Block. There are two equivalent implementations: (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv
+    -> GELU -> 1x1 Conv; all in (N, C, H, W) (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) ->
+    Linear -> GELU -> Linear; Permute back We use (2) as we find it slightly faster in PyTorch.
 
     Args:
         dim (int): Number of input channels.
@@ -30,7 +28,7 @@ class Block(nn.Module):
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
@@ -53,14 +51,12 @@ class Block(nn.Module):
 
 
 class ConvNeXt(nn.Module):
-    r"""ConvNeXt
-        A PyTorch impl of : `A ConvNet for the 2020s`  -
-          https://arxiv.org/pdf/2201.03545.pdf
+    r"""ConvNeXt A PyTorch impl of : `A ConvNet for the 2020s` - https://arxiv.org/pdf/2201.03545.pdf.
 
     Args:
         in_chans (int): Number of input image channels. Default: 3
-        num_classes (int): Number of classes for classification head. Default: 1000
-                           Set to 0 to disable classification head.
+        num_classes (int): Number of classes for classification head. Default: 1000 Set to 0 to disable classification
+            head.
         depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
         dims (int): Feature dimension at each stage. Default: [96, 192, 384, 768]
         drop_path_rate (float): Stochastic depth rate. Default: 0.
@@ -73,13 +69,17 @@ class ConvNeXt(nn.Module):
         self,
         in_chans=3,
         num_classes=1000,
-        depths=[3, 3, 9, 3],
-        dims=[96, 192, 384, 768],
+        depths=None,
+        dims=None,
         drop_path_rate=0.0,
         layer_scale_init_value=1e-6,
         head_init_scale=1.0,
         input_image_size=224,  # Dummy input size for width_list
     ):
+        if dims is None:
+            dims = [96, 192, 384, 768]
+        if depths is None:
+            depths = [3, 3, 9, 3]
         super().__init__()
 
         self.num_classes = num_classes
@@ -157,10 +157,8 @@ class ConvNeXt(nn.Module):
         return x
 
     def forward(self, x):
-        """
-        Modified forward method to return a list of intermediate stage outputs,
-        suitable for use as a backbone in tasks like object detection.
-        Optionally performs classification if num_classes > 0 and needed.
+        """Modified forward method to return a list of intermediate stage outputs, suitable for use as a backbone in
+        tasks like object detection. Optionally performs classification if num_classes > 0 and needed.
         """
         # MobileNetV4-like forward: return list of stage outputs
         outputs = []
@@ -196,10 +194,9 @@ class ConvNeXt(nn.Module):
 
 
 class LayerNorm(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
@@ -262,12 +259,9 @@ def convnext_tiny(pretrained=False, in_22k=False, **kwargs):
         # If num_classes=0 was passed, model doesn't have head.weight/bias
         # If num_classes > 0 was passed, it has head.weight/bias
         # We need to check if the model instance *has* the head layer before trying to load
-        if model.head is None and "head.weight" in checkpoint:
-            del checkpoint["head.weight"]
-            if "head.bias" in checkpoint:
-                del checkpoint["head.bias"]
-        # If model *has* head, but num_classes is different from checkpoint, remove checkpoint head
-        elif model.head is not None and model.head.out_features != checkpoint["head.weight"].size(0):
+        if (model.head is None and "head.weight" in checkpoint) or (
+            model.head is not None and model.head.out_features != checkpoint["head.weight"].size(0)
+        ):
             del checkpoint["head.weight"]
             if "head.bias" in checkpoint:
                 del checkpoint["head.bias"]

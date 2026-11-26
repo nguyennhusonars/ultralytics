@@ -1,11 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/hyperyolo.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.conv import DWConv
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.modules.block import Bottleneck
+from ultralytics.nn.modules.conv import Conv, DWConv
 
 
 class MANet(nn.Module):
@@ -26,7 +26,7 @@ class MANet(nn.Module):
         y0 = self.cv_block_1(y)
         y1 = self.cv_block_2(y)
         y2, y3 = y.chunk(2, 1)
-        y = list((y0, y1, y2, y3))
+        y = [y0, y1, y2, y3]
         y.extend(m(y[-1]) for m in self.m)
 
         return self.cv_final(torch.cat(y, 1))
@@ -38,9 +38,7 @@ class MessageAgg(nn.Module):
         self.agg_method = agg_method
 
     def forward(self, X, path):
-        """
-        X: [n_node, dim]
-        path: col(source) -> row(target)
+        """X: [n_node, dim] path: col(source) -> row(target).
         """
         X = torch.matmul(path, X)
         if self.agg_method == "mean":

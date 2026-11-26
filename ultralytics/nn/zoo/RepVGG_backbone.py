@@ -2,11 +2,12 @@
 """Ported from ultralytics_sonnn nn/modules/RepVGG_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import copy
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
 
 
 def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1):
@@ -29,7 +30,7 @@ def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1):
 
 class SEBlock(nn.Module):
     def __init__(self, input_channels, internal_neurons):
-        super(SEBlock, self).__init__()
+        super().__init__()
         self.down = nn.Conv2d(
             in_channels=input_channels, out_channels=internal_neurons, kernel_size=1, stride=1, bias=True
         )
@@ -62,7 +63,7 @@ class RepVGGBlock(nn.Module):
         deploy=False,
         use_se=False,
     ):
-        super(RepVGGBlock, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.groups = groups
         self.in_channels = in_channels
@@ -307,7 +308,7 @@ REPVGG_SPECS = {
 
 class RepVGGBackbone(nn.Module):
     def __init__(self, model_name: str, use_checkpoint=False):
-        super(RepVGGBackbone, self).__init__()
+        super().__init__()
 
         if model_name not in REPVGG_SPECS:
             raise ValueError(f"Model name {model_name} not found in REPVGG_SPECS.")
@@ -315,7 +316,7 @@ class RepVGGBackbone(nn.Module):
         spec = REPVGG_SPECS[model_name]
         num_blocks = spec["num_blocks"]
         width_multiplier = spec["width_multiplier"]
-        override_groups_map = spec["override_groups_map"] or dict()
+        override_groups_map = spec["override_groups_map"] or {}
         use_se = spec["use_se"]
 
         # RepVGGBlocks are always initialized with deploy=False for backbone structure

@@ -2,17 +2,16 @@
 """Ported from ultralytics_sonnn nn/modules/GhostNetv1.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def _make_divisible(v, divisor, min_value=None):
-    """
-    This function is taken from the original tf repo.
-    It ensures that all layers have a channel number that is divisible by 8
-    It can be seen here:
-    https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
+    """This function is taken from the original tf repo. It ensures that all layers have a channel number that is
+    divisible by 8 It can be seen
+    here: https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py.
     """
     if min_value is None:
         min_value = divisor
@@ -34,7 +33,7 @@ class SqueezeExcite(nn.Module):
     def __init__(
         self, in_chs, se_ratio=0.25, reduced_base_chs=None, act_layer=nn.ReLU, gate_fn=hard_sigmoid, divisor=4, **_
     ):
-        super(SqueezeExcite, self).__init__()
+        super().__init__()
         self.gate_fn = gate_fn
         reduced_chs = _make_divisible((reduced_base_chs or in_chs) * se_ratio, divisor)
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
@@ -53,7 +52,7 @@ class SqueezeExcite(nn.Module):
 
 class ConvBnAct(nn.Module):
     def __init__(self, in_chs, out_chs, kernel_size, stride=1, act_layer=nn.ReLU):
-        super(ConvBnAct, self).__init__()
+        super().__init__()
         self.conv = nn.Conv2d(in_chs, out_chs, kernel_size, stride, kernel_size // 2, bias=False)
         self.bn1 = nn.BatchNorm2d(out_chs)
         self.act1 = act_layer(inplace=True)
@@ -67,7 +66,7 @@ class ConvBnAct(nn.Module):
 
 class GhostModule(nn.Module):
     def __init__(self, inp, oup, kernel_size=1, ratio=2, dw_size=3, stride=1, relu=True):
-        super(GhostModule, self).__init__()
+        super().__init__()
         self.oup = oup
         init_channels = math.ceil(oup / ratio)
         new_channels = init_channels * (ratio - 1)
@@ -92,10 +91,10 @@ class GhostModule(nn.Module):
 
 
 class GhostBottleneck(nn.Module):
-    """Ghost bottleneck w/ optional SE"""
+    """Ghost bottleneck w/ optional SE."""
 
     def __init__(self, in_chs, mid_chs, out_chs, dw_kernel_size=3, stride=1, act_layer=nn.ReLU, se_ratio=0.0):
-        super(GhostBottleneck, self).__init__()
+        super().__init__()
         has_se = se_ratio is not None and se_ratio > 0.0
         self.stride = stride
 
@@ -167,7 +166,7 @@ class GhostBottleneck(nn.Module):
 
 class GhostNet(nn.Module):
     def __init__(self, cfgs, num_classes=1000, width=1.0, dropout=0.2):
-        super(GhostNet, self).__init__()
+        super().__init__()
         # setting of inverted residual blocks
         self.cfgs = cfgs
         self.dropout = dropout
@@ -216,9 +215,7 @@ class GhostNet(nn.Module):
 
 
 def Ghostnetv1(**kwargs):
-    """
-    Constructs a GhostNet model
-    """
+    """Constructs a GhostNet model."""
     cfgs = [
         # k, t, c, SE, s
         # stage1

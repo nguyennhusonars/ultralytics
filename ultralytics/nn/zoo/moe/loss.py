@@ -1,23 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/moe/loss.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import Dict
-from typing import Optional
-from typing import Union
+from __future__ import annotations
+
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class MoELoss(nn.Module):
-    """
-    Advanced Auxiliary losses for MoE models.
-    Features:
-    - Distributed-aware calculation
-    - Support for both Hard (GShard-style) and Soft (Differentiable) load balancing
-    - Entropy regularization to prevent router indecisiveness
-    - Detailed diagnostic outputs
+    """Advanced Auxiliary losses for MoE models. Features: - Distributed-aware calculation - Support for both Hard
+    (GShard-style) and Soft (Differentiable) load balancing - Entropy regularization to prevent router
+    indecisiveness - Detailed diagnostic outputs.
     """
 
     def __init__(
@@ -56,9 +51,9 @@ class MoELoss(nn.Module):
         self,
         router_probs: torch.Tensor,
         router_logits: torch.Tensor,
-        expert_indices: Optional[torch.Tensor] = None,
+        expert_indices: torch.Tensor | None = None,
         return_dict: bool = False,
-    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """
         Args:
             router_probs: [B, num_experts] Full probability distribution

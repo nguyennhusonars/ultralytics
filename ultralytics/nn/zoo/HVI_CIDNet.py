@@ -1,19 +1,19 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/HVI_CIDNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+import torch
+import torch.nn.functional as F
 from einops import rearrange
+from torch import nn
+
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.zoo.conv import Conv_DynamicTanh
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 
 class LayerNorm(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_first"):
@@ -59,7 +59,7 @@ class DynamicTanh(nn.Module):
 
 class CAB(nn.Module):
     def __init__(self, dim, num_heads, bias):
-        super(CAB, self).__init__()
+        super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
 
@@ -70,10 +70,8 @@ class CAB(nn.Module):
         self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
     def forward(self, x):
-        """
-        只使用单个输入 x，同时作为 query 和 key-value
-        """
-        b, c, h, w = x.shape
+        """只使用单个输入 x，同时作为 query 和 key-value."""
+        _b, _c, h, w = x.shape
 
         q = self.q_dwconv(self.q(x))
         kv = self.kv_dwconv(self.kv(x))
@@ -98,7 +96,7 @@ class CAB(nn.Module):
 
 class CAB_origin(nn.Module):
     def __init__(self, dim, num_heads, bias):
-        super(CAB_origin, self).__init__()
+        super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
 
@@ -109,7 +107,7 @@ class CAB_origin(nn.Module):
         self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
     def forward(self, x, y):
-        b, c, h, w = x.shape
+        _b, _c, h, w = x.shape
 
         q = self.q_dwconv(self.q(x))
         kv = self.kv_dwconv(self.kv(y))
@@ -135,7 +133,7 @@ class CAB_origin(nn.Module):
 
 class IEL(nn.Module):
     def __init__(self, dim, ffn_expansion_factor=2.66, bias=False):
-        super(IEL, self).__init__()
+        super().__init__()
 
         hidden_features = int(dim * ffn_expansion_factor)
 
@@ -173,7 +171,7 @@ class IEL(nn.Module):
 
 class HV_LCA(nn.Module):
     def __init__(self, dim, num_heads, bias=False):
-        super(HV_LCA, self).__init__()
+        super().__init__()
         self.gdfn = IEL(dim)  # IEL 与 CDL 结构相同
         self.norm = LayerNorm(dim)
         self.ffn = CAB(dim, num_heads, bias)
@@ -187,7 +185,7 @@ class HV_LCA(nn.Module):
 
 class HV_LCA_DynamicTanh(nn.Module):
     def __init__(self, dim, num_heads, bias=False):
-        super(HV_LCA_DynamicTanh, self).__init__()
+        super().__init__()
         self.gdfn = IEL(dim)  # IEL 与 CDL 结构相同
         self.norm = DynamicTanh(dim)
         self.ffn = CAB(dim, num_heads, bias)
@@ -200,21 +198,23 @@ class HV_LCA_DynamicTanh(nn.Module):
 
 
 class PSABlock(nn.Module):
-    """
-    PSABlock class implementing a Position-Sensitive Attention block for neural networks.
-    This class encapsulates the functionality for applying multi-head attention and feed-forward neural network layers
-    with optional shortcut connections.
+    """PSABlock class implementing a Position-Sensitive Attention block for neural networks. This class encapsulates the
+    functionality for applying multi-head attention and feed-forward neural network layers with optional
+    shortcut connections.
+
     Attributes:
         attn (Attention): Multi-head attention module.
         ffn (nn.Sequential): Feed-forward neural network module.
         add (bool): Flag indicating whether to add shortcut connections.
+
     Methods:
         forward: Performs a forward pass through the PSABlock, applying attention and feed-forward layers.
+
     Examples:
         Create a PSABlock and perform a forward pass
         >>> psablock = PSABlock(c=128, attn_ratio=0.5, num_heads=4, shortcut=True)
         >>> input_tensor = torch.randn(1, 128, 32, 32)
-        >>> output_tensor = psablock(input_tensor)
+        >>> output_tensor = psablock(input_tensor).
     """
 
     def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
@@ -233,21 +233,23 @@ class PSABlock(nn.Module):
 
 
 class PSABlock_DynamicTanh(nn.Module):
-    """
-    PSABlock class implementing a Position-Sensitive Attention block for neural networks.
-    This class encapsulates the functionality for applying multi-head attention and feed-forward neural network layers
-    with optional shortcut connections.
+    """PSABlock class implementing a Position-Sensitive Attention block for neural networks. This class encapsulates the
+    functionality for applying multi-head attention and feed-forward neural network layers with optional
+    shortcut connections.
+
     Attributes:
         attn (Attention): Multi-head attention module.
         ffn (nn.Sequential): Feed-forward neural network module.
         add (bool): Flag indicating whether to add shortcut connections.
+
     Methods:
         forward: Performs a forward pass through the PSABlock, applying attention and feed-forward layers.
+
     Examples:
         Create a PSABlock and perform a forward pass
         >>> psablock = PSABlock(c=128, attn_ratio=0.5, num_heads=4, shortcut=True)
         >>> input_tensor = torch.randn(1, 128, 32, 32)
-        >>> output_tensor = psablock(input_tensor)
+        >>> output_tensor = psablock(input_tensor).
     """
 
     def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
@@ -266,23 +268,26 @@ class PSABlock_DynamicTanh(nn.Module):
 
 
 class C2PSA_HV_LCA(nn.Module):
-    """
-    C2PSA module with attention mechanism for enhanced feature extraction and processing.
-    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
-    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+    """C2PSA module with attention mechanism for enhanced feature extraction and processing. This module implements a
+    convolutional block with attention mechanisms to enhance feature extraction and processing capabilities. It
+    includes a series of PSABlock modules for self-attention and feed-forward operations.
+
     Attributes:
         c (int): Number of hidden channels.
         cv1 (Conv): 1x1 convolution layer to reduce the number of input channels to 2*c.
         cv2 (Conv): 1x1 convolution layer to reduce the number of output channels to c.
         m (nn.Sequential): Sequential container of PSABlock modules for attention and feed-forward operations.
+
     Methods:
         forward: Performs a forward pass through the C2PSA module, applying attention and feed-forward operations.
-    Notes:
-        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
+
     Examples:
         >>> c2psa = C2PSA(c1=256, c2=256, n=3, e=0.5)
         >>> input_tensor = torch.randn(1, 256, 64, 64)
-        >>> output_tensor = c2psa(input_tensor)
+        >>> output_tensor = c2psa(input_tensor).
+
+    Notes:
+        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
     """
 
     def __init__(self, c1, c2, n=1, e=0.5):
@@ -303,23 +308,26 @@ class C2PSA_HV_LCA(nn.Module):
 
 
 class C2PSA_HV_LCA_DynamicTanh(nn.Module):
-    """
-    C2PSA module with attention mechanism for enhanced feature extraction and processing.
-    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
-    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+    """C2PSA module with attention mechanism for enhanced feature extraction and processing. This module implements a
+    convolutional block with attention mechanisms to enhance feature extraction and processing capabilities. It
+    includes a series of PSABlock modules for self-attention and feed-forward operations.
+
     Attributes:
         c (int): Number of hidden channels.
         cv1 (Conv): 1x1 convolution layer to reduce the number of input channels to 2*c.
         cv2 (Conv): 1x1 convolution layer to reduce the number of output channels to c.
         m (nn.Sequential): Sequential container of PSABlock modules for attention and feed-forward operations.
+
     Methods:
         forward: Performs a forward pass through the C2PSA module, applying attention and feed-forward operations.
-    Notes:
-        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
+
     Examples:
         >>> c2psa = C2PSA(c1=256, c2=256, n=3, e=0.5)
         >>> input_tensor = torch.randn(1, 256, 64, 64)
-        >>> output_tensor = c2psa(input_tensor)
+        >>> output_tensor = c2psa(input_tensor).
+
+    Notes:
+        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
     """
 
     def __init__(self, c1, c2, n=1, e=0.5):
@@ -343,7 +351,7 @@ class C2PSA_HV_LCA_DynamicTanh(nn.Module):
 
 class LCA_DynamicTanh_Concat(nn.Module):
     def __init__(self, dim, out, num_heads, bias=False):
-        super(LCA_DynamicTanh_Concat, self).__init__()
+        super().__init__()
         # 层歸一化 (DynamicTanh)
         self.norm = DynamicTanh(dim)
         # 强度增强层

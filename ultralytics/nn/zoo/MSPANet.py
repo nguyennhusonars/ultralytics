@@ -1,24 +1,26 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MSPANet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from typing import List
+from __future__ import annotations
+
 import math
+
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def conv3x3(in_planes, out_planes, stride=1):
-    """3x3 convolution with padding"""
+    """3x3 convolution with padding."""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
 def conv1x1(in_planes, out_planes, stride=1):
-    """1x1 convolution"""
+    """1x1 convolution."""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
 def convdilated(in_planes, out_planes, kSize=3, stride=1, dilation=1):
-    """3x3 convolution with dilation"""
+    """3x3 convolution with dilation."""
     padding = int((kSize - 1) / 2) * dilation
     return nn.Conv2d(
         in_planes, out_planes, kernel_size=kSize, stride=stride, padding=padding, dilation=dilation, bias=False
@@ -27,7 +29,7 @@ def convdilated(in_planes, out_planes, kSize=3, stride=1, dilation=1):
 
 class SPRModule(nn.Module):
     def __init__(self, channels, reduction=16):  # 'channels' is defined here in init
-        super(SPRModule, self).__init__()
+        super().__init__()
         self.channels = channels  # Store channels as an instance attribute
 
         self.avg_pool1 = nn.AdaptiveAvgPool2d(1)
@@ -67,19 +69,20 @@ class SPRModule(nn.Module):
 
 class MSAModule(nn.Module):
     def __init__(self, inplanes, scale=3, stride=1, stype="normal"):
-        """Constructor
+        """Constructor.
+
         Args:
             inplanes: input channel dimensionality (width per scale).
             scale: number of scale.
             stride: conv stride.
             stype: 'normal': normal set. 'stage': first block of a new stage.
         """
-        super(MSAModule, self).__init__()
+        super().__init__()
 
         self.width = inplanes  # This is the width *per scale*
         self.nums = scale
         self.stride = stride
-        assert stype in ["stage", "normal"], "One of these is suppported (stage or normal)"
+        assert stype in ["stage", "normal"], "One of these is supported (stage or normal)"
         self.stype = stype
 
         self.convs = nn.ModuleList([])
@@ -153,10 +156,10 @@ class MSPABlock(nn.Module):
     def __init__(
         self, inplanes, planes, stride=1, downsample=None, baseWidth=30, scale=3, norm_layer=None, stype="normal"
     ):
-        super(MSPABlock, self).__init__()
+        super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
-        width = int(math.floor(planes * (baseWidth / 64.0)))
+        width = math.floor(planes * (baseWidth / 64.0))
         total_width = width * scale
 
         self.conv1 = conv1x1(inplanes, total_width)
@@ -199,7 +202,7 @@ class MSPABlock(nn.Module):
 
 class MSPANet(nn.Module):
     def __init__(self, block, layers, baseWidth=30, scale=3, norm_layer=None):
-        super(MSPANet, self).__init__()
+        super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -287,8 +290,8 @@ class MSPANet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _forward_extract(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Internal forward pass for feature extraction"""
+    def _forward_extract(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Internal forward pass for feature extraction."""
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -301,8 +304,8 @@ class MSPANet(nn.Module):
 
         return [x1, x2, x3, x4]
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Main forward pass, returning intermediate features"""
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Main forward pass, returning intermediate features."""
         return self._forward_extract(x)
 
 

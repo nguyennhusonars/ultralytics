@@ -1,9 +1,9 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/LAE.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
 import torch
-import torch.nn as nn
+from einops import rearrange
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation

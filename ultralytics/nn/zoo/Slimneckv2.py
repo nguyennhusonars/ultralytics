@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/Slimneckv2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -32,14 +32,12 @@ class Conv(nn.Module):
 
 
 class SNI(nn.Module):
-    """
-    https://github.com/AlanLi1997/rethinking-fpn
-    soft nearest neighbor interpolation for up-sampling
-    secondary features aligned
+    """https://github.com/AlanLi1997/rethinking-fpn soft nearest neighbor interpolation for up-sampling secondary
+    features aligned.
     """
 
     def __init__(self, c1=0, c2=0, up_f=2):
-        super(SNI, self).__init__()
+        super().__init__()
         self.us = nn.Upsample(None, up_f, "nearest")
         self.alpha = 1 / (up_f**2)
 
@@ -48,10 +46,8 @@ class SNI(nn.Module):
 
 
 class GSConvE(nn.Module):
-    """
-    GSConv enhancement for representation learning: generate various receptive-fields and
-    texture-features only in one Conv module
-    https://github.com/AlanLi1997/slim-neck-by-gsconv
+    """GSConv enhancement for representation learning: generate various receptive-fields and texture-features only in
+    one Conv module https://github.com/AlanLi1997/slim-neck-by-gsconv.
     """
 
     def __init__(self, c1, c2, k=1, s=1, g=1, d=1, act=True):

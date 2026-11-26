@@ -1,20 +1,17 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/Conv2Former.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, register_model, trunc_normal_
 
 
 class LayerNorm(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
@@ -72,7 +69,7 @@ class MLP(nn.Module):
         self.act = nn.GELU()
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
         x = self.norm(x)
         x = self.fc1(x)
         x = self.act(x)
@@ -97,8 +94,7 @@ class SpatialAttention(nn.Module):
         self.proj = nn.Conv2d(dim, dim, 1)  # Final projection
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        shortcut = x  # Store shortcut for residual connection if needed (though original Block adds residual outside)
+        _B, _C, _H, _W = x.shape
         x = self.norm(x)
         # Calculate attention map and multiply element-wise with value projection
         attn_map = self.att(x)
@@ -118,8 +114,8 @@ class Block(nn.Module):
 
         # Layer Scale (learnable scaling factor for residual branches)
         layer_scale_init_value = 1e-6
-        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+        self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
 
     def forward(self, x):
         # Apply Attention block with residual connection and LayerScale
@@ -261,7 +257,7 @@ class Conv2Former(nn.Module):
             self.head_linear.bias.data.mul_(head_init_scale)
 
     def _init_weights(self, m):
-        """Initialize weights"""
+        """Initialize weights."""
         if isinstance(m, (nn.Conv2d, nn.Linear)):
             trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:

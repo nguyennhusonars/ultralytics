@@ -5,22 +5,26 @@ from ultralytics.utils.checks import check_requirements
 
 check_requirements("timm>=1.0")  # a few layers here still come from timm itself
 
-from timm.models.helpers import build_model_with_cfg
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import SqueezeExcite
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
 import itertools
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from timm.models.helpers import build_model_with_cfg
+from torch import nn
+
+from ultralytics.nn.zoo._timm import (
+    IMAGENET_DEFAULT_MEAN,
+    IMAGENET_DEFAULT_STD,
+    SqueezeExcite,
+    register_model,
+    trunc_normal_,
+)
 
 
 class SKA(nn.Module):
     def __init__(self):
-        super(SKA, self).__init__()
+        super().__init__()
 
     def forward(self, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
         b, c, h, w_dim = x.shape
@@ -249,7 +253,7 @@ class LKP(nn.Module):
 
 class LSConv(nn.Module):
     def __init__(self, dim):
-        super(LSConv, self).__init__()
+        super().__init__()
         self.lkp = LKP(dim, lks=7, sks=3, groups=8)
         self.ska = SKA()
         self.bn = nn.BatchNorm2d(dim)
@@ -284,13 +288,21 @@ class LSNet(torch.nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dim=[64, 128, 192, 256],
-        key_dim=[16, 16, 16, 16],
-        depth=[1, 2, 3, 4],
-        num_heads=[4, 4, 4, 4],
+        embed_dim=None,
+        key_dim=None,
+        depth=None,
+        num_heads=None,
         distillation=False,
         **kwargs,
     ):
+        if num_heads is None:
+            num_heads = [4, 4, 4, 4]
+        if depth is None:
+            depth = [1, 2, 3, 4]
+        if key_dim is None:
+            key_dim = [16, 16, 16, 16]
+        if embed_dim is None:
+            embed_dim = [64, 128, 192, 256]
         super().__init__()
 
         self.num_classes = num_classes
@@ -345,7 +357,7 @@ class LSNet(torch.nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {x for x in self.state_dict().keys() if "attention_biases" in x}
+        return {x for x in self.state_dict() if "attention_biases" in x}
 
     def forward_features(self, x):
         x = self.patch_embed(x)
@@ -359,8 +371,8 @@ class LSNet(torch.nn.Module):
     # This forward method now UNCONDITIONALLY returns a list of feature maps,
     # which is what detection frameworks like ultralytics expect.
     def forward(self, x):
-        """
-        Runs the forward pass of the model.
+        """Runs the forward pass of the model.
+
         Returns:
             list(torch.Tensor): A list of feature maps from each stage of the model.
         """
@@ -383,14 +395,14 @@ def _cfg(url="", **kwargs):
     }
 
 
-default_cfgs = dict(
-    lsnet_t=_cfg(hf_hub="jameslahm/lsnet_t"),
-    lsnet_t_distill=_cfg(hf_hub="jameslahm/lsnet_t_distill"),
-    lsnet_s=_cfg(hf_hub="jameslahm/lsnet_s"),
-    lsnet_s_distill=_cfg(hf_hub="jameslahm/lsnet_s_distill"),
-    lsnet_b=_cfg(hf_hub="jameslahm/lsnet_b"),
-    lsnet_b_distill=_cfg(hf_hub="jameslahm/lsnet_b_distill"),
-)
+default_cfgs = {
+    "lsnet_t": _cfg(hf_hub="jameslahm/lsnet_t"),
+    "lsnet_t_distill": _cfg(hf_hub="jameslahm/lsnet_t_distill"),
+    "lsnet_s": _cfg(hf_hub="jameslahm/lsnet_s"),
+    "lsnet_s_distill": _cfg(hf_hub="jameslahm/lsnet_s_distill"),
+    "lsnet_b": _cfg(hf_hub="jameslahm/lsnet_b"),
+    "lsnet_b_distill": _cfg(hf_hub="jameslahm/lsnet_b_distill"),
+}
 
 
 def _create_lsnet(variant, pretrained=False, **kwargs):

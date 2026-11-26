@@ -1,14 +1,15 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/VanillaNet_backbone.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import trunc_normal_
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import trunc_normal_
 
 
 class activation(nn.ReLU):
     def __init__(self, dim, act_num=3, deploy=False):
-        super(activation, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.weight = torch.nn.Parameter(torch.randn(dim, 1, act_num * 2 + 1, act_num * 2 + 1))
         self.bias = None
@@ -20,7 +21,7 @@ class activation(nn.ReLU):
     def forward(self, x):
         if self.deploy:
             return torch.nn.functional.conv2d(
-                super(activation, self).forward(x),
+                super().forward(x),
                 self.weight,
                 self.bias,
                 padding=(self.act_num * 2 + 1) // 2,
@@ -28,9 +29,7 @@ class activation(nn.ReLU):
             )
         else:
             return self.bn(
-                torch.nn.functional.conv2d(
-                    super(activation, self).forward(x), self.weight, padding=self.act_num, groups=self.dim
-                )
+                torch.nn.functional.conv2d(super().forward(x), self.weight, padding=self.act_num, groups=self.dim)
             )
 
     def _fuse_bn_tensor(self, weight, bn):
@@ -122,14 +121,18 @@ class VanillaNet(nn.Module):
         self,
         in_chans=3,
         num_classes=1000,
-        dims=[96, 192, 384, 768],
+        dims=None,
         drop_rate=0,
         act_num=3,
-        strides=[2, 2, 2, 1],
+        strides=None,
         deploy=False,
         ada_pool=None,
         **kwargs,
     ):
+        if strides is None:
+            strides = [2, 2, 2, 1]
+        if dims is None:
+            dims = [96, 192, 384, 768]
         super().__init__()
         self.deploy = deploy
         if self.deploy:

@@ -2,10 +2,11 @@
 """Ported from ultralytics_sonnn nn/modules/WTConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
+
 import pywt.data
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def create_wavelet_filter(wave, in_size, out_size, type=torch.float):
@@ -59,7 +60,7 @@ def inverse_wavelet_transform(x, filters):
 
 class WTConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=5, stride=1, bias=True, wt_levels=1, wt_type="db1"):
-        super(WTConv2d, self).__init__()
+        super().__init__()
 
         assert in_channels == out_channels
 
@@ -160,7 +161,7 @@ class WTConv2d(nn.Module):
 
 class _ScaleModule(nn.Module):
     def __init__(self, dims, init_scale=1.0, init_bias=0):
-        super(_ScaleModule, self).__init__()
+        super().__init__()
         self.dims = dims
         self.weight = nn.Parameter(torch.ones(*dims) * init_scale)
         self.bias = None

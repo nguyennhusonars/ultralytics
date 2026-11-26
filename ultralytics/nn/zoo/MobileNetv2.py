@@ -1,8 +1,8 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MobileNetv2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
 import torch
+from torch import nn
 
 
 class ConvNormReLUBlock(nn.Module):
@@ -17,18 +17,19 @@ class ConvNormReLUBlock(nn.Module):
         bias: bool = False,
         activation: bool = nn.ReLU6,
     ):
-        """Constructs a block containing a combination of convolution, batchnorm and relu
+        """Constructs a block containing a combination of convolution, batchnorm and relu.
+
         Args:
             in_channels (int): input channels
             out_channels (int): output channels
             kernel_size (list): kernel size parameter for convolution
             stride (int, optional): stride parameter for convolution. Defaults to 1.
             padding (int, optional): padding parameter for convolution. Defaults to 0.
-            groups (int, optional): number of blocked connections from input channel to output channel for convolution. Defaults to 1.
+            groups (int, optional): number of blocked connections from input channel to output channel for convolution.
+                Defaults to 1.
             bias (bool, optional): whether to enable bias in convolution. Defaults to False.
             activation (bool, optional): activation function to use. Defaults to nn.ReLU6.
         """
-
         super().__init__()
 
         self.conv = nn.Conv2d(
@@ -45,7 +46,6 @@ class ConvNormReLUBlock(nn.Module):
 
     def forward(self, x):
         """Perform forward pass."""
-
         x = self.conv(x)
         x = self.bn(x)
         x = self.activation(x)
@@ -61,15 +61,16 @@ class InverseResidualBlock(nn.Module):
         expansion_factor: int = 6,
         stride: int = 1,
     ):
-        """Constructs a inverse residual block with depthwise seperable convolution
+        """Constructs a inverse residual block with depthwise separable convolution.
+
         Args:
             in_channels (int): input channels
             out_channels (int): output channels
-            expansion_factor (int, optional): Calculating the input & output channel for depthwise convolution by multiplying the expansion factor with input channels. Defaults to 6.
-            stride (int, optional): stride paramemeter for depthwise convolution. Defaults to 1.
-            CSDN:Snu77
+            expansion_factor (int, optional): Calculating the input & output channel for depthwise convolution by
+                multiplying the expansion factor with input channels. Defaults to 6.
+            stride (int, optional): stride parameter for depthwise convolution. Defaults to 1.
+            CSDN: Snu77.
         """
-
         super().__init__()
 
         hidden_channels = in_channels * expansion_factor
@@ -92,7 +93,6 @@ class InverseResidualBlock(nn.Module):
 
     def forward(self, x):
         """Perform forward pass."""
-
         identity = x
 
         x = self.conv1(x)
@@ -111,13 +111,13 @@ class MobileNetV2(nn.Module):
         input_channel: int = 3,
         depth_multiplier: float = 1,
     ):
-        """Constructs MobileNetV2 architecture
+        """Constructs MobileNetV2 architecture.
+
         Args:
             n_classes (int, optional): output neuron in last layer. Defaults to 1000.
             input_channel (int, optional): input channels in first conv layer. Defaults to 3.
             dropout (float, optional): dropout in last layer. Defaults to 0.2.
         """
-
         super().__init__()
 
         # The configuration of MobileNetV2

@@ -15,7 +15,7 @@ scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call
 # YOLO12n backbone
 backbone:
   # [from, repeats, module, args]
-  - [-1, 1, unireplknet_a, []]  # 4
+  - [-1, 1, unireplknet_a, []] # 4
 
 # YOLO12n head
 head:

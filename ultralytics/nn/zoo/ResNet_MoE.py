@@ -1,10 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/ResNet_MoE.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import autograd
-from typing import List
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
+from torch import autograd, nn
 
 
 class GetMask(autograd.Function):
@@ -22,7 +22,7 @@ class GetMask(autograd.Function):
 
 class MoEBase(nn.Module):
     def __init__(self):
-        super(MoEBase, self).__init__()
+        super().__init__()
         self.scores = None
         self.router = None  # Router for ResNet is defined in ResNet itself
         # print(f"DEBUG MoEBase __init__: {type(self).__name__} ID {id(self)}, self.scores is None.")
@@ -48,9 +48,7 @@ class MoEConv(nn.Conv2d, MoEBase):
         self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, dilation=1, bias=False, n_expert=5
     ):
         MoEBase.__init__(self)
-        super(MoEConv, self).__init__(
-            in_channels, out_channels * n_expert, kernel_size, stride, padding, dilation, groups, bias
-        )
+        super().__init__(in_channels, out_channels * n_expert, kernel_size, stride, padding, dilation, groups, bias)
 
         self.true_in_channels = in_channels
         self.true_out_channels = out_channels
@@ -87,14 +85,14 @@ class MoEConv(nn.Conv2d, MoEBase):
             _expert_pred, expert_pred_one_hot = GetMask.apply(self.scores)  # Get both outputs
 
             mask = torch.matmul(expert_pred_one_hot, self.layer_selection.to(x.device))
-            out_all_experts = super(MoEConv, self).forward(x)
+            out_all_experts = super().forward(x)
             out_masked = out_all_experts * mask.unsqueeze(-1).unsqueeze(-1)
 
             bs, _, H, W = out_masked.shape
             out_reshaped_experts = out_masked.view(bs, self.n_expert, self.true_out_channels, H, W)
             out_selected = out_reshaped_experts.sum(dim=1)
         else:
-            out_selected = super(MoEConv, self).forward(x)
+            out_selected = super().forward(x)
 
         return out_selected
 
@@ -134,7 +132,7 @@ class BasicBlock(nn.Module):
         norm_layer=None,
         **kwargs,
     ):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         if groups != 1 or base_width != 64:
@@ -181,7 +179,7 @@ class Bottleneck(nn.Module):
         norm_layer=None,
         **kwargs,
     ):
-        super(Bottleneck, self).__init__()
+        super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         width = int(planes * (base_width / 64.0)) * groups
@@ -229,7 +227,7 @@ class ResNet(MoEBase):
         use_moe=False,
         router_class=None,
     ):
-        super(ResNet, self).__init__()
+        super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -394,7 +392,7 @@ class ResNet(MoEBase):
             )
         return nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         if self.normalize is not None:
             x_normalized = self.normalize(x)
         else:

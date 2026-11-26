@@ -1,13 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/F2SoftHG.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import C3k
-from ultralytics.nn.modules.conv import Conv
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.modules.block import Bottleneck, C3k
+from ultralytics.nn.modules.conv import Conv
 
 
 class SoftHyperedgeGeneration(nn.Module):

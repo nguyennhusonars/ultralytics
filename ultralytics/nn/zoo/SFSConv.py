@@ -2,10 +2,11 @@
 """Ported from ultralytics_sonnn nn/modules/SFSConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def autopad(k, p=None, d=1):
@@ -35,7 +36,7 @@ class Conv(nn.Module):
 
 class FractionalGaborFilter(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, order, angles, scales):
-        super(FractionalGaborFilter, self).__init__()
+        super().__init__()
 
         self.real_weights = nn.ParameterList()
         self.imag_weights = nn.ParameterList()
@@ -79,7 +80,7 @@ class FractionalGaborFilter(nn.Module):
 
 class GaborSingle(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, order, angles, scales):
-        super(GaborSingle, self).__init__()
+        super().__init__()
         self.gabor = FractionalGaborFilter(in_channels, out_channels, kernel_size, order, angles, scales)
         self.t = nn.Parameter(
             torch.randn(out_channels, in_channels, kernel_size[0], kernel_size[1]),
@@ -104,10 +105,14 @@ class GaborFPU(nn.Module):
         in_channels,
         out_channels,
         order=0.25,
-        angles=[0, 45, 90, 135],
-        scales=[1, 2, 3, 4],
+        angles=None,
+        scales=None,
     ):
-        super(GaborFPU, self).__init__()
+        if scales is None:
+            scales = [1, 2, 3, 4]
+        if angles is None:
+            angles = [0, 45, 90, 135]
+        super().__init__()
         self.gabor = GaborSingle(in_channels // 4, out_channels // 4, (3, 3), order, angles, scales)
         self.fc = nn.Conv2d(out_channels, out_channels, kernel_size=1)
 
@@ -123,7 +128,7 @@ class GaborFPU(nn.Module):
 
 class FrFTFilter(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, f, order):
-        super(FrFTFilter, self).__init__()
+        super().__init__()
 
         self.register_buffer(
             "weight",

@@ -1,8 +1,8 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MobileNetv1.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch import nn
 import torch
+from torch import nn
 
 
 class DepthwiseSepConvBlock(nn.Module):
@@ -13,14 +13,15 @@ class DepthwiseSepConvBlock(nn.Module):
         stride: int = 1,
         use_relu6: bool = True,
     ):
-        """Constructs Depthwise seperable with pointwise convolution with relu and batchnorm respectively.
+        """Constructs Depthwise separable with pointwise convolution with relu and batchnorm respectively.
+
         Args:
             in_channels (int): input channels for depthwise convolution
             out_channels (int): output channels for pointwise convolution
-            stride (int, optional): stride paramemeter for depthwise convolution. Defaults to 1.
-            use_relu6 (bool, optional): whether to use standard ReLU or ReLU6 for depthwise separable convolution block. Defaults to True.
+            stride (int, optional): stride parameter for depthwise convolution. Defaults to 1.
+            use_relu6 (bool, optional): whether to use standard ReLU or ReLU6 for depthwise separable convolution block.
+                Defaults to True.
         """
-
         super().__init__()
 
         # Depthwise conv
@@ -44,7 +45,6 @@ class DepthwiseSepConvBlock(nn.Module):
 
     def forward(self, x):
         """Perform forward pass."""
-
         x = self.depthwise_conv(x)
         x = self.bn1(x)
         x = self.relu1(x)
@@ -62,14 +62,16 @@ class MobileNetV1(nn.Module):
         depth_multiplier: float = 1.0,
         use_relu6: bool = True,
     ):
-        """Constructs MobileNetV1 architecture
+        """Constructs MobileNetV1 architecture.
+
         Args:
             n_classes (int, optional): count of output neuron in last layer. Defaults to 1000.
             input_channel (int, optional): input channels in first conv layer. Defaults to 3.
-            depth_multiplier (float, optional): network width multiplier ( width scaling ). Suggested Values - 0.25, 0.5, 0.75, 1.. Defaults to 1.0.
-            use_relu6 (bool, optional): whether to use standard ReLU or ReLU6 for depthwise separable convolution block. Defaults to True.
+            depth_multiplier (float, optional): network width multiplier ( width scaling ). Suggested Values - 0.25,
+                0.5, 0.75, 1.. Defaults to 1.0.
+            use_relu6 (bool, optional): whether to use standard ReLU or ReLU6 for depthwise separable convolution block.
+                Defaults to True.
         """
-
         super().__init__()
 
         # The configuration of MobileNetV1

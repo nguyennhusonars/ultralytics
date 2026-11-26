@@ -1,20 +1,21 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/conv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.conv import autopad
-from ultralytics.nn.zoo.FDConv import FDConv
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+
+from ultralytics.nn.modules.conv import Conv, autopad
+from ultralytics.nn.zoo.FDConv import FDConv
 
 
 class BatchChannelNorm(nn.Module):
     def __init__(self, num_channels, epsilon=1e-5, momentum=0.9):
-        super(BatchChannelNorm, self).__init__()
+        super().__init__()
         self.num_channels = num_channels
         self.epsilon = epsilon
         self.momentum = momentum
@@ -117,7 +118,7 @@ class FDConv_cfg(nn.Module):
             p (int or None): padding; if None uses autopad
             g (int): groups
             d (int): dilation
-            act (bool or nn.Module): activation to use (True→default_act, False→Identity, or custom)
+            act (bool or nn.Module): activation to use (True→default_act, False→Identity, or custom).
         """
         super().__init__()
         padding = autopad(k, p, d)
@@ -137,13 +138,13 @@ class FDConv_cfg(nn.Module):
         self.act = self.default_act if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
 
     def forward(self, x):
-        """Conv → BatchNorm → Activation"""
+        """Conv → BatchNorm → Activation."""
         x = self.conv(x)
         x = self.bn(x)
         return self.act(x)
 
     def forward_fuse(self, x):
-        """Conv only (for fused deployments) → Activation"""
+        """Conv only (for fused deployments) → Activation."""
         return self.act(self.conv(x))
 
 
@@ -175,9 +176,9 @@ class DualConv(nn.Module):
         :param input_channels: the number of input channels
         :param output_channels: the number of output channels
         :param stride: convolution stride
-        :param g: the value of G used in DualConv
+        :param g: the value of G used in DualConv.
         """
-        super(DualConv, self).__init__()
+        super().__init__()
         # Group Convolution
         self.gc = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, groups=g, bias=False)
         # Pointwise Convolution
@@ -187,14 +188,14 @@ class DualConv(nn.Module):
         """
         Define how DualConv processes the input images or input feature maps.
         :param input_data: input images or input feature maps
-        :return: return output feature maps
+        :return: return output feature maps.
         """
         return self.gc(input_data) + self.pwc(input_data)
 
 
 class ReOrg(nn.Module):
     def __init__(self):
-        super(ReOrg, self).__init__()
+        super().__init__()
 
     def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
         return torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1)
@@ -205,7 +206,7 @@ class RepConv_v7(nn.Module):
     # https://arxiv.org/abs/2101.03697
 
     def __init__(self, c1, c2, k=3, s=1, p=None, g=1, act=True, deploy=False):
-        super(RepConv_v7, self).__init__()
+        super().__init__()
 
         self.deploy = deploy
         self.groups = g
@@ -323,7 +324,7 @@ class RepConv_v7(nn.Module):
     def fuse_repvgg_block(self):
         if self.deploy:
             return
-        print(f"RepConv.fuse_repvgg_block")
+        print("RepConv.fuse_repvgg_block")
 
         self.rbr_dense = self.fuse_conv_bn(self.rbr_dense[0], self.rbr_dense[1])
 
@@ -332,9 +333,7 @@ class RepConv_v7(nn.Module):
         weight_1x1_expanded = torch.nn.functional.pad(self.rbr_1x1.weight, [1, 1, 1, 1])
 
         # Fuse self.rbr_identity
-        if isinstance(self.rbr_identity, nn.BatchNorm2d) or isinstance(
-            self.rbr_identity, nn.modules.batchnorm.SyncBatchNorm
-        ):
+        if isinstance(self.rbr_identity, (nn.BatchNorm2d, nn.modules.batchnorm.SyncBatchNorm)):
             # print(f"fuse: rbr_identity == BatchNorm2d or SyncBatchNorm")
             identity_conv_1x1 = nn.Conv2d(
                 in_channels=self.in_channels,
@@ -388,7 +387,7 @@ class RepConv_v7(nn.Module):
 
 class CAConv(nn.Module):
     def __init__(self, inp, oup, kernel_size, stride, reduction=32):
-        super(CAConv, self).__init__()
+        super().__init__()
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
 
@@ -407,7 +406,7 @@ class CAConv(nn.Module):
     def forward(self, x):
         identity = x
 
-        n, c, h, w = x.size()
+        _n, _c, h, w = x.size()
         x_h = self.pool_h(x)
         x_w = self.pool_w(x).permute(0, 1, 3, 2)
 
@@ -429,7 +428,7 @@ class CAConv(nn.Module):
 
 class ImplicitA(nn.Module):
     def __init__(self, channel, mean=0.0, std=0.02):
-        super(ImplicitA, self).__init__()
+        super().__init__()
         self.channel = channel
         self.mean = mean
         self.std = std
@@ -442,7 +441,7 @@ class ImplicitA(nn.Module):
 
 class ImplicitM(nn.Module):
     def __init__(self, channel, mean=1.0, std=0.02):
-        super(ImplicitM, self).__init__()
+        super().__init__()
         self.channel = channel
         self.mean = mean
         self.std = std
@@ -455,7 +454,7 @@ class ImplicitM(nn.Module):
 
 class AKConv(nn.Module):
     def __init__(self, inc, outc, num_param, stride=1, bias=None):
-        super(AKConv, self).__init__()
+        super().__init__()
         self.num_param = num_param
         self.stride = stride
         self.conv = nn.Sequential(
@@ -522,7 +521,7 @@ class AKConv(nn.Module):
 
         return out
 
-    # generating the inital sampled shapes for the AKConv with different sizes.
+    # generating the initial sampled shapes for the AKConv with different sizes.
     def _get_p_n(self, N, dtype):
         base_int = round(math.sqrt(self.num_param))
         row_number = self.num_param // base_int
@@ -587,7 +586,7 @@ class AKConv(nn.Module):
     #  Stacking resampled features in the row direction.
     @staticmethod
     def _reshape_x_offset(x_offset, num_param):
-        b, c, h, w, n = x_offset.size()
+        _b, _c, _h, _w, _n = x_offset.size()
         # using Conv3d
         # x_offset = x_offset.permute(0,1,4,2,3), then Conv3d(c,c_out, kernel_size =(num_param,1,1),stride=(num_param,1,1),bias= False)
         # using 1 × 1 Conv
@@ -793,7 +792,7 @@ class ConvNextBlock(nn.Module):
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
@@ -842,10 +841,10 @@ class LayerNorm_s(nn.Module):
 
 
 class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
 
     def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
 
     def forward(self, x):
@@ -853,12 +852,12 @@ class DropPath(nn.Module):
 
 
 def drop_path_f(x, drop_prob: float = 0.0, training: bool = False):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
-    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
-    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
-    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
-    'survival rate' as the argument.
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks). This is the same as the
+    DropConnect impl I created for EfficientNet, etc networks, however, the original name is misleading as 'Drop
+    Connect' is a different form of dropout in a separate paper... See discussion:
+    https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for changing the layer and
+    argument names to 'drop path' rather than mix DropConnect as a layer name and use 'survival rate' as
+    the argument.
     """
     if drop_prob == 0.0 or not training:
         return x
@@ -896,7 +895,7 @@ class SPDConv(nn.Module):
 
 class LDConv(nn.Module):
     def __init__(self, inc, outc, num_param, stride=1, bias=None):
-        super(LDConv, self).__init__()
+        super().__init__()
         self.num_param = num_param
         self.stride = stride
         self.conv = nn.Sequential(
@@ -964,7 +963,7 @@ class LDConv(nn.Module):
 
         return out
 
-    # generating the inital sampled shapes for the LDConv with different sizes.
+    # generating the initial sampled shapes for the LDConv with different sizes.
     def _get_p_n(self, N):
         base_int = round(math.sqrt(self.num_param))
         row_number = self.num_param // base_int
@@ -1023,7 +1022,7 @@ class LDConv(nn.Module):
     #  Stacking resampled features in the row direction.
     @staticmethod
     def _reshape_x_offset(x_offset, num_param):
-        b, c, h, w, n = x_offset.size()
+        _b, _c, _h, _w, _n = x_offset.size()
         # using Conv3d
         # x_offset = x_offset.permute(0,1,4,2,3), then Conv3d(c,c_out, kernel_size =(num_param,1,1),stride=(num_param,1,1),bias= False)
         # using 1 × 1 Conv

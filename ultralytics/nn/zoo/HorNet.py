@@ -2,12 +2,12 @@
 """Ported from ultralytics_sonnn nn/modules/HorNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch.fft
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, trunc_normal_
 
 
 def get_dwconv(dim, kernel, bias):
@@ -15,10 +15,9 @@ def get_dwconv(dim, kernel, bias):
 
 
 class LayerNorm(nn.Module):
-    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
@@ -81,7 +80,7 @@ class gnconv(nn.Module):
         # print(f'[gnconv] order={order} input_dim={dim} dims={self.dims} dw_dim={dw_dim} scale={self.scale:.4f} gflayer={"Yes" if gflayer else "No"} h={h} w={w}')
 
     def forward(self, x, mask=None, dummy=False):
-        B, C, H, W = x.shape  # Input C = dim
+        _B, _C, _H, _W = x.shape  # Input C = dim
         # print(f"[gnconv forward] Input shape: {x.shape}, order: {self.order}, self.dims: {self.dims}")
 
         fused_x = self.proj_in(x)  # B, 2*dim, H, W
@@ -97,14 +96,14 @@ class gnconv(nn.Module):
                     f"Calculated split sizes {split_sizes} sum to {sum(split_sizes)}, but expected {fused_x.shape[1]}"
                 )
             pwa, abc = torch.split(fused_x, split_sizes, dim=1)
-        except (RuntimeError, ValueError) as e:
-            print(f"Error during torch.split in gnconv:")
+        except (RuntimeError, ValueError):
+            print("Error during torch.split in gnconv:")
             print(f"  Input tensor shape (fused_x): {fused_x.shape}")
             print(f"  Target dim size: {fused_x.shape[1]}")
             print(f"  Calculated self.dims: {self.dims}")
             print(f"  Attempted split_sizes: ({self.dims[0]}, {sum(self.dims)})")
             print(f"  Sum of attempted split_sizes: {self.dims[0] + sum(self.dims)}")
-            raise e
+            raise
         # print(f"[gnconv forward] pwa shape: {pwa.shape}, abc shape: {abc.shape}")
         # --- END CORRECTION ---
 
@@ -125,13 +124,13 @@ class gnconv(nn.Module):
                     f"dw_abc channel size {dw_abc.shape[1]} does not match sum of self.dims {sum(self.dims)}"
                 )
             dw_list = torch.split(dw_abc, self.dims, dim=1)
-        except (RuntimeError, ValueError) as e:
-            print(f"Error during torch.split (dw_list):")
+        except (RuntimeError, ValueError):
+            print("Error during torch.split (dw_list):")
             print(f"  Input tensor shape (dw_abc): {dw_abc.shape}")
             print(f"  Target dim size: {dw_abc.shape[1]}")
             print(f"  Split sections (self.dims): {self.dims}")
             print(f"  Sum of split sections: {sum(self.dims)}")
-            raise e
+            raise
         # print(f"[gnconv forward] dw_list lengths: {[dw.shape for dw in dw_list]}")
 
         # Initial multiplication: pwa (dims[0]) * dw_list[0] (dims[0])
@@ -149,7 +148,7 @@ class gnconv(nn.Module):
             # dw_list[i+1] has dims[i+1] channels
             if x_proj.shape[1] != dw_list[i + 1].shape[1]:
                 raise ValueError(
-                    f"Shape mismatch in loop {i}: projected x ({x_proj.shape[1]}) vs dw_list[{i+1}] ({dw_list[i+1].shape[1]})"
+                    f"Shape mismatch in loop {i}: projected x ({x_proj.shape[1]}) vs dw_list[{i + 1}] ({dw_list[i + 1].shape[1]})"
                 )
             x = x_proj * dw_list[i + 1]
             # print(f"[gnconv forward] x shape after loop {i}: {x.shape}")
@@ -162,7 +161,7 @@ class gnconv(nn.Module):
 
 
 class Block(nn.Module):
-    r"""HorNet block"""
+    r"""HorNet block."""
 
     def __init__(self, dim, drop_path=0.0, layer_scale_init_value=1e-6, gnconv=gnconv):
         super().__init__()
@@ -182,7 +181,7 @@ class Block(nn.Module):
         )
 
         self.gamma2 = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
@@ -222,7 +221,7 @@ class HorNet(nn.Module):
         self,
         in_chans=3,
         num_classes=1000,  # num_classes kept but head removed
-        depths=[3, 3, 9, 3],
+        depths=None,
         base_dim=96,
         drop_path_rate=0.0,
         layer_scale_init_value=1e-6,
@@ -233,6 +232,8 @@ class HorNet(nn.Module):
         out_indices=(0, 1, 2, 3),  # Specifies output stages
         **kwargs,  # Allow passing extra args like pretrained
     ):
+        if depths is None:
+            depths = [3, 3, 9, 3]
         super().__init__()
         dims = [base_dim, base_dim * 2, base_dim * 4, base_dim * 8]  # Dimensions of each stage
         self.num_layers = len(depths)

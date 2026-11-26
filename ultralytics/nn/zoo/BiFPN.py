@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/BiFPN.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class swish(nn.Module):
@@ -27,7 +27,7 @@ class Bi_FPN(nn.Module):
 
 class Concat_BiFPN(nn.Module):
     def __init__(self, dimension=1):
-        super(Concat_BiFPN, self).__init__()
+        super().__init__()
         self.d = dimension
         self.w = nn.Parameter(torch.ones(3, dtype=torch.float32), requires_grad=True)
         self.epsilon = 0.0001

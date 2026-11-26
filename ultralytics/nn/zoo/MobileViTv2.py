@@ -3,20 +3,16 @@
 
 from __future__ import annotations
 
-from torch import Tensor
-from torch.nn import functional as F
-from typing import Dict
-from typing import Optional
-from typing import Sequence
-from typing import Tuple
-from typing import Union
 import math
+from typing import Sequence, Tuple
+
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import Tensor, nn
+from torch.nn import functional as F
 
 
-def bound_fn(min_val: Union[float, int], max_val: Union[float, int], value: Union[float, int]) -> Union[float, int]:
+def bound_fn(min_val: float, max_val: float, value: float) -> float | int:
     return max(min_val, min(max_val, value))
 
 
@@ -260,8 +256,8 @@ def get_config(mode: str = "xxs") -> dict:
 
 
 class ConvLayer(nn.Module):
-    """
-    Applies a 2D convolution over an input
+    """Applies a 2D convolution over an input.
+
     Args:
         in_channels (int): :math:`C_{in}` from an expected input of size :math:`(N, C_{in}, H_{in}, W_{in})`
         out_channels (int): :math:`C_{out}` from an expected output of size :math:`(N, C_{out}, H_{out}, W_{out})`
@@ -270,12 +266,12 @@ class ConvLayer(nn.Module):
         groups (Optional[int]): Number of groups in convolution. Default: 1
         bias (Optional[bool]): Use bias. Default: ``False``
         use_norm (Optional[bool]): Use normalization layer after convolution. Default: ``True``
-        use_act (Optional[bool]): Use activation layer after convolution (or convolution and normalization).
-                                Default: ``True``
-    Shape:
+        use_act (Optional[bool]): Use activation layer after convolution (or convolution and normalization). Default:
+            ``True``
+        Shape:
         - Input: :math:`(N, C_{in}, H_{in}, W_{in})`
         - Output: :math:`(N, C_{out}, H_{out}, W_{out})`
-    .. note::
+        .. note::
         For depth-wise convolution, `groups=C_{in}=C_{out}`.
     """
 
@@ -283,12 +279,12 @@ class ConvLayer(nn.Module):
         self,
         in_channels: int,  # 输入通道数
         out_channels: int,  # 输出通道数
-        kernel_size: Union[int, Tuple[int, int]],  # 卷积核大小
-        stride: Optional[Union[int, Tuple[int, int]]] = 1,  # 步长
-        groups: Optional[int] = 1,  # 分组卷积
-        bias: Optional[bool] = False,  # 是否使用偏置
-        use_norm: Optional[bool] = True,  # 是否使用归一化
-        use_act: Optional[bool] = True,  # 是否使用激活函数
+        kernel_size: int | tuple[int, int],  # 卷积核大小
+        stride: int | tuple[int, int] | None = 1,  # 步长
+        groups: int | None = 1,  # 分组卷积
+        bias: bool | None = False,  # 是否使用偏置
+        use_norm: bool | None = True,  # 是否使用归一化
+        use_act: bool | None = True,  # 是否使用激活函数
     ) -> None:
         super().__init__()
 
@@ -335,19 +331,19 @@ class ConvLayer(nn.Module):
 
 
 class LinearSelfAttention(nn.Module):
-    """
-    This layer applies a self-attention with linear complexity, as described in `MobileViTv2 <https://arxiv.org/abs/2206.02680>`_ paper.
-    This layer can be used for self- as well as cross-attention.
+    """This layer applies a self-attention with linear complexity, as described in `MobileViTv2
+    <https://arxiv.org/abs/2206.02680>`_ paper. This layer can be used for self- as well as cross-attention.
+
     Args:
         opts: command line arguments
         embed_dim (int): :math:`C` from an expected input of size :math:`(N, C, H, W)`
         attn_dropout (Optional[float]): Dropout value for context scores. Default: 0.0
         bias (Optional[bool]): Use bias in learnable layers. Default: True
-    Shape:
+        Shape:
         - Input: :math:`(N, C, P, N)` where :math:`N` is the batch size, :math:`C` is the input channels,
         :math:`P` is the number of pixels in the patch, and :math:`N` is the number of patches
         - Output: same as the input
-    .. note::
+        .. note::
         For MobileViTv2, we unfold the feature map [B, C, H, W] into [B, C, P, N] where P is the number of pixels
         in a patch and N is the number of patches. Because channel is the first dimension in this unfolded tensor,
         we use point-wise convolution (instead of a linear layer). This avoids a transpose operation (which may be
@@ -356,7 +352,7 @@ class LinearSelfAttention(nn.Module):
     """
 
     def __init__(
-        self, embed_dim: int, attn_dropout: Optional[float] = 0.0, bias: Optional[bool] = True, *args, **kwargs
+        self, embed_dim: int, attn_dropout: float | None = 0.0, bias: bool | None = True, *args, **kwargs
     ) -> None:
         super().__init__()
         self.attn_dropout = nn.Dropout(p=attn_dropout)
@@ -378,7 +374,7 @@ class LinearSelfAttention(nn.Module):
         )
         self.embed_dim = embed_dim
 
-    def forward(self, x: Tensor, x_prev: Optional[Tensor] = None, *args, **kwargs) -> Tensor:
+    def forward(self, x: Tensor, x_prev: Tensor | None = None, *args, **kwargs) -> Tensor:
         if x_prev is None:
             return self._forward_self_attn(x, *args, **kwargs)
         else:
@@ -408,16 +404,16 @@ class LinearSelfAttention(nn.Module):
         out = self.out_proj(out)
         return out
 
-    def _forward_cross_attn(self, x: Tensor, x_prev: Optional[Tensor] = None, *args, **kwargs):
+    def _forward_cross_attn(self, x: Tensor, x_prev: Tensor | None = None, *args, **kwargs):
         # x --> [B, C, P, N]
         # x_prev --> [B, C, P, N]
 
-        batch_size, in_dim, kv_patch_area, kv_num_patches = x.shape
-        q_patch_area, q_num_patches = x.shape[-2:]
+        _batch_size, _in_dim, kv_patch_area, _kv_num_patches = x.shape
+        q_patch_area, _q_num_patches = x.shape[-2:]
 
-        assert (
-            kv_patch_area == q_patch_area
-        ), "The number of patches in the query and key-value tensors must be the same"
+        assert kv_patch_area == q_patch_area, (
+            "The number of patches in the query and key-value tensors must be the same"
+        )
 
         # compute query, key, and value
         # [B, C, P, M] --> [B, 1 + d, P, M]
@@ -449,8 +445,9 @@ class LinearSelfAttention(nn.Module):
 
 
 class LinearAttnFFN(nn.Module):
-    """
-    This class defines the pre-norm transformer encoder with linear self-attention in `MobileViTv2 <https://arxiv.org/abs/2206.02680>`_ paper
+    """This class defines the pre-norm transformer encoder with linear self-attention in `MobileViTv2
+    <https://arxiv.org/abs/2206.02680>`_ paper.
+
     Args:
         embed_dim (int): :math:`C_{in}` from an expected input of size :math:`(B, C_{in}, P, N)`
         ffn_latent_dim (int): Inner dimension of the FFN
@@ -458,19 +455,19 @@ class LinearAttnFFN(nn.Module):
         dropout (Optional[float]): Dropout rate. Default: 0.0
         ffn_dropout (Optional[float]): Dropout between FFN layers. Default: 0.0
         norm_layer (Optional[str]): Normalization layer. Default: layer_norm_2d
-    Shape:
+        Shape:
         - Input: :math:`(B, C_{in}, P, N)` where :math:`B` is batch size, :math:`C_{in}` is input embedding dim,
             :math:`P` is number of pixels in a patch, and :math:`N` is number of patches,
-        - Output: same shape as the input
+        - Output: same shape as the input.
     """
 
     def __init__(
         self,
         embed_dim: int,
         ffn_latent_dim: int,
-        attn_dropout: Optional[float] = 0.0,
-        dropout: Optional[float] = 0.1,
-        ffn_dropout: Optional[float] = 0.0,
+        attn_dropout: float | None = 0.0,
+        dropout: float | None = 0.1,
+        ffn_dropout: float | None = 0.0,
         *args,
         **kwargs,
     ) -> None:
@@ -507,7 +504,7 @@ class LinearAttnFFN(nn.Module):
         self.ffn_dropout = ffn_dropout
         self.std_dropout = dropout
 
-    def forward(self, x: Tensor, x_prev: Optional[Tensor] = None, *args, **kwargs) -> Tensor:
+    def forward(self, x: Tensor, x_prev: Tensor | None = None, *args, **kwargs) -> Tensor:
         if x_prev is None:
             # self-attention
             x = x + self.pre_norm_attn(x)
@@ -523,10 +520,10 @@ class LinearAttnFFN(nn.Module):
 
 
 def make_divisible(
-    v: Union[float, int],
-    divisor: Optional[int] = 8,
-    min_value: Optional[Union[float, int]] = None,
-) -> Union[float, int]:
+    v: float,
+    divisor: int | None = 8,
+    min_value: float | None = None,
+) -> float | int:
     """
     This function is taken from the original tf repo.
     It ensures that all layers have a channel number that is divisible by 8
@@ -547,34 +544,33 @@ def make_divisible(
 
 
 class Identity(nn.Module):
-    """
-    This is a place-holder and returns the same tensor.
-    """
+    """This is a place-holder and returns the same tensor."""
 
     def __init__(self):
-        super(Identity, self).__init__()
+        super().__init__()
 
     def forward(self, x: Tensor) -> Tensor:
         return x
 
-    def profile_module(self, x: Tensor) -> Tuple[Tensor, float, float]:
+    def profile_module(self, x: Tensor) -> tuple[Tensor, float, float]:
         return x, 0.0, 0.0
 
 
 class InvertedResidual(nn.Module):
-    """
-    This class implements the inverted residual block, as described in `MobileNetv2 <https://arxiv.org/abs/1801.04381>`_ paper
+    """This class implements the inverted residual block, as described in `MobileNetv2
+    <https://arxiv.org/abs/1801.04381>`_ paper.
+
     Args:
         in_channels (int): :math:`C_{in}` from an expected input of size :math:`(N, C_{in}, H_{in}, W_{in})`
         out_channels (int): :math:`C_{out}` from an expected output of size :math:`(N, C_{out}, H_{out}, W_{out)`
         stride (int): Use convolutions with a stride. Default: 1
         expand_ratio (Union[int, float]): Expand the input channels by this factor in depth-wise conv
         skip_connection (Optional[bool]): Use skip-connection. Default: True
-    Shape:
+        Shape:
         - Input: :math:`(N, C_{in}, H_{in}, W_{in})`
         - Output: :math:`(N, C_{out}, H_{out}, W_{out})`
-    .. note::
-        If `in_channels =! out_channels` and `stride > 1`, we set `skip_connection=False`
+        .. note::
+        If `in_channels =! out_channels` and `stride > 1`, we set `skip_connection=False`.
     """
 
     def __init__(
@@ -582,11 +578,11 @@ class InvertedResidual(nn.Module):
         in_channels: int,
         out_channels: int,
         stride: int,
-        expand_ratio: Union[int, float],  # 扩张因子，到底要在隐层将通道数扩张多少倍
-        skip_connection: Optional[bool] = True,  # 是否使用跳跃连接
+        expand_ratio: float,  # 扩张因子，到底要在隐层将通道数扩张多少倍
+        skip_connection: bool | None = True,  # 是否使用跳跃连接
     ) -> None:
         assert stride in [1, 2]
-        hidden_dim = make_divisible(int(round(in_channels * expand_ratio)), 8)
+        hidden_dim = make_divisible(round(in_channels * expand_ratio), 8)
 
         super().__init__()
 
@@ -634,8 +630,8 @@ class InvertedResidual(nn.Module):
 
 
 class MobileViTBlockV2(nn.Module):
-    """
-    This class defines the `MobileViTv2 <https://arxiv.org/abs/2206.02680>`_ block
+    """This class defines the `MobileViTv2 <https://arxiv.org/abs/2206.02680>`_ block.
+
     Args:
         opts: command line arguments
         in_channels (int): :math:`C_{in}` from an expected input of size :math:`(N, C_{in}, H, W)`
@@ -649,25 +645,25 @@ class MobileViTBlockV2(nn.Module):
         patch_w (Optional[int]): Patch width for unfolding operation. Default: 8
         conv_ksize (Optional[int]): Kernel size to learn local representations in MobileViT block. Default: 3
         dilation (Optional[int]): Dilation rate in convolutions. Default: 1
-        attn_norm_layer (Optional[str]): Normalization layer in the attention block. Default: layer_norm_2d
+        attn_norm_layer (Optional[str]): Normalization layer in the attention block. Default: layer_norm_2d.
     """
 
     def __init__(
         self,
         in_channels: int,
         attn_unit_dim: int,
-        ffn_multiplier: Optional[Union[Sequence[Union[int, float]], int, float]] = 2.0,
-        n_transformer_blocks: Optional[int] = 2,
-        attn_dropout: Optional[float] = 0.0,
-        dropout: Optional[float] = 0.0,
-        ffn_dropout: Optional[float] = 0.0,
-        patch_h: Optional[int] = 8,
-        patch_w: Optional[int] = 8,
-        conv_ksize: Optional[int] = 3,
+        ffn_multiplier: Sequence[int | float] | float | None = 2.0,
+        n_transformer_blocks: int | None = 2,
+        attn_dropout: float | None = 0.0,
+        dropout: float | None = 0.0,
+        ffn_dropout: float | None = 0.0,
+        patch_h: int | None = 8,
+        patch_w: int | None = 8,
+        conv_ksize: int | None = 3,
         *args,
         **kwargs,
     ) -> None:
-        super(MobileViTBlockV2, self).__init__()
+        super().__init__()
         cnn_out_dim = attn_unit_dim
         conv_3x3_in = ConvLayer(
             in_channels=in_channels,
@@ -720,7 +716,7 @@ class MobileViTBlockV2(nn.Module):
     def _build_attn_layer(
         self,
         d_model: int,
-        ffn_mult: Union[Sequence, int, float],
+        ffn_mult: Sequence | float,
         n_layers: int,
         attn_dropout: float,
         dropout: float,
@@ -728,7 +724,7 @@ class MobileViTBlockV2(nn.Module):
         attn_norm_layer: str = "layer_norm_2d",
         *args,
         **kwargs,
-    ) -> Tuple[nn.Module, int]:
+    ) -> tuple[nn.Module, int]:
         if isinstance(ffn_mult, Sequence) and len(ffn_mult) == 2:
             ffn_dims = np.linspace(ffn_mult[0], ffn_mult[1], n_layers, dtype=float) * d_model
         elif isinstance(ffn_mult, Sequence) and len(ffn_mult) == 1:
@@ -753,7 +749,7 @@ class MobileViTBlockV2(nn.Module):
         global_rep.append(nn.GroupNorm(1, d_model))
         return nn.Sequential(*global_rep), d_model
 
-    def forward(self, x: Union[Tensor, Tuple[Tensor]], *args, **kwargs) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+    def forward(self, x: Tensor | tuple[Tensor], *args, **kwargs) -> Tensor | tuple[Tensor, Tensor]:
         if isinstance(x, Tuple) and len(x) == 2:
             # for spatio-temporal data (e.g., videos)
             return self.forward_temporal(x=x[0], x_prev=x[1])
@@ -775,7 +771,7 @@ class MobileViTBlockV2(nn.Module):
         fm = self.conv_proj(fm)
         return fm
 
-    def forward_temporal(self, x: Tensor, x_prev: Optional[Tensor] = None) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+    def forward_temporal(self, x: Tensor, x_prev: Tensor | None = None) -> Tensor | tuple[Tensor, Tensor]:
         x = self.resize_input_if_needed(x)
 
         fm = self.local_rep(x)
@@ -792,7 +788,7 @@ class MobileViTBlockV2(nn.Module):
 
     def resize_input_if_needed(self, x: Tensor) -> Tensor:
         # print(f"original x.shape = {x.shape}")
-        batch_size, in_channels, orig_h, orig_w = x.shape
+        _batch_size, _in_channels, orig_h, orig_w = x.shape
         if orig_h % self.patch_h != 0 or orig_w % self.patch_w != 0:
             new_h = int(math.ceil(orig_h / self.patch_h) * self.patch_h)
             new_w = int(math.ceil(orig_w / self.patch_w) * self.patch_w)
@@ -800,7 +796,7 @@ class MobileViTBlockV2(nn.Module):
         # print(f"changed x.shape = {x.shape}")
         return x
 
-    def unfolding_pytorch(self, feature_map: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
+    def unfolding_pytorch(self, feature_map: Tensor) -> tuple[Tensor, tuple[int, int]]:
         batch_size, in_channels, img_h, img_w = feature_map.shape
 
         # [B, C, H, W] --> [B, C, P, N]
@@ -813,7 +809,7 @@ class MobileViTBlockV2(nn.Module):
 
         return patches, (img_h, img_w)
 
-    def folding_pytorch(self, patches: Tensor, output_size: Tuple[int, int]) -> Tensor:
+    def folding_pytorch(self, patches: Tensor, output_size: tuple[int, int]) -> Tensor:
         batch_size, in_dim, patch_size, n_patches = patches.shape
 
         # [B, C, P, N]
@@ -830,16 +826,14 @@ class MobileViTBlockV2(nn.Module):
 
 
 class MobileViTV2(nn.Module):
-    """
-    This class defines the `MobileViTv2 <https://arxiv.org/abs/2206.02680>`_ architecture
-    """
+    """This class defines the `MobileViTv2 <https://arxiv.org/abs/2206.02680>`_ architecture."""
 
-    def __init__(self, model_cfg: Dict, num_classes: int = 1000):
+    def __init__(self, model_cfg: dict, num_classes: int = 1000):
         super().__init__()
         image_channels = model_cfg["layer0"]["img_channels"]
         out_channels = model_cfg["layer0"]["out_channels"]
 
-        self.model_conf_dict = dict()
+        self.model_conf_dict = {}
         self.conv_1 = ConvLayer(
             in_channels=image_channels,
             out_channels=out_channels,
@@ -883,9 +877,7 @@ class MobileViTV2(nn.Module):
         self.apply(self.init_parameters)
         self.width_list = [i.size(1) for i in self.forward(torch.randn(1, 3, 640, 640))]
 
-    def _make_layer(
-        self, input_channel, cfg: Dict, dilate: Optional[bool] = False
-    ) -> Optional[tuple[nn.Sequential, int]]:
+    def _make_layer(self, input_channel, cfg: dict, dilate: bool | None = False) -> tuple[nn.Sequential, int] | None:
         block_type = cfg.get("block_type", "mobilevit")
         if block_type.lower() == "mobilevit":
             return self._make_mit_layer(input_channel=input_channel, cfg=cfg)
@@ -893,7 +885,7 @@ class MobileViTV2(nn.Module):
             return self._make_mobilenet_layer(input_channel=input_channel, cfg=cfg)
 
     @staticmethod
-    def _make_mobilenet_layer(input_channel: int, cfg: Dict) -> Tuple[nn.Sequential, int]:
+    def _make_mobilenet_layer(input_channel: int, cfg: dict) -> tuple[nn.Sequential, int]:
         output_channels = cfg.get("out_channels")
         num_blocks = cfg.get("num_blocks", 2)
         expand_ratio = cfg.get("expand_ratio", 4)
@@ -911,7 +903,7 @@ class MobileViTV2(nn.Module):
         return nn.Sequential(*block), input_channel
 
     @staticmethod
-    def _make_mit_layer(input_channel: int, cfg: Dict) -> [nn.Sequential, int]:
+    def _make_mit_layer(input_channel: int, cfg: dict) -> [nn.Sequential, int]:
         block = []
         stride = cfg.get("stride", 1)
         if stride == 2:
@@ -944,7 +936,6 @@ class MobileViTV2(nn.Module):
         )
 
         return nn.Sequential(*block), input_channel
-        pass
 
     @staticmethod
     def init_parameters(m):

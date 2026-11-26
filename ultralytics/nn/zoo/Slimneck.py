@@ -2,7 +2,7 @@
 """Ported from ultralytics_sonnn nn/modules/Slimneck.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def autopad(k, p=None):  # kernel, padding
@@ -69,7 +69,7 @@ class VoVGSCSP(nn.Module):
         self.cv2 = Conv(c1, c_, 1, 1)
         self.gsb = nn.Sequential(*(GSBottleneck(c_, c_, e=1.0) for _ in range(n)))
         self.res = Conv(c_, c_, 3, 1, act=False)
-        self.cv3 = Conv(2 * c_, c2, 1)  #
+        self.cv3 = Conv(2 * c_, c2, 1)
 
     def forward(self, x):
         x1 = self.gsb(self.cv1(x))

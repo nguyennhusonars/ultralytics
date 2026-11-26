@@ -5,12 +5,12 @@ from ultralytics.utils.checks import check_requirements
 
 check_requirements("timm>=1.0")  # a few layers here still come from timm itself
 
-from timm.models.vision_transformer import Attention
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import C3k
-from ultralytics.nn.zoo._timm import Mlp
 import torch
-import torch.nn as nn
+from timm.models.vision_transformer import Attention
+from torch import nn
+
+from ultralytics.nn.modules.block import C2f, C3k
+from ultralytics.nn.zoo._timm import Mlp
 
 
 def modulate(x, shift, scale):
@@ -27,9 +27,7 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
 
 
 class DiTBlock(nn.Module):
-    """
-    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
-    """
+    """A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning."""
 
     def __init__(self, hidden_size, num_heads=16, mlp_ratio=4.0, **block_kwargs):
         super().__init__()
@@ -96,21 +94,23 @@ class C3k2_DiTBlock(C2f):
 
 
 class PSABlock(nn.Module):
-    """
-    PSABlock class implementing a Position-Sensitive Attention block for neural networks.
-    This class encapsulates the functionality for applying multi-head attention and feed-forward neural network layers
-    with optional shortcut connections.
+    """PSABlock class implementing a Position-Sensitive Attention block for neural networks. This class encapsulates the
+    functionality for applying multi-head attention and feed-forward neural network layers with optional
+    shortcut connections.
+
     Attributes:
         attn (Attention): Multi-head attention module.
         ffn (nn.Sequential): Feed-forward neural network module.
         add (bool): Flag indicating whether to add shortcut connections.
+
     Methods:
         forward: Performs a forward pass through the PSABlock, applying attention and feed-forward layers.
+
     Examples:
         Create a PSABlock and perform a forward pass
         >>> psablock = PSABlock(c=128, attn_ratio=0.5, num_heads=4, shortcut=True)
         >>> input_tensor = torch.randn(1, 128, 32, 32)
-        >>> output_tensor = psablock(input_tensor)
+        >>> output_tensor = psablock(input_tensor).
     """
 
     def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
@@ -129,23 +129,26 @@ class PSABlock(nn.Module):
 
 
 class C2PSA_DiTBlock(nn.Module):
-    """
-    C2PSA module with attention mechanism for enhanced feature extraction and processing.
-    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
-    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+    """C2PSA module with attention mechanism for enhanced feature extraction and processing. This module implements a
+    convolutional block with attention mechanisms to enhance feature extraction and processing capabilities. It
+    includes a series of PSABlock modules for self-attention and feed-forward operations.
+
     Attributes:
         c (int): Number of hidden channels.
         cv1 (Conv): 1x1 convolution layer to reduce the number of input channels to 2*c.
         cv2 (Conv): 1x1 convolution layer to reduce the number of output channels to c.
         m (nn.Sequential): Sequential container of PSABlock modules for attention and feed-forward operations.
+
     Methods:
         forward: Performs a forward pass through the C2PSA module, applying attention and feed-forward operations.
-    Notes:
-        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
+
     Examples:
         >>> c2psa = C2PSA(c1=256, c2=256, n=3, e=0.5)
         >>> input_tensor = torch.randn(1, 256, 64, 64)
-        >>> output_tensor = c2psa(input_tensor)
+        >>> output_tensor = c2psa(input_tensor).
+
+    Notes:
+        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
     """
 
     def __init__(self, c1, c2, n=1, e=0.5):

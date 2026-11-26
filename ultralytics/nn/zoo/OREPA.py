@@ -1,16 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/OREPA.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from torch.nn import init
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.conv import autopad
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+from torch.nn import init
+
+from ultralytics.nn.modules.block import Bottleneck, C2f
+from ultralytics.nn.modules.conv import Conv, autopad
 
 
 def transI_fusebn(kernel, bn):
@@ -43,7 +43,7 @@ class OREPA(nn.Module):
         init_hyper_para=1.0,
         init_hyper_gamma=1.0,
     ):
-        super(OREPA, self).__init__()
+        super().__init__()
         self.deploy = deploy
 
         self.nonlinear = Conv.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()

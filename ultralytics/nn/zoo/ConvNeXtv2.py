@@ -1,19 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/ConvNeXtv2.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import C2f
-from ultralytics.nn.modules.block import C3
-from ultralytics.nn.zoo._timm import DropPath
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.modules.block import C3, C2f
+from ultralytics.nn.zoo._timm import DropPath
 
 
 class LayerNorm(nn.Module):
-    """LayerNorm that supports two data formats: channels_last (default) or channels_first.
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
-    with shape (batch_size, channels, height, width).
+    """LayerNorm that supports two data formats: channels_last (default) or channels_first. The ordering of the
+    dimensions in the inputs. channels_last corresponds to inputs with shape (batch_size, height, width, channels)
+    while channels_first corresponds to inputs with shape (batch_size, channels, height, width).
     """
 
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
@@ -38,7 +37,7 @@ class LayerNorm(nn.Module):
 
 
 class GRN(nn.Module):
-    """GRN (Global Response Normalization) layer"""
+    """GRN (Global Response Normalization) layer."""
 
     def __init__(self, dim):
         super().__init__()

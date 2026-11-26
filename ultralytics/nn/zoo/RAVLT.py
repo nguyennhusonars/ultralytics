@@ -1,16 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RAVLT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from typing import List
-from typing import Tuple
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, register_model, trunc_normal_
 
 
 class SwishImplementation(torch.autograd.Function):
@@ -64,7 +62,7 @@ class RoPE(nn.Module):
         angle = angle.unsqueeze(-1).repeat(1, 2).flatten()
         self.register_buffer("angle", angle)
 
-    def forward(self, slen: Tuple[int]):
+    def forward(self, slen: tuple[int]):
         h, w = slen
         index_h = torch.arange(h, device=self.angle.device).float()
         index_w = torch.arange(w, device=self.angle.device).float()
@@ -99,7 +97,7 @@ class GateLinearAttentionNoSilu(nn.Module):
         self.proj = nn.Conv2d(dim, dim, 1)
 
     def forward(self, x: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         qkvo = self.qkvo(x)
         qkv, o = torch.split(qkvo, [3 * self.dim, self.dim], dim=1)
         lepe = self.lepe(qkv[:, 2 * self.dim :, :, :])
@@ -142,7 +140,7 @@ class VanillaSelfAttention(nn.Module):
         self.proj = nn.Conv2d(dim, dim, 1)
 
     def forward(self, x: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         qkvo = self.qkvo(x)
         qkv, o = torch.split(qkvo, [3 * self.dim, self.dim], dim=1)
         lepe = self.lepe(qkv[:, 2 * self.dim :, :, :])
@@ -311,17 +309,31 @@ class RAVLT(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        flagss=[["l"] * 2, ["l"] * 2, ["v", "v"] * 6, ["v"] * 2],
-        embed_dims=[96, 192, 384, 768],
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
-        mlp_ratios=[3, 3, 3, 3],
+        flagss=None,
+        embed_dims=None,
+        depths=None,
+        num_heads=None,
+        mlp_ratios=None,
         drop_path_rate=0.1,
         projection=1024,
-        layerscales=[False, False, False, False],
-        layer_init_values=[1e-6, 1e-6, 1e-6, 1e-6],
+        layerscales=None,
+        layer_init_values=None,
         **kwargs,
     ):
+        if layer_init_values is None:
+            layer_init_values = [1e-06, 1e-06, 1e-06, 1e-06]
+        if layerscales is None:
+            layerscales = [False, False, False, False]
+        if mlp_ratios is None:
+            mlp_ratios = [3, 3, 3, 3]
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        if embed_dims is None:
+            embed_dims = [96, 192, 384, 768]
+        if flagss is None:
+            flagss = [["l"] * 2, ["l"] * 2, ["v", "v"] * 6, ["v"] * 2]
         super().__init__()
 
         self.num_classes = num_classes
@@ -388,12 +400,10 @@ class RAVLT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     # ======================== START OF MODIFIED CODE ========================
-    def forward_features(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        MODIFICATION: This method now returns a list of feature maps from each stage.
-        This is crucial for integration with frameworks like Ultralytics YOLO.
-        The feature map is captured *before* the downsampling of each stage to get the
-        correct channel dimensions corresponding to `embed_dims`.
+    def forward_features(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """MODIFICATION: This method now returns a list of feature maps from each stage. This is crucial for integration
+        with frameworks like Ultralytics YOLO. The feature map is captured *before* the downsampling of each
+        stage to get the correct channel dimensions corresponding to `embed_dims`.
         """
         x = self.patch_embed(x)
 
@@ -421,17 +431,15 @@ class RAVLT(nn.Module):
 
     # ========================= END OF MODIFIED CODE =========================
 
-    def forward(self, x) -> List[torch.Tensor]:
-        """
-        MODIFICATION: The forward pass now directly returns the list of feature maps.
-        """
+    def forward(self, x) -> list[torch.Tensor]:
+        """MODIFICATION: The forward pass now directly returns the list of feature maps."""
         x = self.forward_features(x)
         return x
 
 
 @register_model
 def RAVLT_T(pretrained=False, img_size=224, **kwargs):
-    """Factory function for RAVLT-Tiny"""
+    """Factory function for RAVLT-Tiny."""
     model = RAVLT(
         img_size=img_size,
         embed_dims=[64, 128, 256, 512],

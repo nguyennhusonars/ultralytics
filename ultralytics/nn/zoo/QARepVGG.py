@@ -1,19 +1,21 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/QARepVGG.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
 import copy
 import math
+from functools import partial
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath
 
 
 class SEBlock(nn.Module):
     def __init__(self, input_channels, internal_neurons):
-        super(SEBlock, self).__init__()
+        super().__init__()
         self.down = nn.Conv2d(
             in_channels=input_channels, out_channels=internal_neurons, kernel_size=1, stride=1, bias=True
         )
@@ -68,7 +70,7 @@ class QARepVGGBlock(nn.Module):
         act=nn.ReLU(),
         drop_path_ratio=0.0,
     ):
-        super(QARepVGGBlock, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.groups = groups
         self.in_channels = in_channels
@@ -311,7 +313,7 @@ class QARepVGGBlockV1(QARepVGGBlock):
         act=nn.ReLU(),
         drop_path_ratio=0.0,
     ):
-        super(QARepVGGBlockV1, self).__init__(
+        super().__init__(
             in_channels,
             out_channels,
             kernel_size,
@@ -370,7 +372,7 @@ class QARepVGGBlockV2(QARepVGGBlock):
         act=nn.ReLU(),
         drop_path_ratio=0.0,
     ):
-        super(QARepVGGBlockV2, self).__init__(
+        super().__init__(
             in_channels,
             out_channels,
             kernel_size,
@@ -502,7 +504,7 @@ class QARepVGGBlockV6(QARepVGGBlock):  # No post-BN
         act=nn.ReLU(),
         drop_path_ratio=0.0,
     ):
-        super(QARepVGGBlockV6, self).__init__(
+        super().__init__(
             in_channels,
             out_channels,
             kernel_size,
@@ -572,7 +574,7 @@ class QARepVGGBlock_Baseline(QARepVGGBlock):  # This is the QARepVGGBlock from c
         drop_path_ratio=0.0,
     ):
         # Call RepVGGBlock's init, but then override branches as per original QARepVGGBlock
-        super(QARepVGGBlock_Baseline, self).__init__(
+        super().__init__(
             in_channels,
             out_channels,
             kernel_size,
@@ -669,7 +671,7 @@ class QARepVGGBackbone(nn.Module):
     def __init__(
         self, model_name: str, deploy=False, use_checkpoint=False, strides_override=None
     ):  # strides_override to match RepVGGFeatures
-        super(QARepVGGBackbone, self).__init__()
+        super().__init__()
 
         if model_name not in QAREPVGG_SPECS:
             raise ValueError(f"Model name {model_name} not found in QAREPVGG_SPECS.")
@@ -677,7 +679,7 @@ class QARepVGGBackbone(nn.Module):
         spec = QAREPVGG_SPECS[model_name]
         num_blocks = spec["num_blocks"]
         width_multiplier = spec["width_multiplier"]
-        override_groups_map = spec["override_groups_map"] or dict()
+        override_groups_map = spec["override_groups_map"] or {}
         use_se = spec["use_se"]
         block_cls = spec["block_cls"]
         # Drop path ratio can also be part of spec if needed per model

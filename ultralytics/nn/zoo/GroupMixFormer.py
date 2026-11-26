@@ -1,16 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/GroupMixFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from einops import rearrange
-from functools import partial
-from torch import einsum
-from torch import nn
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
-import torch
+from functools import partial
 
+import torch
+from einops import rearrange
+from torch import einsum, nn
+
+from ultralytics.nn.zoo._timm import DropPath, to_2tuple, trunc_normal_
 
 GroupMixFormerMiny_SPECS = {
     "embedding_dims": [40, 80, 160, 160],  # Divisible by 4
@@ -84,7 +82,7 @@ class Mlp(nn.Module):
 
 class SeparableConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False):
-        super(SeparableConv2d, self).__init__()
+        super().__init__()
         # Depthwise convolution
         self.depthwise_conv = nn.Conv2d(
             in_channels, in_channels, kernel_size, stride, padding, dilation, groups=in_channels, bias=bias
@@ -158,9 +156,9 @@ class Aggregator(nn.Module):
         try:
             # Reshape: [3*B, N, C] -> [3*B, C, N] -> [3*B, C, H, W]
             x_spatial = x.transpose(1, 2).view(_3B, C, H, W)
-        except RuntimeError as e:
+        except RuntimeError:
             print(f"RuntimeError in Aggregator reshape: Input shape={x.shape}, N={N}, C={C}, Target H={H}, W={W}")
-            raise e
+            raise
 
         seg_dim = self.dim // self.seg
         # Split along the channel dimension (dim=1)
@@ -232,10 +230,10 @@ class ConvRelPosEnc(nn.Module):
 
     def forward(self, q, v, size):
         # q shape: [B, h, N, Ch], v shape: [B, h, N, Ch], size: tuple (H, W) corresponding to N
-        B, h_in, N, Ch_in = q.shape
-        assert (
-            h_in == self.h and Ch_in == self.Ch
-        ), f"Input shape mismatch: q={q.shape}, expected h={self.h}, Ch={self.Ch}"
+        _B, h_in, N, Ch_in = q.shape
+        assert h_in == self.h and Ch_in == self.Ch, (
+            f"Input shape mismatch: q={q.shape}, expected h={self.h}, Ch={self.Ch}"
+        )
         H_in, W_in = size
 
         # --- Verify H, W from N ---
@@ -257,10 +255,10 @@ class ConvRelPosEnc(nn.Module):
             print(
                 f"ValueError in ConvRelPosEnc rearrange (v -> v_img): Input shape={v.shape}, N={N}, inferred H={H}, W={W}. Error: {e}"
             )
-            raise e
-        except RuntimeError as e:
+            raise
+        except RuntimeError:
             print(f"RuntimeError in ConvRelPosEnc rearrange (v -> v_img): Input shape={v.shape}, N={N}, H={H}, W={W}")
-            raise e
+            raise
 
         # Split v_img according to head counts for different window sizes
         # Ensure split sizes match the number of channels derived from head splits
@@ -279,12 +277,12 @@ class ConvRelPosEnc(nn.Module):
             print(
                 f"ValueError in ConvRelPosEnc rearrange (conv_v_img -> conv_v): Input shape={conv_v_img.shape}, target h={h_in}. Error: {e}"
             )
-            raise e
-        except RuntimeError as e:
+            raise
+        except RuntimeError:
             print(
                 f"RuntimeError in ConvRelPosEnc rearrange (conv_v_img -> conv_v): Input shape={conv_v_img.shape}, H={H}, W={W}"
             )
-            raise e
+            raise
 
         # Element-wise multiply q with the positionally encoded v
         EV_hat_img = q * conv_v
@@ -332,9 +330,9 @@ class EfficientAtt(nn.Module):
 
         # Filter out sizes with zero heads assigned
         window_splits = {k: v for k, v in window_splits.items() if v > 0}
-        assert (
-            sum(window_splits.values()) == num_heads
-        ), f"Window split sum {sum(window_splits.values())} != num_heads {num_heads}"
+        assert sum(window_splits.values()) == num_heads, (
+            f"Window split sum {sum(window_splits.values())} != num_heads {num_heads}"
+        )
 
         self.crpe = ConvRelPosEnc(Ch=crpe_ch, h=num_heads, window=window_splits)
 
@@ -399,10 +397,10 @@ class EfficientAtt(nn.Module):
 
 
 class ConvPosEnc(nn.Module):
-    """Convolutional Position Encoding"""
+    """Convolutional Position Encoding."""
 
     def __init__(self, dim, k=3):
-        super(ConvPosEnc, self).__init__()
+        super().__init__()
         # Depthwise convolution
         self.proj = nn.Conv2d(dim, dim, kernel_size=k, stride=1, padding=k // 2, groups=dim, bias=True)  # Added bias
 
@@ -425,9 +423,9 @@ class ConvPosEnc(nn.Module):
         # Reshape using verified H, W: [B, N, C] -> [B, C, N] -> [B, C, H, W]
         try:
             feat = x.transpose(1, 2).view(B, C, H, W)
-        except RuntimeError as e:
+        except RuntimeError:
             print(f"RuntimeError in ConvPosEnc reshape: Input shape={x.shape}, N={N}, C={C}, Target H={H}, W={W}")
-            raise e
+            raise
 
         # Apply depthwise convolution for positional encoding
         x_proj = self.proj(feat)  # Output shape [B, C, H, W]
@@ -441,7 +439,7 @@ class ConvPosEnc(nn.Module):
 
 
 class ConvStem(nn.Module):
-    """Convolutional Stem"""
+    """Convolutional Stem."""
 
     def __init__(self, in_dim=3, embedding_dims=64):
         super().__init__()
@@ -463,7 +461,7 @@ class ConvStem(nn.Module):
 
 
 class PatchEmbedLayer(nn.Module):
-    """Patch Embedding Layer using Separable Convolution"""
+    """Patch Embedding Layer using Separable Convolution."""
 
     def __init__(self, patch_size=2, in_dim=64, embedding_dims=128):
         super().__init__()
@@ -477,11 +475,11 @@ class PatchEmbedLayer(nn.Module):
 
     def forward(self, x):
         # Input x: [B, C_in, H_in, W_in] (Output from previous stage or stem)
-        B, C_in, H_in, W_in = x.shape
+        _B, _C_in, _H_in, _W_in = x.shape
 
         # Apply projection (SeparableConv + Norm + Act)
         x = self.act(self.norm(self.proj(x)))  # [B, C_out, H_out, W_out]
-        B_out, C_out, H_out, W_out = x.shape
+        _B_out, _C_out, H_out, W_out = x.shape
 
         # Flatten spatial dimensions: [B, C_out, H_out, W_out] -> [B, C_out, N] -> [B, N, C_out]
         x = x.flatten(2).transpose(1, 2)  # Shape: [B, N, C_out] where N = H_out * W_out
@@ -491,7 +489,7 @@ class PatchEmbedLayer(nn.Module):
 
 
 class GMA_Block(nn.Module):
-    """Group Mix Aggregation Block"""
+    """Group Mix Aggregation Block."""
 
     def __init__(
         self,
@@ -538,7 +536,7 @@ class GMA_Block(nn.Module):
 
 
 class GMA_Stage(nn.Module):
-    """Group Mix Aggregation Stage (sequence of GMA_Blocks)"""
+    """Group Mix Aggregation Stage (sequence of GMA_Blocks)."""
 
     def __init__(
         self,
@@ -601,7 +599,7 @@ class GMA_Stage(nn.Module):
 
 
 def stochastic_depth(drop_path_rate, serial_depths, num_stages):
-    """Creates list of drop path rates for each block in each stage"""
+    """Creates list of drop path rates for each block in each stage."""
     total_depth = sum(serial_depths)
     if total_depth == 0:
         return [[0.0] * d for d in serial_depths]
@@ -617,8 +615,7 @@ def stochastic_depth(drop_path_rate, serial_depths, num_stages):
 
 
 class GroupMixFormer(nn.Module):
-    """
-    GroupMixFormer Vision Transformer Backbone.
+    """GroupMixFormer Vision Transformer Backbone.
 
     Args:
         model_name (str): Name of the model variant (e.g., "GroupMixFormerTiny").
@@ -666,7 +663,7 @@ class GroupMixFormer(nn.Module):
             else:
                 raise ValueError("num_heads must be an int or a list of length num_stages")
         if not isinstance(mlp_ratios, list) or len(mlp_ratios) != self.num_stages:
-            if isinstance(mlp_ratios, int) or isinstance(mlp_ratios, float):
+            if isinstance(mlp_ratios, (int, float)):
                 mlp_ratios = [mlp_ratios] * self.num_stages
             else:
                 raise ValueError("mlp_ratios must be an int/float or a list of length num_stages")
@@ -733,7 +730,7 @@ class GroupMixFormer(nn.Module):
         ]  # To store output feature widths if needed
 
     def _init_weights(self, m):
-        """Initializes weights of the model"""
+        """Initializes weights of the model."""
         if isinstance(m, nn.Linear):
             # Use truncated normal initialization for linear layers
             trunc_normal_(m.weight, std=0.02)
@@ -751,7 +748,7 @@ class GroupMixFormer(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        """Returns a set of parameter names that should not be weight decayed"""
+        """Returns a set of parameter names that should not be weight decayed."""
         no_decay = set()
         # Exclude biases and normalization parameters from weight decay
         for name, param in self.named_parameters():
@@ -763,7 +760,7 @@ class GroupMixFormer(nn.Module):
         return no_decay
 
     def forward_features(self, x):
-        """Forward pass through the backbone stages"""
+        """Forward pass through the backbone stages."""
         outputs = []
         # Input x: [B, C_in, H, W]
         x = self.conv_stem(x)  # [B, D0, H/4, W/4]
@@ -783,7 +780,7 @@ class GroupMixFormer(nn.Module):
             if N_out != H * W:
                 # This should not happen if GMA blocks preserve N
                 print(
-                    f"Warning: N mismatch after GMA Stage {i}. Expected N={H*W}, Got N={N_out}. Reshaping might fail."
+                    f"Warning: N mismatch after GMA Stage {i}. Expected N={H * W}, Got N={N_out}. Reshaping might fail."
                 )
                 # Attempt to proceed with H, W from patch embed if reshape below fails
 
@@ -791,11 +788,11 @@ class GroupMixFormer(nn.Module):
             # [B, N_i, D_i] -> [B, H_i, W_i, D_i] -> [B, D_i, H_i, W_i]
             try:
                 x = x_gma.reshape(B_out, H, W, C_out).permute(0, 3, 1, 2).contiguous()
-            except RuntimeError as e:
+            except RuntimeError:
                 print(
                     f"RuntimeError in forward_features reshape stage {i}: Input shape={x_gma.shape}, N_out={N_out}, Target H={H}, W={W}, C={C_out}"
                 )
-                raise e
+                raise
             # Append the 4D output of the stage
             outputs.append(x)
 
@@ -803,7 +800,7 @@ class GroupMixFormer(nn.Module):
         return outputs
 
     def forward(self, x):
-        """Main forward pass"""
+        """Main forward pass."""
         features = self.forward_features(x)
         # Store feature map channel dimensions if not already done
         # if self.width_list is None:
@@ -812,7 +809,7 @@ class GroupMixFormer(nn.Module):
 
 
 def GroupMixFormerMiny(**kwargs):
-    """Instantiates GroupMixFormerMiny variant"""
+    """Instantiates GroupMixFormerMiny variant."""
     # Set default drop_path_rate if not provided in kwargs
     kwargs.setdefault("drop_path_rate", 0.1)
     model = GroupMixFormer(model_name="GroupMixFormerMiny", **kwargs)

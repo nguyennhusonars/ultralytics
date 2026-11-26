@@ -5,15 +5,13 @@ from ultralytics.utils.checks import check_requirements
 
 check_requirements("timm>=1.0")  # a few layers here still come from timm itself
 
-from timm.models.helpers import build_model_with_cfg
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import logging
-import torch
-import torch.nn as nn
 
+import torch
+from timm.models.helpers import build_model_with_cfg
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model, to_2tuple, trunc_normal_
 
 _logger = logging.getLogger(__name__)
 
@@ -109,7 +107,7 @@ default_cfgs = {
 def _to_channel_last(x):
     """
     Args:
-        x: (B, C, H, W)
+        x: (B, C, H, W).
 
     Returns:
         x: (B, H, W, C)
@@ -120,7 +118,7 @@ def _to_channel_last(x):
 def _to_channel_first(x):
     """
     Args:
-        x: (B, H, W, C)
+        x: (B, H, W, C).
 
     Returns:
         x: (B, C, H, W)
@@ -132,12 +130,12 @@ def window_partition(x, window_size, h_w, w_w):
     """
     Args:
         x: (B, H, W, C)
-        window_size: window size
+        window_size: window size.
 
     Returns:
         local window features (num_windows*B, window_size, window_size, C)
     """
-    B, H, W, C = x.shape
+    B, _H, _W, C = x.shape
     x = x.view(B, h_w, window_size, w_w, window_size, C)
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     return windows
@@ -149,7 +147,7 @@ def window_reverse(windows, window_size, H, W, h_w, w_w, B):
         windows: local window features (num_windows*B, window_size, window_size, C)
         window_size: Window size
         H: Height of image
-        W: Width of image
+        W: Width of image.
 
     Returns:
         x: (B, H, W, C)
@@ -161,9 +159,7 @@ def window_reverse(windows, window_size, H, W, h_w, w_w, B):
 
 
 class Mlp(nn.Module):
-    """
-    Multi-Layer Perceptron (MLP) block
-    """
+    """Multi-Layer Perceptron (MLP) block."""
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0):
         super().__init__()
@@ -184,9 +180,7 @@ class Mlp(nn.Module):
 
 
 class SE(nn.Module):
-    """
-    Squeeze and excitation block
-    """
+    """Squeeze and excitation block."""
 
     def __init__(self, inp, oup, expansion=0.25):
         super().__init__()
@@ -206,9 +200,8 @@ class SE(nn.Module):
 
 
 class ReduceSize(nn.Module):
-    """
-    Down-sampling block based on: "Hatamizadeh et al.,
-    Global Context Vision Transformers <https://arxiv.org/abs/2206.09959>"
+    """Down-sampling block based on: "Hatamizadeh et al., Global Context Vision Transformers
+    <https://arxiv.org/abs/2206.09959>".
     """
 
     def __init__(self, dim, norm_layer=nn.LayerNorm, keep_dim=False):
@@ -239,9 +232,8 @@ class ReduceSize(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    """
-    Patch embedding block based on: "Hatamizadeh et al.,
-    Global Context Vision Transformers <https://arxiv.org/abs/2206.09959>"
+    """Patch embedding block based on: "Hatamizadeh et al., Global Context Vision Transformers
+    <https://arxiv.org/abs/2206.09959>".
     """
 
     def __init__(self, in_chans=3, dim=96):
@@ -264,9 +256,8 @@ class PatchEmbed(nn.Module):
 
 
 class FeatExtract(nn.Module):
-    """
-    Feature extraction block based on: "Hatamizadeh et al.,
-    Global Context Vision Transformers <https://arxiv.org/abs/2206.09959>"
+    """Feature extraction block based on: "Hatamizadeh et al., Global Context Vision Transformers
+    <https://arxiv.org/abs/2206.09959>".
     """
 
     def __init__(self, dim, keep_dim=False):
@@ -593,7 +584,7 @@ class GlobalQueryGen(nn.Module):
             # This usually means H_global*W_global from to_q_global does not match self.N (window_size*window_size)
             # Check FeatExtract logic based on input_resolution vs image_resolution.
             # The target size for global query features should be window_size x window_size.
-            raise e
+            raise
         return q_global
 
 
@@ -811,13 +802,13 @@ def _create_gc_vit(variant, pretrained=False, **kwargs):
 
 @register_model
 def gc_vit_xxtiny(pretrained=False, **kwargs) -> GCViT:
-    model_args = dict(
-        depths=[2, 2, 6, 2],
-        num_heads=[2, 4, 8, 16],
-        window_size=[7, 7, 14, 7],
-        dim=64,
-        mlp_ratio=3,
-        drop_path_rate=kwargs.pop("drop_path_rate", 0.2),
-    )
+    model_args = {
+        "depths": [2, 2, 6, 2],
+        "num_heads": [2, 4, 8, 16],
+        "window_size": [7, 7, 14, 7],
+        "dim": 64,
+        "mlp_ratio": 3,
+        "drop_path_rate": kwargs.pop("drop_path_rate", 0.2),
+    }
     model_args.update(kwargs)
     return _create_gc_vit("gc_vit_xxtiny", pretrained=pretrained, **model_args)

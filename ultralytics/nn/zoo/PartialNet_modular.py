@@ -1,12 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/PartialNet_modular.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from torch import Tensor
-from ultralytics.nn.zoo._timm import DropPath, LayerNorm2d
 import math
+from functools import partial
+
 import torch
-import torch.nn as nn
+from torch import Tensor, nn
+
+from ultralytics.nn.zoo._timm import DropPath, LayerNorm2d
 
 
 class RPEConfig:
@@ -97,7 +98,7 @@ _METHOD_FUNC = {
 }
 
 
-BUCKET_IDS_BUF = dict()
+BUCKET_IDS_BUF = {}
 
 
 @torch.no_grad()
@@ -196,7 +197,7 @@ class iRPE(nn.Module):
         return self.forward_rpe_no_transpose(x, rp_bucket)
 
     def _get_rp_bucket(self, x, height=None, width=None):
-        B, H, L, D = x.shape
+        _B, _H, L, _D = x.shape
         device = x.device
         if height is None:
             E = int(math.sqrt(L))
@@ -206,7 +207,7 @@ class iRPE(nn.Module):
             return self._rp_bucket_buf[1:3]
         skip = L - height * width
         config = self.rpe_config
-        rp_bucket, num_buckets = get_bucket_ids_2d(
+        rp_bucket, _num_buckets = get_bucket_ids_2d(
             method=self.method,
             height=height,
             width=width,
@@ -254,10 +255,15 @@ def get_num_buckets(method, alpha, beta, gamma):
 
 def get_rpe_config(ratio=1.9, method=METHOD.PRODUCT, mode="contextual", shared_head=True, skip=0, rpe_on="k"):
     if isinstance(method, str):
-        method_mapping = dict(euc=METHOD.EUCLIDEAN, quant=METHOD.QUANT, cross=METHOD.CROSS, product=METHOD.PRODUCT)
+        method_mapping = {
+            "euc": METHOD.EUCLIDEAN,
+            "quant": METHOD.QUANT,
+            "cross": METHOD.CROSS,
+            "product": METHOD.PRODUCT,
+        }
         method = method_mapping[method.lower()]
     config = RPEConfig()
-    kwargs = dict(ratio=ratio, method=method, mode=mode, shared_head=shared_head, skip=skip)
+    kwargs = {"ratio": ratio, "method": method, "mode": mode, "shared_head": shared_head, "skip": skip}
 
     def get_single_rpe_config(ratio=1.9, method=METHOD.PRODUCT, mode="contextual", shared_head=True, skip=0):
         c = RPEConfig()
@@ -341,7 +347,7 @@ class SRM(nn.Module):
         self.sigmoid = nn.Hardsigmoid()
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        b, c, _h, _w = x.shape
         mean = x.reshape(b, c, -1).mean(-1).view(b, c, 1, 1)
         std = x.reshape(b, c, -1).std(-1).view(b, c, 1, 1)
         u = torch.cat([mean, std], dim=-1)
@@ -438,7 +444,7 @@ class MLPBlock(nn.Module):
         patnet_t0,
     ):
         super().__init__()
-        self.split_shortcut = True if channel_type == "self" else False
+        self.split_shortcut = channel_type == "self"
         self.spatial_mixing = Partial_conv3(dim, n_div, pconv_fw_type, use_channel, channel_type, patnet_t0)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -461,7 +467,7 @@ class MLPBlock(nn.Module):
         self.mlp = nn.Sequential(*mlp_layer)
 
         if layer_scale_init_value > 0:
-            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             self.forward_impl = self.forward_layer_scale
         else:
             self.forward_impl = self.forward_base
@@ -491,9 +497,7 @@ class MLPBlock(nn.Module):
 
 
 class Partial_PatchEmbed(nn.Module):
-    """
-    Patch Embedding Layer.
-    YAML usage: [-1, 1, Partial_PatchEmbed, [96, 4, 4]]  # [c2, kernel_size, stride]
+    """Patch Embedding Layer. YAML usage: [-1, 1, Partial_PatchEmbed, [96, 4, 4]] # [c2, kernel_size, stride].
     """
 
     def __init__(self, c1, c2, patch_size=4, patch_stride=4, norm_layer=nn.BatchNorm2d):
@@ -507,11 +511,8 @@ class Partial_PatchEmbed(nn.Module):
 
 
 class Partial_Block(nn.Module):
-    """
-    BasicStage Wrapper.
-    YAML usage: [-1, 1, Partial_Block, [96, 2, 4, 2.0, 0.1, 'se']]
-    Args: [c2, depth, n_div, mlp_ratio, drop_path, channel_type]
-    Note: c2 must match c1 (input channels) for this block type.
+    """BasicStage Wrapper. YAML usage: [-1, 1, Partial_Block, [96, 2, 4, 2.0, 0.1, 'se']] Args: [c2, depth, n_div,
+    mlp_ratio, drop_path, channel_type] Note: c2 must match c1 (input channels) for this block type.
     """
 
     def __init__(
@@ -562,9 +563,7 @@ class Partial_Block(nn.Module):
 
 
 class Partial_Downsample(nn.Module):
-    """
-    PatchMerging Wrapper.
-    YAML usage: [-1, 1, Partial_Downsample, [192, 2, 2]] # [c2, size, stride]
+    """PatchMerging Wrapper. YAML usage: [-1, 1, Partial_Downsample, [192, 2, 2]] # [c2, size, stride].
     """
 
     def __init__(self, c1, c2, patch_size=2, patch_stride=2, norm_layer=nn.BatchNorm2d):

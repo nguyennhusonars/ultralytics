@@ -5,15 +5,16 @@ from ultralytics.utils.checks import check_requirements
 
 check_requirements("timm>=1.0")  # a few layers here still come from timm itself
 
-from timm.models.layers import CondConv2d
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from timm.models.layers import CondConv2d
+from torch import nn
 
 
 class DynamicConv(nn.Module):
-    """Dynamic Conv layer"""
+    """Dynamic Conv layer."""
 
     def __init__(
         self,
@@ -42,7 +43,7 @@ class DynamicConv(nn.Module):
 
 class GhostModule(nn.Module):
     def __init__(self, inp, oup, kernel_size=1, ratio=2, dw_size=3, stride=1, act_layer=nn.ReLU, num_experts=4):
-        super(GhostModule, self).__init__()
+        super().__init__()
         self.oup = oup
         init_channels = math.ceil(oup / ratio)
         new_channels = init_channels * (ratio - 1)

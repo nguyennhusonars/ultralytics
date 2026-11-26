@@ -2,8 +2,8 @@
 """Ported from ultralytics_sonnn nn/modules/ODConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch.autograd
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -38,7 +38,7 @@ class Conv(nn.Module):
 
 class Attention(nn.Module):
     def __init__(self, in_planes, out_planes, kernel_size=3, groups=1, reduction=0.0625, kernel_num=4, min_channel=16):
-        super(Attention, self).__init__()
+        super().__init__()
         attention_channel = max(int(in_planes * reduction), min_channel)
         self.kernel_size = kernel_size
         self.kernel_num = kernel_num
@@ -128,7 +128,7 @@ class ODConv2d(nn.Module):
         reduction=0.0625,
         kernel_num=4,
     ):
-        super(ODConv2d, self).__init__()
+        super().__init__()
         in_planes = in_planes
         self.in_planes = in_planes
         self.out_planes = out_planes
@@ -162,7 +162,7 @@ class ODConv2d(nn.Module):
         # Multiplying channel attention (or filter attention) to weights and feature maps are equivalent,
         # while we observe that when using the latter method the models will run faster with less gpu memory cost.
         channel_attention, filter_attention, spatial_attention, kernel_attention = self.attention(x)
-        batch_size, in_planes, height, width = x.size()
+        batch_size, _in_planes, height, width = x.size()
         x = x * channel_attention
         x = x.reshape(1, -1, height, width)
         aggregate_weight = spatial_attention * kernel_attention * self.weight.unsqueeze(dim=0)
@@ -183,7 +183,7 @@ class ODConv2d(nn.Module):
         return output
 
     def _forward_impl_pw1x(self, x):
-        channel_attention, filter_attention, spatial_attention, kernel_attention = self.attention(x)
+        channel_attention, filter_attention, _spatial_attention, _kernel_attention = self.attention(x)
         x = x * channel_attention
         output = F.conv2d(
             x,

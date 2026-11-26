@@ -2,13 +2,13 @@
 """Ported from ultralytics_sonnn nn/modules/SCConv.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class GroupBatchnorm2d(nn.Module):
     def __init__(self, c_num: int, group_num: int = 16, eps: float = 1e-10):
-        super(GroupBatchnorm2d, self).__init__()
+        super().__init__()
         assert c_num >= group_num
         self.group_num = group_num
         self.weight = nn.Parameter(torch.randn(c_num, 1, 1))
@@ -61,9 +61,7 @@ class SRU(nn.Module):
 
 
 class CRU(nn.Module):
-    """
-    alpha: 0<alpha<1
-    """
+    """Alpha: 0<alpha<1."""
 
     def __init__(
         self,
@@ -192,7 +190,9 @@ class SCConv(nn.Module):
 
     def __init__(self, c1, c2, s=1, d=1, g=1, pooling_r=4):
         super().__init__()
-        self.k2 = nn.Sequential(nn.AvgPool2d(kernel_size=pooling_r, stride=pooling_r), Conv(c1, c1, k=3, d=d, g=g, act=False))
+        self.k2 = nn.Sequential(
+            nn.AvgPool2d(kernel_size=pooling_r, stride=pooling_r), Conv(c1, c1, k=3, d=d, g=g, act=False)
+        )
         self.k3 = Conv(c1, c1, k=3, d=d, g=g, act=False)
         self.k4 = Conv(c1, c2, k=3, s=s, d=d, g=g, act=False)
 

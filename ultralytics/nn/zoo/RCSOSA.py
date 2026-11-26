@@ -2,10 +2,11 @@
 """Ported from ultralytics_sonnn nn/modules/RCSOSA.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1):
@@ -29,7 +30,7 @@ def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1):
 
 class SEBlock(nn.Module):
     def __init__(self, input_channels):
-        super(SEBlock, self).__init__()
+        super().__init__()
         internal_neurons = input_channels // 8
         self.down = nn.Conv2d(
             in_channels=input_channels, out_channels=internal_neurons, kernel_size=1, stride=1, bias=True
@@ -63,7 +64,7 @@ class RepVGG(nn.Module):
         deploy=False,
         use_se=False,
     ):
-        super(RepVGG, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.groups = groups
         self.in_channels = in_channels

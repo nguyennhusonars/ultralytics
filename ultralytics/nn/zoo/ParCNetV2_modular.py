@@ -2,12 +2,12 @@
 """Ported from ultralytics_sonnn nn/modules/ParCNetV2_modular.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class LayerNorm2d(nn.Module):
-    """(B, C, H, W) 的 LayerNorm"""
+    """(B, C, H, W) 的 LayerNorm."""
 
     def __init__(self, num_channels, eps=1e-6, bias=False):
         super().__init__()
@@ -26,7 +26,7 @@ class LayerNorm2d(nn.Module):
 
 
 class LayerNormGeneral(nn.Module):
-    """(B, ..., C) 的 LayerNorm"""
+    """(B, ..., C) 的 LayerNorm."""
 
     def __init__(self, normalized_shape, scale=True, bias=True, eps=1e-6):
         super().__init__()
@@ -147,7 +147,7 @@ class BGU(nn.Module):
 
 
 class ParCDown(nn.Module):
-    """ParCNet 下採樣層"""
+    """ParCNet 下採樣層."""
 
     def __init__(self, c1, c2, k=3, s=2):
         super().__init__()
@@ -183,7 +183,7 @@ class ParCDown(nn.Module):
 
 
 class ParCBlock(nn.Module):
-    """ParCNetV2 基本 Block"""
+    """ParCNetV2 基本 Block."""
 
     def __init__(self, c1, c2, k_global=13, mlp_ratio=4):
         super().__init__()

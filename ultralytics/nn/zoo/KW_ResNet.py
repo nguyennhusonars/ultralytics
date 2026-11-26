@@ -1,16 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/KW_ResNet.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from itertools import repeat
-from typing import List
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import register_model
+from __future__ import annotations
+
 import collections.abc
 import math
+from functools import partial
+from itertools import repeat
+
 import torch.autograd
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, register_model
 
 
 def parse(x, n):
@@ -37,7 +39,7 @@ class Attention(nn.Module):
         nonlocal_basis_ratio=1.0,
         start_cell_idx=None,
     ):
-        super(Attention, self).__init__()
+        super().__init__()
         hidden_planes = max(int(in_planes * reduction), 16)
         self.kw_planes_per_mixture = num_static_cell + 1
         self.num_local_mixture = num_local_mixture
@@ -148,7 +150,7 @@ class KWconvNd(nn.Module):
         warehouse_id=None,
         warehouse_manager=None,
     ):
-        super(KWconvNd, self).__init__()
+        super().__init__()
         self.in_planes = in_planes
         self.out_planes = out_planes
         self.kernel_size = parse(kernel_size, self.dimension)
@@ -263,7 +265,7 @@ class KWLinear(nn.Module):
     dimension = 1
 
     def __init__(self, *args, **kwargs):
-        super(KWLinear, self).__init__()
+        super().__init__()
         in_features, out_features = args[0], args[1]
         conv_kwargs = {k: v for k, v in kwargs.items() if k not in ["in_planes", "out_planes"]}
         conv_kwargs.setdefault("kernel_size", 1)
@@ -289,7 +291,7 @@ class Warehouse_Manager(nn.Module):
         norm_layer=nn.LayerNorm,
         spatial_partition=True,
     ):  # Default norm_layer changed here for clarity, but it's set by KW_ResNet
-        super(Warehouse_Manager, self).__init__()
+        super().__init__()
         self.sharing_range = sharing_range
         self.warehouse_list = {}
         self.reduction = reduction
@@ -356,7 +358,7 @@ class Warehouse_Manager(nn.Module):
                 _kernel_size = parse(kernel_size, layer_cls.dimension)
             weight_shape = [out_planes, in_planes // groups, *_kernel_size]
 
-            if warehouse_name not in self.warehouse_list.keys():
+            if warehouse_name not in self.warehouse_list:
                 self.warehouse_list[warehouse_name] = []
             self.warehouse_list[warehouse_name].append(weight_shape)
 
@@ -535,13 +537,13 @@ class BasicBlock(nn.Module):
         warehouse_handover=False,
         drop_path=0.0,
     ):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         conv1_stage_idx = max(stage_idx - 1 if warehouse_handover else stage_idx, 0)
         self.conv1 = kwconv3x3(
             inplanes,
             planes,
             stride,
-            warehouse_name="stage{}_layer{}_conv{}".format(conv1_stage_idx, layer_idx, 0),
+            warehouse_name=f"stage{conv1_stage_idx}_layer{layer_idx}_conv{0}",
             warehouse_manager=warehouse_manager,
         )
         self.bn1 = nn.BatchNorm2d(planes)
@@ -550,7 +552,7 @@ class BasicBlock(nn.Module):
         self.conv2 = kwconv3x3(
             planes,
             planes,
-            warehouse_name="stage{}_layer{}_conv{}".format(stage_idx, layer_idx_conv2, 1),
+            warehouse_name=f"stage{stage_idx}_layer{layer_idx_conv2}_conv{1}",
             warehouse_manager=warehouse_manager,
         )
         self.bn2 = nn.BatchNorm2d(planes)
@@ -589,7 +591,7 @@ class KW_ResNet(nn.Module):
         input_channels=3,
         **kwargs,
     ):
-        super(KW_ResNet, self).__init__()
+        super().__init__()
         # CRITICAL CHANGE: Use nn.LayerNorm for the Attention module's internal normalization
         # This makes it robust to batch_size=1 issues during training mode (e.g. in YOLO's stride calculation)
         self.warehouse_manager = Warehouse_Manager(
@@ -688,7 +690,7 @@ class KW_ResNet(nn.Module):
 
         if downsample_enabled:
             # Name for downsample conv, potentially associated with previous stage if handover naming
-            downsample_conv_name = f"stage{stage_idx-1 if warehouse_handover_for_downsample_naming else stage_idx}_ds_layer{self.layer_idx_counter}"
+            downsample_conv_name = f"stage{stage_idx - 1 if warehouse_handover_for_downsample_naming else stage_idx}_ds_layer{self.layer_idx_counter}"
 
             use_kw_downsample = True  # Default to using KW for downsample if it's a conv operation
 
@@ -761,7 +763,7 @@ class KW_ResNet(nn.Module):
             if hasattr(m, "update_temperature"):
                 m.update_temperature(temp)
 
-    def _forward_extract_features(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def _forward_extract_features(self, x: torch.Tensor) -> list[torch.Tensor]:
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -781,7 +783,7 @@ class KW_ResNet(nn.Module):
         out = self.fc(out)
         return out
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         return self._forward_extract_features(x)
 
 

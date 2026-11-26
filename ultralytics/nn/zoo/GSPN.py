@@ -1,17 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/GSPN.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+import math
 from collections import OrderedDict
+
+import gaterecurrent2dnoind_cuda
+import torch
+import torch.nn.functional as F
+from torch import nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import trunc_normal_
-import gaterecurrent2dnoind_cuda
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, trunc_normal_
 
 
 class GateRecurrent2dnoindFunction(Function):
@@ -44,7 +45,7 @@ class GateRecurrent2dnoindFunction(Function):
         X, B, G1, G2, G3, output = ctx.saved_tensors
 
         assert hiddensize is not None and grad_output.is_cuda
-        num, channels, height, width = hiddensize
+        _num, _channels, _height, _width = hiddensize
 
         grad_X = torch.zeros_like(X)
         grad_B = torch.zeros_like(B)
@@ -69,8 +70,8 @@ gaterecurrent = GateRecurrent2dnoindFunction.apply
 
 
 def gaterecurrent2dnoind_pytorch(X, B, G1, G2, G3):
-    """PyTorch implementation of GateRecurrent2dnoind"""
-    batch_size, channels, height, width = X.size()
+    """PyTorch implementation of GateRecurrent2dnoind."""
+    _batch_size, _channels, height, width = X.size()
     H = torch.zeros_like(X)
 
     # This is a simplified conceptual implementation. A real implementation would be more complex.
@@ -95,7 +96,7 @@ def gaterecurrent2dnoind_pytorch(X, B, G1, G2, G3):
 
 class GateRecurrent2dnoind(nn.Module):
     def __init__(self, items_each_chunk_, backend="cuda"):
-        super(GateRecurrent2dnoind, self).__init__()
+        super().__init__()
         self.items_each_chunk = items_each_chunk_
         # If cuda extension is not available, force pytorch backend
         self.backend = backend if gaterecurrent2dnoind_cuda is not None else "pytorch"
@@ -253,7 +254,7 @@ class gMlp(nn.Module):
 
 
 class GRN(nn.Module):
-    """GRN (Global Response Normalization) layer"""
+    """GRN (Global Response Normalization) layer."""
 
     def __init__(self, dim):
         super().__init__()
@@ -506,8 +507,8 @@ class VSSM(nn.Module):
         patch_size=4,
         in_chans=3,
         num_classes=1000,
-        depths=[2, 2, 9, 2],
-        dims=[96, 192, 384, 768],
+        depths=None,
+        dims=None,
         items_each_chunk=8,
         ssm_d_state=16,
         ssm_ratio=2.0,
@@ -530,6 +531,10 @@ class VSSM(nn.Module):
         posembed=False,
         **kwargs,
     ):
+        if dims is None:
+            dims = [96, 192, 384, 768]
+        if depths is None:
+            depths = [2, 2, 9, 2]
         super().__init__()
         self.num_classes = num_classes
         self.num_layers = len(depths)
@@ -555,8 +560,8 @@ class VSSM(nn.Module):
         self.channel_first = norm_layer.lower() in ["bn", "ln2d"]
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
-        _NORMLAYERS = dict(ln=nn.LayerNorm, ln2d=LayerNorm2d, bn=nn.BatchNorm2d)
-        _ACTLAYERS = dict(silu=nn.SiLU, gelu=nn.GELU, relu=nn.ReLU)
+        _NORMLAYERS = {"ln": nn.LayerNorm, "ln2d": LayerNorm2d, "bn": nn.BatchNorm2d}
+        _ACTLAYERS = {"silu": nn.SiLU, "gelu": nn.GELU, "relu": nn.ReLU}
 
         norm_layer_mod = _NORMLAYERS.get(norm_layer.lower(), nn.LayerNorm)
         ssm_act_layer_mod = _ACTLAYERS.get(ssm_act_layer.lower(), nn.SiLU)
@@ -564,19 +569,19 @@ class VSSM(nn.Module):
 
         self.pos_embed = self._pos_embed(dims[0], patch_size, imgsize) if posembed else None
 
-        _make_patch_embed = dict(v1=self._make_patch_embed, v2=self._make_patch_embed_v2).get(
+        _make_patch_embed = {"v1": self._make_patch_embed, "v2": self._make_patch_embed_v2}.get(
             patchembed_version, self._make_patch_embed
         )
         self.patch_embed = _make_patch_embed(
             in_chans, dims[0], patch_size, patch_norm, norm_layer_mod, channel_first=self.channel_first
         )
 
-        _make_downsample = dict(
-            v1=PatchMerging2D,
-            v2=self._make_downsample,
-            v3=self._make_downsample_v3,
-            none=(lambda *_, **_k: nn.Identity()),
-        ).get(downsample_version, self._make_downsample)
+        _make_downsample = {
+            "v1": PatchMerging2D,
+            "v2": self._make_downsample,
+            "v3": self._make_downsample_v3,
+            "none": (lambda *_, **_k: nn.Identity()),
+        }.get(downsample_version, self._make_downsample)
 
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):

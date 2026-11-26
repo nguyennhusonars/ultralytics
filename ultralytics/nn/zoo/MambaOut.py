@@ -2,13 +2,17 @@
 """Ported from ultralytics_sonnn nn/modules/MambaOut.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
 from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import register_model
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import (
+    IMAGENET_DEFAULT_MEAN,
+    IMAGENET_DEFAULT_STD,
+    DropPath,
+    register_model,
+    trunc_normal_,
+)
 
 
 def _cfg(url="", **kwargs):
@@ -66,8 +70,7 @@ MAMBAOUT_CONFIGS = {
 
 
 class StemLayer(nn.Module):
-    r"""Code modified from InternImage:
-    https://github.com/OpenGVLab/InternImage
+    r"""Code modified from InternImage: https://github.com/OpenGVLab/InternImage.
     """
 
     def __init__(self, in_channels=3, out_channels=96, act_layer=nn.GELU, norm_layer=partial(nn.LayerNorm, eps=1e-6)):
@@ -94,8 +97,7 @@ class StemLayer(nn.Module):
 
 
 class DownsampleLayer(nn.Module):
-    r"""Code modified from InternImage:
-    https://github.com/OpenGVLab/InternImage
+    r"""Code modified from InternImage: https://github.com/OpenGVLab/InternImage.
     """
 
     def __init__(self, in_channels=96, out_channels=198, norm_layer=partial(nn.LayerNorm, eps=1e-6)):
@@ -115,7 +117,7 @@ class DownsampleLayer(nn.Module):
 
 
 class MlpHead(nn.Module):
-    """MLP classification head"""
+    """MLP classification head."""
 
     def __init__(
         self,
@@ -146,7 +148,8 @@ class MlpHead(nn.Module):
 
 
 class GatedCNNBlock(nn.Module):
-    r"""Our implementation of Gated CNN Block: https://arxiv.org/pdf/1612.08083
+    r"""Our implementation of Gated CNN Block: https://arxiv.org/pdf/1612.08083.
+
     Args:
         conv_ratio: control the number of channels to conduct depthwise convolution.
     """
@@ -227,7 +230,8 @@ DOWNSAMPLE_LAYERS_FOUR_STAGES = [StemLayer] + [DownsampleLayer] * 3
 
 
 class MambaOut(nn.Module):
-    r"""MambaOut Model Base - Modified for Backbone Usage in Detection/Segmentation
+    r"""MambaOut Model Base - Modified for Backbone Usage in Detection/Segmentation.
+
     Args:
         in_chans (int): Number of input image channels. Default: 3.
         num_classes (int): Number of classes for classification head (IGNORED if used as backbone). Default: 1000.
@@ -239,7 +243,8 @@ class MambaOut(nn.Module):
         conv_ratio (float): Conv ratio in GatedCNNBlock. Default: 1.0.
         kernel_size (int): Kernel size in GatedCNNBlock. Default: 7.
         drop_path_rate (float): Stochastic depth rate. Default: 0.
-        output_norm: Norm before classifier head (IGNORED if used as backbone). Default: partial(nn.LayerNorm, eps=1e-6).
+        output_norm: Norm before classifier head (IGNORED if used as backbone). Default: partial(nn.LayerNorm,
+            eps=1e-6).
         head_fn: Classification head module/fn (IGNORED if used as backbone). Default: MlpHead.
         head_dropout (float): Dropout for MLP classifier (IGNORED if used as backbone). Default: 0.0.
         input_size (tuple): Input image size, used for width_list calculation. Default: (3, 224, 224).
@@ -250,8 +255,8 @@ class MambaOut(nn.Module):
         self,
         in_chans=3,
         num_classes=1000,
-        depths=[3, 3, 9, 3],
-        dims=[96, 192, 384, 576],
+        depths=None,
+        dims=None,
         downsample_layers=DOWNSAMPLE_LAYERS_FOUR_STAGES,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         act_layer=nn.GELU,
@@ -265,6 +270,10 @@ class MambaOut(nn.Module):
         out_indices=(0, 1, 2, 3),  # Indices of stages to output features
         **kwargs,
     ):
+        if dims is None:
+            dims = [96, 192, 384, 576]
+        if depths is None:
+            depths = [3, 3, 9, 3]
         super().__init__()
         # num_classes, output_norm, head_fn, head_dropout are stored but unused by forward if used as backbone
         self.num_classes = num_classes
@@ -276,7 +285,7 @@ class MambaOut(nn.Module):
         if not isinstance(downsample_layers, (list, tuple)):
             downsample_layers = [downsample_layers] * self.num_stage
 
-        down_dims = [in_chans] + dims
+        down_dims = [in_chans, *dims]
         self.downsample_layers = nn.ModuleList()
         # Stem layer needs only in_channels and first dim
         self.downsample_layers.append(
@@ -407,20 +416,18 @@ class MambaOut(nn.Module):
         return intermediate_outputs_nchw  # Return list of selected features in NCHW
 
     def forward(self, x):
-        """
-        Forward pass for using MambaOut as a backbone.
-        Returns a list of feature maps (in NCHW format) from specified stages.
+        """Forward pass for using MambaOut as a backbone. Returns a list of feature maps (in NCHW format) from specified
+        stages.
         """
         x = self.forward_features(x)
         return x
 
     def forward_cls(self, x):
-        """
-        Forward pass for classification task (if needed separately).
-        Uses the final stage output, pooling, norm, and head.
+        """Forward pass for classification task (if needed separately). Uses the final stage output, pooling, norm, and
+        head.
         """
         # Get NHWC features (doesn't matter which forward_features is used if only last stage is needed)
-        intermediate_features_nhwc, pooled_output = self._forward_features_nhwc(x)
+        _intermediate_features_nhwc, pooled_output = self._forward_features_nhwc(x)
         # pooled_output is already calculated correctly after norm in _forward_features_nhwc
         cls_output = self.head(pooled_output)
         return cls_output
@@ -428,7 +435,7 @@ class MambaOut(nn.Module):
 
 @register_model
 def mambaout_femto(**kwargs):
-    """Instantiates MambaOut-Femto model"""
+    """Instantiates MambaOut-Femto model."""
     config = MAMBAOUT_CONFIGS["mambaout_femto"]
     # Ensure out_indices is passed if not specified by user
     kwargs.setdefault("out_indices", (0, 1, 2, 3))  # Default to output all stages for backbone use

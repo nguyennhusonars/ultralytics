@@ -1,9 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/MSBlock.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.modules.block import C2f
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.modules.block import C2f
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -119,7 +120,7 @@ class C2f_MSBlockv2(C2f):
         c1,
         c2,
         n=1,
-        kernel_sizes=[1, 3, 3],
+        kernel_sizes=None,
         in_expand_ratio=3.0,
         mid_expand_ratio=2.0,
         layers_num=3,
@@ -128,6 +129,8 @@ class C2f_MSBlockv2(C2f):
         g=1,
         e=0.5,
     ):
+        if kernel_sizes is None:
+            kernel_sizes = [1, 3, 3]
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
             MSBlock(self.c, self.c, kernel_sizes, in_expand_ratio, mid_expand_ratio, layers_num, in_down_ratio)

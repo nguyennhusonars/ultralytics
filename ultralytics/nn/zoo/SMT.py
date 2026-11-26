@@ -1,14 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/SMT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from functools import partial
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import math
+from functools import partial
+
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, to_2tuple, trunc_normal_
 
 
 class Mlp(nn.Module):
@@ -218,8 +217,8 @@ class Block(nn.Module):
         self.gamma_1 = 1.0
         self.gamma_2 = 1.0
         if use_layerscale:
-            self.gamma_1 = nn.Parameter(layerscale_value * torch.ones((dim)), requires_grad=True)
-            self.gamma_2 = nn.Parameter(layerscale_value * torch.ones((dim)), requires_grad=True)
+            self.gamma_1 = nn.Parameter(layerscale_value * torch.ones(dim), requires_grad=True)
+            self.gamma_2 = nn.Parameter(layerscale_value * torch.ones(dim), requires_grad=True)
 
         # Removed apply(_init_weights) from Block, let SMT handle it once
         # self.apply(self._init_weights)
@@ -238,7 +237,7 @@ class Block(nn.Module):
 
 
 class OverlapPatchEmbed(nn.Module):
-    """Image to Patch Embedding with overlapping patches"""
+    """Image to Patch Embedding with overlapping patches."""
 
     def __init__(self, img_size=224, patch_size=3, stride=2, in_chans=3, embed_dim=768):
         super().__init__()
@@ -264,10 +263,10 @@ class OverlapPatchEmbed(nn.Module):
 
 
 class Head(nn.Module):
-    """Initial Patch Embedding using Conv layers"""
+    """Initial Patch Embedding using Conv layers."""
 
     def __init__(self, head_conv, dim, in_chans=3):  # Added in_chans
-        super(Head, self).__init__()
+        super().__init__()
         padding = head_conv // 2
         # Use in_chans parameter
         stem = [
@@ -301,10 +300,10 @@ class SMT(nn.Module):
         img_size=224,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[64, 128, 256, 512],
-        ca_num_heads=[4, 4, 4, -1],
-        sa_num_heads=[-1, -1, 8, 16],
-        mlp_ratios=[8, 6, 4, 2],
+        embed_dims=None,
+        ca_num_heads=None,
+        sa_num_heads=None,
+        mlp_ratios=None,
         qkv_bias=False,
         qk_scale=None,
         use_layerscale=False,
@@ -313,13 +312,25 @@ class SMT(nn.Module):
         attn_drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        depths=[2, 2, 8, 1],
-        ca_attentions=[1, 1, 1, 0],
+        depths=None,
+        ca_attentions=None,
         num_stages=4,
         head_conv=3,
         expand_ratio=2,
         **kwargs,
     ):
+        if ca_attentions is None:
+            ca_attentions = [1, 1, 1, 0]
+        if depths is None:
+            depths = [2, 2, 8, 1]
+        if mlp_ratios is None:
+            mlp_ratios = [8, 6, 4, 2]
+        if sa_num_heads is None:
+            sa_num_heads = [-1, -1, 8, 16]
+        if ca_num_heads is None:
+            ca_num_heads = [4, 4, 4, -1]
+        if embed_dims is None:
+            embed_dims = [64, 128, 256, 512]
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
@@ -428,7 +439,7 @@ class SMT(nn.Module):
             nn.init.constant_(m.bias, 0)
 
     def freeze_patch_emb(self):
-        patch_embed1 = getattr(self, "patch_embed1")
+        patch_embed1 = self.patch_embed1
         if patch_embed1:
             for param in patch_embed1.parameters():
                 param.requires_grad = False
@@ -455,7 +466,7 @@ class SMT(nn.Module):
         B = x.shape[0]
         feature_outputs = []  # List to store features from each stage
 
-        current_h, current_w = x.shape[2], x.shape[3]  # Track spatial dims if needed
+        _current_h, _current_w = x.shape[2], x.shape[3]  # Track spatial dims if needed
 
         for i in range(self.num_stages):
             patch_embed = getattr(self, f"patch_embed{i + 1}")
@@ -466,7 +477,7 @@ class SMT(nn.Module):
             x, H, W = patch_embed(x)  # Output x shape: B, N, C
 
             # Update spatial dimensions tracker
-            current_h, current_w = H, W
+            _current_h, _current_w = H, W
 
             # Apply transformer blocks for this stage
             for blk in block:
@@ -478,7 +489,7 @@ class SMT(nn.Module):
             # --- Reshape to spatial format (B, C, H, W) and store ---
             C = self.embed_dims[i]  # Get correct channel dim
             if H * W != x.shape[1]:
-                print(f"Warning: H*W ({H*W}) != N ({x.shape[1]}) in stage {i+1}. Reshaping might fail.")
+                print(f"Warning: H*W ({H * W}) != N ({x.shape[1]}) in stage {i + 1}. Reshaping might fail.")
                 # Add fallback or error handling if needed
             x_spatial = x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
             feature_outputs.append(x_spatial)
@@ -496,11 +507,11 @@ class SMT(nn.Module):
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
-        super(DWConv, self).__init__()
+        super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
 
     def forward(self, x, H, W):
-        B, N, C = x.shape
+        B, _N, C = x.shape
         # Reshape from (B, N, C) to (B, C, H, W)
         x_reshaped = x.transpose(1, 2).view(B, C, H, W)
         x_conv = self.dwconv(x_reshaped)

@@ -3,19 +3,14 @@
 
 from __future__ import annotations
 
-from torch import Tensor
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
 import math
+
 import torch
-import torch.nn as nn
+from torch import Tensor, nn
 
 
 def conv3x3(in_planes, out_planes, stride=1):
-    """3x3 convolution with padding"""
+    """3x3 convolution with padding."""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
@@ -58,11 +53,11 @@ def initialize_orthogonal_filters(c: int, h: int, w: int) -> Tensor:
 
 class GramSchmidtTransform(torch.nn.Module):
     # Corrected instance dictionary key type
-    instance: Dict[Tuple[int, int], Optional["GramSchmidtTransform"]] = {}
+    instance: dict[tuple[int, int], GramSchmidtTransform | None] = {}
     constant_filter: Tensor
 
     @staticmethod
-    def build(c: int, h: int) -> "GramSchmidtTransform":  # Added return type hint
+    def build(c: int, h: int) -> GramSchmidtTransform:  # Added return type hint
         if (c, h) not in GramSchmidtTransform.instance or GramSchmidtTransform.instance[
             (c, h)
         ] is None:  # Check for None too
@@ -119,7 +114,7 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, height, stride=1, downsample=None):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         self._process: nn.Module = nn.Sequential(
             conv3x3(inplanes, planes, stride),
             nn.BatchNorm2d(planes),
@@ -168,7 +163,7 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, height, stride=1, downsample=None):
-        super(Bottleneck, self).__init__()
+        super().__init__()
 
         self._process: nn.Module = nn.Sequential(
             nn.Conv2d(inplanes, planes, kernel_size=1, bias=False),
@@ -222,9 +217,9 @@ class Bottleneck(nn.Module):
 
 class OrthoNet(nn.Module):
     def __init__(
-        self, block: type[Union[BasicBlock, Bottleneck]], layers: List[int], num_classes: int = 1000, **kwargs
+        self, block: type[BasicBlock | Bottleneck], layers: list[int], num_classes: int = 1000, **kwargs
     ):  # Added **kwargs
-        super(OrthoNet, self).__init__()
+        super().__init__()
         self._device_str = "cuda" if torch.cuda.is_available() else "cpu"  # Renamed to avoid conflict
         self.inplanes = 64
 
@@ -266,7 +261,7 @@ class OrthoNet(nn.Module):
         # self.to(self._device_str) # Move to device after all params are initialized.
 
         # --- Calculate width_list ---
-        self.width_list: List[int] = []
+        self.width_list: list[int] = []
         try:
             original_mode = self.training
             self.eval()
@@ -290,7 +285,7 @@ class OrthoNet(nn.Module):
         # --- End of width_list calculation ---
 
     def _make_layer(
-        self, block: type[Union[BasicBlock, Bottleneck]], planes: int, height: int, blocks: int, stride: int = 1
+        self, block: type[BasicBlock | Bottleneck], planes: int, height: int, blocks: int, stride: int = 1
     ) -> nn.Sequential:
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
@@ -306,7 +301,7 @@ class OrthoNet(nn.Module):
 
         return nn.Sequential(*layers_list)
 
-    def _forward_extract(self, x: Tensor) -> List[Tensor]:
+    def _forward_extract(self, x: Tensor) -> list[Tensor]:
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -319,7 +314,7 @@ class OrthoNet(nn.Module):
 
         return [f1, f2, f3, f4]
 
-    def forward(self, x: Tensor) -> List[Tensor]:  # Modified to return list of features
+    def forward(self, x: Tensor) -> list[Tensor]:  # Modified to return list of features
         return self._forward_extract(x)
 
     def get_classification_output(self, x: Tensor) -> Tensor:
@@ -334,6 +329,7 @@ class OrthoNet(nn.Module):
 
 def orthonet50(**kwargs) -> OrthoNet:
     """Constructs a OrthoNet-50 model.
+
     Args:
         **kwargs: Keyword arguments, including 'num_classes'.
     """

@@ -1,15 +1,16 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/RMT.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
+from __future__ import annotations
+
 from functools import partial
-from typing import Tuple
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import _cfg
-from ultralytics.nn.zoo._timm import trunc_normal_
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
+from torch import nn
+from torch.utils import checkpoint
+
+from ultralytics.nn.zoo._timm import DropPath, _cfg, trunc_normal_
 
 
 class DWConv2d(nn.Module):
@@ -18,9 +19,7 @@ class DWConv2d(nn.Module):
         self.conv = nn.Conv2d(dim, dim, kernel_size, stride, padding, groups=dim)
 
     def forward(self, x: torch.Tensor):
-        """
-        x: (b h w c)
-        """
+        """X: (b h w c)."""
         x = x.permute(0, 3, 1, 2)  # (b c h w)
         x = self.conv(x)  # (b c h w)
         x = x.permute(0, 2, 3, 1)  # (b h w c)
@@ -29,11 +28,7 @@ class DWConv2d(nn.Module):
 
 class RelPos2d(nn.Module):
     def __init__(self, embed_dim, num_heads, initial_value, heads_range):
-        """
-        recurrent_chunk_size: (clh clw)
-        num_chunks: (nch ncw)
-        clh * clw == cl
-        nch * ncw == nc
+        """recurrent_chunk_size: (clh clw) num_chunks: (nch ncw) clh * clw == cl nch * ncw == nc.
 
         default: clh==clw, clh != clw is not implemented
         """
@@ -50,9 +45,7 @@ class RelPos2d(nn.Module):
         self.register_buffer("decay", decay)
 
     def generate_2d_decay(self, H: int, W: int):
-        """
-        generate 2d decay mask, the result is (HW)*(HW)
-        """
+        """Generate 2d decay mask, the result is (HW)*(HW)."""
         index_h = torch.arange(H).to(self.decay)
         index_w = torch.arange(W).to(self.decay)
         grid = torch.meshgrid([index_h, index_w])
@@ -63,20 +56,15 @@ class RelPos2d(nn.Module):
         return mask
 
     def generate_1d_decay(self, l: int):
-        """
-        generate 1d decay mask, the result is l*l
-        """
+        """Generate 1d decay mask, the result is l*l."""
         index = torch.arange(l).to(self.decay)
         mask = index[:, None] - index[None, :]  # (l l)
         mask = mask.abs()  # (l l)
         mask = mask * self.decay[:, None, None]  # (n l l)
         return mask
 
-    def forward(self, slen: Tuple[int], activate_recurrent=False, chunkwise_recurrent=False):
-        """
-        slen: (h, w)
-        h * w == l
-        recurrent is not implemented
+    def forward(self, slen: tuple[int], activate_recurrent=False, chunkwise_recurrent=False):
+        """slen: (h, w) h * w == l recurrent is not implemented.
         """
         if activate_recurrent:
             retention_rel_pos = self.decay.exp()
@@ -119,10 +107,7 @@ class MaSAd(nn.Module):
         nn.init.constant_(self.out_proj.bias, 0.0)
 
     def forward(self, x: torch.Tensor, rel_pos, chunkwise_recurrent=False, incremental_state=None):
-        """
-        x: (b h w c)
-        mask_h: (n h h)
-        mask_w: (n w w)
+        """x: (b h w c) mask_h: (n h h) mask_w: (n w w).
         """
         bsz, h, w, _ = x.size()
 
@@ -191,9 +176,7 @@ class MaSA(nn.Module):
         nn.init.constant_(self.out_proj.bias, 0.0)
 
     def forward(self, x: torch.Tensor, rel_pos, chunkwise_recurrent=False, incremental_state=None):
-        """
-        x: (b h w c)
-        rel_pos: mask: (n l l)
+        """x: (b h w c) rel_pos: mask: (n l l).
         """
         bsz, h, w, _ = x.size()
         mask = rel_pos
@@ -252,9 +235,7 @@ class FeedForwardNetwork(nn.Module):
             self.ffn_layernorm.reset_parameters()
 
     def forward(self, x: torch.Tensor):
-        """
-        x: (b h w c)
-        """
+        """X: (b h w c)."""
         x = self.fc1(x)
         x = self.activation_fn(x)
         x = self.activation_dropout_module(x)
@@ -322,7 +303,7 @@ class PatchMerging(nn.Module):
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
         dim (int): Number of input channels.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
     """
 
     def __init__(self, dim, out_dim, norm_layer=nn.LayerNorm):
@@ -332,9 +313,7 @@ class PatchMerging(nn.Module):
         self.norm = nn.BatchNorm2d(out_dim)
 
     def forward(self, x):
-        """
-        x: B H W C
-        """
+        """X: B H W C."""
         x = x.permute(0, 3, 1, 2).contiguous()  # (b c h w)
         x = self.reduction(x)  # (b oc oh ow)
         x = self.norm(x)
@@ -360,7 +339,8 @@ class BasicLayer(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
         downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
-        fused_window_process (bool, optional): If True, use one kernel to fused window shift & window partition for acceleration, similar for the reversed part. Default: False
+        fused_window_process (bool, optional): If True, use one kernel to fused window shift & window partition for
+            acceleration, similar for the reversed part. Default: False
     """
 
     def __init__(
@@ -414,7 +394,7 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x):
-        b, h, w, d = x.size()
+        _b, h, w, _d = x.size()
         rel_pos = self.Relpos((h, w), chunkwise_recurrent=self.chunkwise_recurrent)
         for blk in self.blocks:
             if self.use_checkpoint:
@@ -432,10 +412,10 @@ class BasicLayer(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    r"""Image to Patch Embedding
+    r"""Image to Patch Embedding.
 
     Args:
-        img_size (int): Image size.  Default: 224.
+        img_size (int): Image size. Default: 224.
         patch_size (int): Patch token size. Default: 4.
         in_chans (int): Number of input image channels. Default: 3.
         embed_dim (int): Number of linear projection output channels. Default: 96.
@@ -462,7 +442,7 @@ class PatchEmbed(nn.Module):
         )
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
         x = self.proj(x).permute(0, 2, 3, 1)  # (b h w c)
         return x
 
@@ -472,20 +452,38 @@ class VisRetNet(nn.Module):
         self,
         in_chans=3,
         num_classes=1000,
-        embed_dims=[96, 192, 384, 768],
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
-        init_values=[1, 1, 1, 1],
-        heads_ranges=[3, 3, 3, 3],
-        mlp_ratios=[3, 3, 3, 3],
+        embed_dims=None,
+        depths=None,
+        num_heads=None,
+        init_values=None,
+        heads_ranges=None,
+        mlp_ratios=None,
         drop_path_rate=0.1,
         norm_layer=nn.LayerNorm,
         patch_norm=True,
-        use_checkpoints=[False, False, False, False],
-        chunkwise_recurrents=[True, True, False, False],
-        layerscales=[False, False, False, False],
+        use_checkpoints=None,
+        chunkwise_recurrents=None,
+        layerscales=None,
         layer_init_values=1e-6,
     ):
+        if layerscales is None:
+            layerscales = [False, False, False, False]
+        if chunkwise_recurrents is None:
+            chunkwise_recurrents = [True, True, False, False]
+        if use_checkpoints is None:
+            use_checkpoints = [False, False, False, False]
+        if mlp_ratios is None:
+            mlp_ratios = [3, 3, 3, 3]
+        if heads_ranges is None:
+            heads_ranges = [3, 3, 3, 3]
+        if init_values is None:
+            init_values = [1, 1, 1, 1]
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        if embed_dims is None:
+            embed_dims = [96, 192, 384, 768]
         super().__init__()
 
         self.num_classes = num_classes

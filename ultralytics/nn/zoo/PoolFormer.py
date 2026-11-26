@@ -1,16 +1,14 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Ported from ultralytics_sonnn nn/modules/PoolFormer.py (model zoo; see ultralytics/nn/zoo/__init__.py)."""
 
-from ultralytics.nn.zoo._timm import DropPath
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN
-from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_STD
-from ultralytics.nn.zoo._timm import to_2tuple
-from ultralytics.nn.zoo._timm import trunc_normal_
 import copy
-import numpy as np
 import os
+
+import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
+
+from ultralytics.nn.zoo._timm import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, DropPath, to_2tuple, trunc_normal_
 
 
 def _cfg(url="", **kwargs):
@@ -34,10 +32,8 @@ default_cfgs = {
 
 
 class PatchEmbed(nn.Module):
-    """
-    Patch Embedding that is implemented by a layer of conv.
-    Input: tensor in shape [B, C, H, W]
-    Output: tensor in shape [B, C, H/stride, W/stride]
+    """Patch Embedding that is implemented by a layer of conv. Input: tensor in shape [B, C, H, W] Output: tensor in
+    shape [B, C, H/stride, W/stride].
     """
 
     def __init__(self, patch_size=16, stride=16, padding=0, in_chans=3, embed_dim=768, norm_layer=None):
@@ -55,9 +51,7 @@ class PatchEmbed(nn.Module):
 
 
 class GroupNorm(nn.GroupNorm):
-    """
-    Group Normalization with 1 group.
-    Input: tensor in shape [B, C, H, W]
+    """Group Normalization with 1 group. Input: tensor in shape [B, C, H, W].
     """
 
     def __init__(self, num_channels, **kwargs):
@@ -65,9 +59,7 @@ class GroupNorm(nn.GroupNorm):
 
 
 class Pooling(nn.Module):
-    """
-    Implementation of pooling for PoolFormer
-    --pool_size: pooling size
+    """Implementation of pooling for PoolFormer --pool_size: pooling size.
     """
 
     def __init__(self, pool_size=3):
@@ -79,9 +71,7 @@ class Pooling(nn.Module):
 
 
 class Mlp(nn.Module):
-    """
-    Implementation of MLP with 1*1 convolutions.
-    Input: tensor with shape [B, C, H, W]
+    """Implementation of MLP with 1*1 convolutions. Input: tensor with shape [B, C, H, W].
     """
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0):
@@ -110,18 +100,10 @@ class Mlp(nn.Module):
 
 
 class PoolFormerBlock(nn.Module):
-    """
-    Implementation of one PoolFormer block.
-    --dim: embedding dim
-    --pool_size: pooling size
-    --mlp_ratio: mlp expansion ratio
-    --act_layer: activation
-    --norm_layer: normalization
-    --drop: dropout rate
-    --drop path: Stochastic Depth,
-        refer to https://arxiv.org/abs/1603.09382
-    --use_layer_scale, --layer_scale_init_value: LayerScale,
-        refer to https://arxiv.org/abs/2103.17239
+    """Implementation of one PoolFormer block. --dim: embedding dim --pool_size: pooling size --mlp_ratio: mlp expansion
+    ratio --act_layer: activation --norm_layer: normalization --drop: dropout rate --drop path: Stochastic Depth,
+    refer to https://arxiv.org/abs/1603.09382 --use_layer_scale, --layer_scale_init_value: LayerScale, refer
+    to https://arxiv.org/abs/2103.17239.
     """
 
     def __init__(
@@ -148,8 +130,8 @@ class PoolFormerBlock(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.use_layer_scale = use_layer_scale
         if use_layer_scale:
-            self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-            self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale_1 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
+            self.layer_scale_2 = nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
 
     def forward(self, x):
         if self.use_layer_scale:
@@ -174,9 +156,7 @@ def basic_blocks(
     use_layer_scale=True,
     layer_scale_init_value=1e-5,
 ):
-    """
-    generate PoolFormer blocks for a stage
-    return: PoolFormer blocks
+    """Generate PoolFormer blocks for a stage return: PoolFormer blocks.
     """
     blocks = []
     for block_idx in range(layers[index]):
@@ -200,21 +180,13 @@ def basic_blocks(
 
 
 class PoolFormer(nn.Module):
-    """
-    PoolFormer, the main class of our model
-    --layers: [x,x,x,x], number of blocks for the 4 stages
-    --embed_dims, --mlp_ratios, --pool_size: the embedding dims, mlp ratios and
-        pooling size for the 4 stages
-    --downsamples: flags to apply downsampling or not
-    --norm_layer, --act_layer: define the types of normalization and activation
-    --num_classes: number of classes for the image classification
-    --in_patch_size, --in_stride, --in_pad: specify the patch embedding
-        for the input image
-    --down_patch_size --down_stride --down_pad:
-        specify the downsample (patch embed.)
-    --fork_feat: whether output features of the 4 stages, for dense prediction
-    --init_cfg, --pretrained:
-        for mmdetection and mmsegmentation to load pretrained weights
+    """PoolFormer, the main class of our model --layers: [x,x,x,x], number of blocks for the 4 stages --embed_dims,
+    --mlp_ratios, --pool_size: the embedding dims, mlp ratios and pooling size for the 4 stages --downsamples: flags
+    to apply downsampling or not --norm_layer, --act_layer: define the types of normalization and activation
+    --num_classes: number of classes for the image classification --in_patch_size, --in_stride, --in_pad: specify
+    the patch embedding for the input image --down_patch_size --down_stride --down_pad: specify the downsample
+    (patch embed.) --fork_feat: whether output features of the 4 stages, for dense prediction --init_cfg,
+    --pretrained: for mmdetection and mmsegmentation to load pretrained weights.
     """
 
     def __init__(
@@ -344,7 +316,7 @@ model_urls = {
 def update_weight(model_dict, weight_dict):
     idx, temp_dict = 0, {}
     for k, v in weight_dict.items():
-        if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+        if k in model_dict and np.shape(model_dict[k]) == np.shape(v):
             temp_dict[k] = v
             idx += 1
     model_dict.update(temp_dict)
@@ -353,12 +325,9 @@ def update_weight(model_dict, weight_dict):
 
 
 def poolformer_s12(pretrained=False, **kwargs):
-    """
-    PoolFormer-S12 model, Params: 12M
-    --layers: [x,x,x,x], numbers of layers for the four stages
-    --embed_dims, --mlp_ratios:
-        embedding dims and mlp ratios for the four stages
-    --downsamples: flags to apply downsampling or not in four blocks
+    """PoolFormer-S12 model, Params: 12M --layers: [x,x,x,x], numbers of layers for the four stages --embed_dims,
+    --mlp_ratios: embedding dims and mlp ratios for the four stages --downsamples: flags to apply downsampling or
+    not in four blocks.
     """
     layers = [2, 2, 6, 2]
     embed_dims = [64, 128, 320, 512]
